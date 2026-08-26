@@ -1,0 +1,40 @@
+{
+  "name": "@amitista/shield",
+  "version": "0.7.0",
+  "description": "Map what your Express app exposes, and where each route's input can end up. Runs entirely on your machine.",
+  "main": "src/scan.js",
+  "directories": {
+    "test": "test"
+  },
+  "scripts": {
+    "test": "node test/scan.test.js && node test/protect.test.js && node test/abuse.test.js && node test/response.test.js && node test/baseline.test.js && node test/esm.test.js && node test/feed.test.js && node test/gaps.test.js"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "acorn": "^8.18.0",
+    "acorn-walk": "^8.3.5"
+  },
+  "bin": {
+    "shield": "bin/shield.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "index.js",
+    "register.js",
+    "register.mjs"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "express": "^5.2.1"
+  },
+  "exports": {
+    ".": "./index.js",
+    "./register": {
+      "import": "./register.mjs",
+      "require": "./register.js"
+    }
+  }
+}

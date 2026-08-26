@@ -1,0 +1,41 @@
+{
+  "name": "amitista",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "sitemap": "node scripts/generate-sitemap.mjs",
+    "fonts": "node scripts/fetch-fonts.mjs && node scripts/subset-fonts.mjs",
+    "fonts:subset": "node scripts/subset-fonts.mjs",
+    "images": "node scripts/derive-images.mjs",
+    "partner": "node scripts/fetch-partner.mjs && node scripts/derive-images.mjs",
+    "landmask": "node scripts/derive-landmask.mjs",
+    "icons": "node scripts/derive-icons.mjs",
+    "prebuild": "node scripts/generate-sitemap.mjs",
+    "build": "vite build",
+    "prerender": "node scripts/prerender.mjs",
+    "api": "node scripts/emit-api.mjs",
+    "postbuild": "node scripts/prerender.mjs && node scripts/emit-api.mjs && node scripts/precompress.mjs && node scripts/check-dist-secrets.mjs",
+    "check:secrets": "node scripts/check-dist-secrets.mjs",
+    "lint": "oxlint",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "lenis": "^1.3.25",
+    "lucide-react": "^1.27.0",
+    "ogl": "^1.0.11",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.3",
+    "oxlint": "^1.71.0",
+    "sharp": "^0.35.3",
+    "tailwindcss": "^4.3.3",
+    "vite": "^8.1.1"
+  }
+}

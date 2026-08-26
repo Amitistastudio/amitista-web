@@ -1,0 +1,121 @@
+{
+  "version": 1,
+  "minSamples": 200,
+  "routes": {
+    "POST /login": {
+      "samples": 5,
+      "frozen": false,
+      "fields": {
+        "body.user": {
+          "seen": 5,
+          "types": {
+            "string": 5
+          },
+          "classes": {
+            "alpha": 5
+          },
+          "min": 1,
+          "max": 1,
+          "values": [
+            "a"
+          ]
+        }
+      }
+    },
+    "GET /clean": {
+      "samples": 7,
+      "frozen": false,
+      "fields": {}
+    },
+    "GET /go": {
+      "samples": 8,
+      "frozen": false,
+      "fields": {
+        "query.next": {
+          "seen": 8,
+          "types": {
+            "string": 8
+          },
+          "classes": {
+            "path": 8
+          },
+          "min": 10,
+          "max": 10,
+          "values": [
+            "/dashboard"
+          ]
+        }
+      }
+    },
+    "GET /echo": {
+      "samples": 8,
+      "frozen": false,
+      "fields": {
+        "query.q": {
+          "seen": 8,
+          "types": {
+            "string": 8
+          },
+          "classes": {
+            "text": 8
+          },
+          "min": 11,
+          "max": 11,
+          "values": [
+            "hello there"
+          ]
+        }
+      }
+    },
+    "GET /file": {
+      "samples": 5,
+      "frozen": false,
+      "fields": {
+        "query.name": {
+          "seen": 5,
+          "types": {
+            "string": 5
+          },
+          "classes": {
+            "slug": 5
+          },
+          "min": 9,
+          "max": 9,
+          "values": [
+            "notes.txt"
+          ]
+        }
+      }
+    },
+    "GET /fetch": {
+      "samples": 2,
+      "frozen": false,
+      "fields": {
+        "query.url": {
+          "seen": 2,
+          "types": {
+            "string": 2
+          },
+          "classes": {
+            "text": 2
+          },
+          "min": 22,
+          "max": 22,
+          "values": [
+            "https://example.com/ok"
+          ]
+        }
+      }
+    },
+    "GET /safe": {
+      "samples": 5,
+      "frozen": false,
+      "fields": {}
+    },
+    "GET /items": {
+      "samples": 12,
+      "frozen": false,
+      "fields": {}
+    }
+  }
+}

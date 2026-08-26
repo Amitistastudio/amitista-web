@@ -1,0 +1,12 @@
+[Unit]
+Description=Rebuild the Amitista admin IP-to-country table
+Documentation=file:/opt/amitista/admin-api/build_ip_country.py
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/amitista/admin-api/build_ip_country.py
+Nice=15
+IOSchedulingClass=idle
+TimeoutStartSec=900

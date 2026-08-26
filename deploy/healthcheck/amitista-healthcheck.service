@@ -1,0 +1,10 @@
+[Unit]
+Description=Amitista site healthcheck
+Documentation=file:/root/amitista-repo/web/deploy/healthcheck/amitista-healthcheck.sh
+After=network-online.target nginx.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/root/amitista-repo/web/deploy/healthcheck/amitista-healthcheck.sh
+TimeoutStartSec=120

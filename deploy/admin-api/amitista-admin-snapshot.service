@@ -1,0 +1,10 @@
+[Unit]
+Description=Collect the Amitista admin overview snapshot
+Documentation=file:/opt/amitista/admin-api/admin_snapshot.py
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/amitista/admin-api/admin_snapshot.py
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=60

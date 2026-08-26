@@ -1,0 +1,9 @@
+[Unit]
+Description=Amitista site and config backup
+Documentation=file:/root/amitista-repo/web/deploy/backup/amitista-backup.sh
+
+[Service]
+Type=oneshot
+ExecStart=/root/amitista-repo/web/deploy/backup/amitista-backup.sh
+Nice=10
+IOSchedulingClass=idle

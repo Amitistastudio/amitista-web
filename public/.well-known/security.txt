@@ -1,0 +1,5 @@
+Contact: mailto:amitistastudios@gmail.com
+Expires: 2027-08-26T12:44:29Z
+Preferred-Languages: en, el
+Canonical: https://amitista.com/.well-known/security.txt
+Policy: https://amitista.com/security

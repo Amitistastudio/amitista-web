@@ -1,0 +1,10 @@
+[Unit]
+Description=Weekly refresh of the Amitista admin IP-to-country table
+
+[Timer]
+OnCalendar=Mon 04:40 UTC
+RandomizedDelaySec=1800
+Persistent=true
+
+[Install]
+WantedBy=timers.target
