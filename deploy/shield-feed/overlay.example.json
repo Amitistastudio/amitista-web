@@ -1,0 +1,27 @@
+{
+  "detections": {
+    "secretPatterns": [
+      {
+        "id": "example-provider-key",
+        "severity": "critical",
+        "label": "Example provider live key",
+        "re": "\\bexk_live_[A-Za-z0-9]{24}\\b"
+      }
+    ],
+    "shellMeta": [],
+    "sqlMeta": [],
+    "pathPatterns": [],
+    "responseValues": [],
+    "urlSchemes": [],
+    "internalHosts": [],
+    "sensitivePaths": [],
+    "queryOperators": [],
+    "pollutionKeys": [],
+    "sinks": [],
+    "sqlDrivers": []
+  },
+  "policy": {
+    "disabled": [],
+    "severity": {}
+  }
+}

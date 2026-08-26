@@ -1,0 +1,10 @@
+[Unit]
+Description=Watch the staged Amitista firewall config for changes
+After=nginx.service
+
+[Path]
+PathChanged=/var/lib/amitista/admin/session/firewall.conf
+Unit=amitista-firewall.service
+
+[Install]
+WantedBy=multi-user.target

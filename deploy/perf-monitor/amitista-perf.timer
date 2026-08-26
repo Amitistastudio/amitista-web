@@ -1,0 +1,12 @@
+[Unit]
+Description=Measure amitista.com Core Web Vitals every six hours
+
+[Timer]
+OnBootSec=20min
+OnUnitActiveSec=6h
+RandomizedDelaySec=10min
+AccuracySec=1min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

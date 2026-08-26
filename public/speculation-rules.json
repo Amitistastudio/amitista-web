@@ -1,0 +1,55 @@
+{
+  "prerender": [
+    {
+      "where": {
+        "and": [
+          { "href_matches": "/*" },
+          {
+            "not": {
+              "href_matches": [
+                "/admin*",
+                "/api/*",
+                "/apply*",
+                "/contact*",
+                "/estimate*",
+                "/block*",
+                "/csp-report*",
+                "/status*"
+              ]
+            }
+          },
+          { "not": { "selector_matches": "[rel~=nofollow]" } },
+          { "not": { "selector_matches": "[target]" } },
+          { "not": { "selector_matches": ".no-speculate" } }
+        ]
+      },
+      "eagerness": "moderate"
+    }
+  ],
+  "prefetch": [
+    {
+      "where": {
+        "and": [
+          { "href_matches": "/*" },
+          {
+            "not": {
+              "href_matches": [
+                "/admin*",
+                "/api/*",
+                "/apply*",
+                "/contact*",
+                "/estimate*",
+                "/block*",
+                "/csp-report*"
+              ]
+            }
+          },
+          { "not": { "selector_matches": "[rel~=nofollow]" } },
+          { "not": { "selector_matches": "[target]" } },
+          { "not": { "selector_matches": ".no-speculate" } }
+        ]
+      },
+      "eagerness": "conservative"
+    }
+  ]
+}

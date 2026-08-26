@@ -1,0 +1,9 @@
+# One fact per line. Lines starting with # are ignored, and the relay reloads this file within a minute.
+# These lines outrank the text scraped from the site, so keep them true and self-contained.
+The people who work at Amitista Studios are Blxr, Jean, Wizzard and Lacy: four developers, with no account managers in between. The same people scope a project, build it and support it afterwards.
+Blxr is a developer at Amitista Studios who builds web applications and the systems behind them. Blxr's GitHub handle is kostis4563 and their own site is blxr.net.
+Jean is a developer at Amitista Studios who works on interfaces, front-end work and game servers. Jean's GitHub handle is j3qn.
+Wizzard is a developer at Amitista Studios who does general development work across the projects the studio takes on, sharing a profile with Lacy.
+Lacy is a developer at Amitista Studios who does general development work across the projects the studio takes on, sharing a profile with Wizzard.
+Every developer's GitHub account is linked from the team page, so you can read their code before hiring the studio.
+Amitista Studios does not publish fixed prices. Every project is quoted on its own after the brief, because the price depends on the scope. The estimate page builds a rough figure from your own answers, and the contact page starts a real quote.

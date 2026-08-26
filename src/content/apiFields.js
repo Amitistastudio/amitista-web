@@ -1,0 +1,142 @@
+export const COMMON_FIELDS = {
+  endpoint: {
+    note: 'The path this document was served from, echoed back. A response saved to disk still says where it came from.',
+    source: 'scripts/emit-api.mjs',
+  },
+  version: {
+    note: 'The API version, matching the v1 in the path. Fields get added; nothing published gets renamed or removed. A breaking change becomes v2 at a new path.',
+    source: 'content/apiMeta.js',
+  },
+  generated: {
+    note: 'When the document was produced, ISO 8601 in UTC. On the endpoints written at build time this doubles as the release timestamp; on the live ones it is the moment the request was answered.',
+    source: 'build time',
+  },
+  documentation: {
+    note: 'A link back to this page. Every response carries it so whatever is reading the JSON can find the documentation without being told where it is.',
+    source: 'siteConfig.js',
+  },
+  count: {
+    note: 'How many records the main array holds, so a caller can size a response without walking it.',
+    source: 'derived',
+  },
+};
+
+export const FIELDS = {
+  index: {
+    studio: { note: 'The studio name, as it should be written.', source: 'siteConfig.js' },
+    site: { note: 'The canonical origin. Every absolute URL in the API is built from this.', source: 'siteConfig.js' },
+    endpoints: { note: 'Every endpoint this version publishes. Read this rather than hard-coding paths.', source: 'content/apiMeta.js' },
+    'endpoints[].name': { note: 'Human label for the endpoint.', source: 'content/apiMeta.js' },
+    'endpoints[].path': { note: 'Path relative to the origin.', source: 'content/apiMeta.js' },
+    'endpoints[].url': { note: 'The fully qualified URL, ready to fetch.', source: 'derived' },
+    'endpoints[].description': { note: 'What the endpoint returns, in a sentence. The same text shown on this page.', source: 'content/apiMeta.js' },
+    'endpoints[].fields': { note: 'The notable field paths in that response, so a caller knows the shape before fetching it.', source: 'content/apiMeta.js' },
+    'endpoints[].updated': { note: 'How often the data behind it changes — every deploy for the build artefacts, every five minutes for status, and whenever a rule is published for the feed and the catalogue.', source: 'content/apiMeta.js' },
+    'endpoints[].live': { note: 'True when the endpoint is answered at request time by the service on the box rather than served as a file the build wrote. The rules, the feed, the feed status and this server\u2019s status all are.', source: 'content/apiMeta.js' },
+  },
+
+  shield: {
+    package: { note: 'The npm package name. Install it and this is what you get.', source: 'content/shieldRules.js' },
+    packageVersion: { note: 'The published package version these rules were cut from.', source: 'content/shieldRules.js' },
+    ruleset: { note: 'An integer that increments whenever a rule is added, removed or has its severity changed. Compare it against your cached copy to know whether a refetch is worth it.', source: 'content/shieldRules.js' },
+    runtime: { note: 'The minimum Node version. Below this the async context tracking the package relies on is not available.', source: 'content/shieldRules.js' },
+    framework: { note: 'The web framework the middleware attaches to. Only Express in v1.', source: 'content/shieldRules.js' },
+    install: { note: 'The install command, exactly as it should be typed.', source: 'derived' },
+    usage: { note: 'The single line that turns it on, once the body parser has run.', source: 'derived' },
+    modes: { note: 'The two ways it can run. Monitor is the default, and the one to start with.', source: 'derived' },
+    'modes[].id': { note: 'monitor or block.', source: 'derived' },
+    'modes[].summary': { note: 'What that mode does when a rule matches.', source: 'derived' },
+    defends: { note: 'The categories it detects, each one a family of rules in the rules endpoint.', source: 'derived' },
+    'defends[].id': { note: 'Category identifier, matching sinks[].id in the rules endpoint.', source: 'content/shieldRules.js' },
+    'defends[].severity': { note: 'The worst severity any rule in that category carries.', source: 'derived' },
+    'defends[].layer': { note: 'Where the check happens: analysis reads your source, runtime watches the live call, request inspects the payload before your handler runs.', source: 'derived' },
+    'defends[].summary': { note: 'What the category catches, in a sentence.', source: 'derived' },
+    options: { note: 'Everything protect() takes, with the value it uses when you say nothing. The defaults are the deployment we would recommend, so a short call is not a lesser one.', source: 'content/shieldRules.js' },
+    'options[].name': { note: 'The key, as passed to protect().', source: 'content/shieldRules.js' },
+    'options[].default': { note: 'What it is when you leave it out.', source: 'content/shieldRules.js' },
+    'options[].purpose': { note: 'What changing it does, and when changing it is the right call.', source: 'content/shieldRules.js' },
+    settings: { note: 'The nested settings worth knowing about individually — the ones where the default is a compromise rather than an answer, such as whether anything is proxying in front of you.', source: 'content/shieldRules.js' },
+    'settings[].name': { note: 'Dotted path from the protect() options object.', source: 'content/shieldRules.js' },
+    'settings[].default': { note: 'What it is when you leave it out.', source: 'content/shieldRules.js' },
+    'settings[].purpose': { note: 'What it controls and why the default is where it is.', source: 'content/shieldRules.js' },
+    surface: { note: 'Everything the package exports besides the middleware: the error handler, the server hardening, and the calls for reading what it has seen.', source: 'content/shieldRules.js' },
+    'surface[].call': { note: 'The exported function, with its arguments.', source: 'content/shieldRules.js' },
+    'surface[].purpose': { note: 'What it is for, and when a deployment needs it.', source: 'content/shieldRules.js' },
+    verification: { note: 'How the package checks that it is genuinely attached to the running application, and what it does when it finds it is not.', source: 'content/shieldRules.js' },
+    'verification.method': { note: 'A functional probe rather than a guess: it asks the loader for the same namespace the application would receive and checks whether the function in it is the packages own.', source: 'src/runtime/selftest.js' },
+    'verification.onFailure': { note: 'What a degraded process does. It is loud on purpose — silent failure is the state this whole check exists to prevent.', source: 'src/runtime/selftest.js' },
+    denial: { note: 'What a refused request actually receives. Published because whatever renders the block page has to agree with the package about it.', source: 'content/shieldRules.js' },
+    'denial.blockPage': { note: 'Where a refused browser navigation is sent. Configurable — left at its default it carries this studios name, which is wrong for anyone else running the package.', source: 'src/runtime/denial.js' },
+    'denial.referenceFormat': { note: 'The reference format as a regular expression. A visitor quoting one of these can be matched against a single line in your log.', source: 'src/runtime/denial.js' },
+    'denial.referenceHeader': { note: 'The response header carrying the same reference, so a program does not have to parse the body to find it.', source: 'src/runtime/denial.js' },
+    'denial.behaviour': { note: 'What each kind of caller gets. A browser is redirected to a page; a fetch or subresource gets JSON, because turning an image request into an HTML document only hides the failure.', source: 'src/runtime/denial.js' },
+    'denial.query': { note: 'The query parameters on the block page URL. The rule value is one of the ids in defends[].id — that shared vocabulary is the contract.', source: 'src/runtime/denial.js' },
+    limits: { note: 'What it does not catch. Published deliberately — a security tool that only lists its strengths is telling you half of what you need to decide.', source: 'derived' },
+  },
+
+  shieldRules: {
+    ruleset: { note: 'The same integer as the shield endpoint. This is the number to cache against.', source: 'content/shieldRules.js' },
+    counts: { note: 'How many rules of each kind this set holds, so you can size the response before walking it.', source: 'derived' },
+    sinks: { note: 'Every dangerous call the package knows about. This is the core of the ruleset.', source: 'content/shieldRules.js' },
+    secretPatterns: { note: 'Credential formats matched against source at scan time. Supplied as pattern source so you can run them yourself.', source: 'content/shieldRules.js' },
+    'secretPatterns[].pattern': { note: 'The regular expression, as source text.', source: 'content/shieldRules.js' },
+    'sinks[].id': { note: 'The category: command, sql, filesystem, ssrf, eval, render or redirect.', source: 'content/shieldRules.js' },
+    'sinks[].severity': { note: 'critical, high or medium. Severity is a property of the sink, not of any one finding.', source: 'content/shieldRules.js' },
+    'sinks[].label': { note: 'What the call does, in the words used in reports.', source: 'content/shieldRules.js' },
+    'sinks[].module': { note: 'The module the call comes from, or null for a global or a method matched by name on any object.', source: 'content/shieldRules.js' },
+    'sinks[].method': { note: 'The function or method name.', source: 'content/shieldRules.js' },
+    'sinks[].injectionArgs': { note: 'Which argument positions are actually an injection point, or null for all of them. This is the field that matters most: it is why a correctly parameterised query, where the values arrive as argument one, is not reported.', source: 'content/shieldRules.js' },
+    responseMethods: { note: 'Response methods treated as reflection points when request data reaches them.', source: 'content/shieldRules.js' },
+    shape: { note: 'Abuse that lives in the shape of a request rather than its values.', source: 'content/shieldRules.js' },
+    'shape.pollutionKeys': { note: 'Object keys that can rewrite prototypes and are rejected wherever they appear in a payload.', source: 'content/shieldRules.js' },
+    'shape.queryOperators': { note: 'Database query operators treated as an injection when they turn up where a plain value was expected. This is what stops a login body of { password: { $ne: null } }.', source: 'content/shieldRules.js' },
+    'shape.limits': { note: 'Ceilings on nesting depth, key count, array length and string size, past which a payload is treated as a parse bomb.', source: 'content/shieldRules.js' },
+    rateLimits: { note: 'The abuse controls applied per client.', source: 'content/shieldRules.js' },
+    'rateLimits.defaults': { note: 'Window, ceiling, burst allowance, concurrency cap, block escalation and the event loop lag at which the budget is cut. Every one is overridable.', source: 'content/shieldRules.js' },
+    'rateLimits.sensitivePathPattern': { note: 'A regular expression for paths that get the tighter limit automatically — login, register, token, reset and their neighbours. Supplied as source text so you can compile it yourself.', source: 'content/shieldRules.js' },
+  },
+
+  shieldFeed: {
+    document: { note: 'The signed ruleset, as a JSON string rather than a nested object. The signature covers exactly these bytes, so a verifier checks what it received and only then parses it — there is no canonical serialisation for the two ends to disagree about.', source: 'shield_feed_sign.py' },
+    signature: { note: 'Detached signature over the document string.', source: 'shield_feed_sign.py' },
+    'signature.alg': { note: 'Always ed25519. The verifier does not read this to choose an algorithm — that would let whoever serves the document pick the one it is checked with.', source: 'shield_feed_sign.py' },
+    'signature.keyId': { note: 'Which pinned key signed it. The package carries the public halves it will accept; a key it does not know is refused whatever the signature says.', source: 'shield_feed_sign.py' },
+    'signature.value': { note: 'Base64, 64 bytes. Verified against the pinned key, never against the host this was downloaded from.', source: 'shield_feed_sign.py' },
+  },
+
+  shieldFeedStatus: {
+    ok: { note: 'Whether a signed document is currently being served. False means installs are running on what they already hold, which is the designed behaviour rather than an outage.', source: 'shield_feed.py' },
+    serial: { note: 'The serial of the published document. It only ever goes up, and an install refuses anything below the highest it has already accepted — that is what makes replaying an older signed feed useless.', source: 'shield_feed.py' },
+    started: { note: 'When the feed service last started.', source: 'shield_feed.py' },
+    served: { note: 'Process totals. There is nothing per caller here, and nothing is written to disk — the package sends no telemetry and this end keeps none.', source: 'shield_feed.py' },
+    'served.feed': { note: 'How many signed documents have gone out since the service started.', source: 'shield_feed.py' },
+    'served.notModified': { note: 'How many polls were answered 304 because the caller already had the current document.', source: 'shield_feed.py' },
+    error: { note: 'Why the document could not be read, when ok is false. Null otherwise.', source: 'shield_feed.py' },
+  },
+
+  status: {
+    overall: { note: 'The worst state across every check. operational, degraded, down or unknown.', source: 'healthcheck/status-snapshot.py' },
+    checked: { note: 'When the last check ran. The timer fires every five minutes, so this is never more than that behind.', source: 'healthcheck/status-snapshot.py' },
+    generated: { note: 'When this snapshot was written. Unlike the static endpoints, this is minutes old rather than deploy-old.', source: 'healthcheck/status-snapshot.py' },
+    windowDays: { note: 'How much history the days array covers. Ninety.', source: 'healthcheck/status-snapshot.py' },
+    intervalSeconds: { note: 'Seconds between checks — 300. Multiply by a day to get the expected sample count.', source: 'healthcheck/status-snapshot.py' },
+    checks: { note: 'Six checks, each one a thing that can fail quietly. Two of them exist because the site can look fine while being broken.', source: 'healthcheck/status-snapshot.py' },
+    'checks[].id': { note: 'Stable check identifier.', source: 'healthcheck/status-snapshot.py' },
+    'checks[].name': { note: 'What the check is called.', source: 'healthcheck/status-snapshot.py' },
+    'checks[].detail': { note: 'What it actually verifies, and why it is worth verifying. The styling and enquiry checks explain the silent failures they catch.', source: 'healthcheck/status-snapshot.py' },
+    'checks[].status': { note: 'The result of the most recent run: up, down or unknown.', source: 'healthcheck/status-snapshot.py' },
+    'checks[].uptime': { note: 'Percentage of samples that passed across the whole window.', source: 'derived' },
+    'checks[].samples': { note: 'How many samples that percentage is drawn from.', source: 'derived' },
+    'checks[].days': { note: 'One entry per day for ninety days, oldest first. This is what the bars on /status are drawn from. Its keys are single letters on purpose — six checks times ninety days is 540 objects, and the short names roughly halve the file.', source: 'healthcheck/status-snapshot.py' },
+    'checks[].days[].d': { note: 'The day, as an ISO date. Short for date.', source: 'healthcheck/status-snapshot.py' },
+    'checks[].days[].s': { note: 'State: up, down, partial or none. none means no samples that day — the checker was not running yet, which is why the first weeks of the window are empty.', source: 'healthcheck/status-snapshot.py' },
+    'checks[].days[].u': { note: 'Samples that passed that day. Short for up.', source: 'healthcheck/status-snapshot.py' },
+    'checks[].days[].t': { note: 'Samples taken that day. Short for total. 288 is a full day at one every five minutes.', source: 'healthcheck/status-snapshot.py' },
+  },
+};
+
+export function describeField(endpointId, path) {
+  if (!path) return null;
+  const normalised = path.replace(/\[\]$/, '');
+  return FIELDS[endpointId]?.[path] ?? FIELDS[endpointId]?.[normalised] ?? COMMON_FIELDS[path] ?? null;
+}

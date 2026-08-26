@@ -1,0 +1,3 @@
+# Managed by /usr/local/sbin/amitista-nginx-ban.sh — do not edit by hand.
+# One `deny <ip>;` per line, written by the fail2ban amitista-nginx-deny action.
+# Empty is the normal state.
