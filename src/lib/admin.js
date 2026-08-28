@@ -84,6 +84,10 @@ export async function fetchSession() {
     role: result.body.role ?? null,
     permissions: result.body.permissions ?? [],
     viewerPermissions: result.body.viewerPermissions ?? [],
+    // Groups the server hands out by account rather than by permission. This
+    // and the two below rebuild the session a field at a time, so anything the
+    // payload gains has to be named here or it is silently dropped.
+    private: result.body.private ?? [],
     mustChange: Boolean(result.body.mustChange),
     configured: true,
   };
@@ -99,6 +103,7 @@ export async function signIn(username, password, code, verification) {
       role: result.body.role ?? null,
       permissions: result.body.permissions ?? [],
       viewerPermissions: result.body.viewerPermissions ?? [],
+      private: result.body.private ?? [],
       mustChange: Boolean(result.body.mustChange),
     };
   }
@@ -137,6 +142,7 @@ export async function verifyGoogleCode(code) {
       role: result.body.role ?? null,
       permissions: result.body.permissions ?? [],
       viewerPermissions: result.body.viewerPermissions ?? [],
+      private: result.body.private ?? [],
       mustChange: Boolean(result.body.mustChange),
     };
   }

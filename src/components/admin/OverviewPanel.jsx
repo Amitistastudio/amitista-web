@@ -28,6 +28,7 @@ import {
   shareOf,
   swingOf,
 } from '../../lib/admin';
+import { RELAY_PROBE_TTL_MS, deliverySettling, restartedRecently } from './developer/shared';
 import {
   Bar,
   Dot,
@@ -89,8 +90,9 @@ function findConcerns(data, can) {
     for (const service of Array.isArray(data.services) ? data.services : []) {
       if (service.state !== 'active') {
         add('bad', `${service.name} is ${service.state}.`);
-      } else if ((service.restarts ?? 0) > 0) {
-        add('warn', `${service.name} has restarted ${service.restarts} time${service.restarts === 1 ? '' : 's'}.`);
+      } else if (restartedRecently(service)) {
+        const times = `${service.restarts} time${service.restarts === 1 ? '' : 's'}`;
+        add('warn', `${service.name} has restarted ${times}, most recently ${formatAgo(service.since)}.`);
       }
     }
 
@@ -114,8 +116,16 @@ function findConcerns(data, can) {
     }
 
     const relay = data.relay ?? null;
-    if (relay && !relay.reachable) add('bad', 'The enquiry relay is not answering.');
-    else if (relay && !relay.webhook) add('warn', 'The enquiry relay has no webhook set, so nothing is delivered.');
+    if (relay && !relay.reachable) {
+      add('bad', 'The enquiry relay is not answering.');
+    } else if (relay && !relay.webhook) {
+      const settling = deliverySettling(data);
+      if (settling) {
+        add('warn', `Enquiry delivery is unconfirmed while ${settling} settles — the relay rechecks within ${Math.round(RELAY_PROBE_TTL_MS / 60000)} minutes.`);
+      } else {
+        add('bad', 'The enquiry relay cannot hand enquiries to the bot, so nothing is delivered.');
+      }
+    }
   }
 
   if (can('releases.read')) {
@@ -250,7 +260,7 @@ export default function OverviewPanel({ data, permissions = [], role = null }) {
 
   const overall = status?.overall ?? 'unknown';
   const upCount = services.filter((service) => service.state === 'active').length;
-  const restarts = services.reduce((sum, service) => sum + (service.restarts ?? 0), 0);
+  const restarts = services.filter(restartedRecently).reduce((sum, service) => sum + service.restarts, 0);
   const swing = swingOf(counts);
 
   const checks = Array.isArray(status?.checks) ? status.checks : [];
@@ -601,7 +611,7 @@ export default function OverviewPanel({ data, permissions = [], role = null }) {
                   <span className="block text-[13px] font-medium text-white">
                     {uptime ?? service.state}
                   </span>
-                  {service.restarts > 0 ? (
+                  {restartedRecently(service) ? (
                     <span className="block text-[10px] text-amber-300 tracking-wider uppercase">
                       {service.restarts} restart{service.restarts === 1 ? '' : 's'}
                     </span>
@@ -786,9 +796,15 @@ export default function OverviewPanel({ data, permissions = [], role = null }) {
                     relay?.reachable
                       ? relay.webhook
                         ? 'up, delivering'
-                        : 'up, no webhook set'
+                        : deliverySettling(data)
+                          ? 'up, rechecking delivery'
+                          : 'up, not delivering'
                       : 'unreachable',
-                    relay?.reachable && relay.webhook ? 'text-emerald-400' : 'text-rose-400',
+                    relay?.reachable && relay.webhook
+                      ? 'text-emerald-400'
+                      : relay?.reachable && deliverySettling(data)
+                        ? 'text-amber-300'
+                        : 'text-rose-400',
                   ],
                 ]
               : []),

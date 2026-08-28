@@ -1,11 +1,11 @@
 [Unit]
 Description=Amitista Cloudflare posture check
-Documentation=file:/root/amitista-repo/web/deploy/cloudflare/cf-posture-check.sh
+Documentation=file:/root/website/deploy/cloudflare/cf-posture-check.sh
 After=network-online.target nginx.service
 Wants=network-online.target
 
 [Service]
 Type=oneshot
 EnvironmentFile=-/etc/amitista/cf.env
-ExecStart=/root/amitista-repo/web/deploy/cloudflare/cf-posture-check.sh
+ExecStart=/root/website/deploy/cloudflare/cf-posture-check.sh
 TimeoutStartSec=180

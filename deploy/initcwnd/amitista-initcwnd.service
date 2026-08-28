@@ -1,6 +1,6 @@
 [Unit]
 Description=Widen TCP initial congestion window on the default route
-Documentation=file:///root/amitista-repo/web/deploy/initcwnd/amitista-initcwnd.sh
+Documentation=file:///root/website/deploy/initcwnd/amitista-initcwnd.sh
 After=network-online.target
 Wants=network-online.target
 

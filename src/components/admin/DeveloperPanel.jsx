@@ -6,12 +6,20 @@ import Health from './developer/Health';
 import Endpoints from './developer/Endpoints';
 import Releases from './developer/Releases';
 import Reference from './developer/Reference';
+import Performance from './developer/Performance';
 
-export const DEVELOPER_VIEWS = ['dev-health', 'dev-endpoints', 'dev-releases', 'dev-reference'];
+export const DEVELOPER_VIEWS = [
+  'dev-health',
+  'dev-endpoints',
+  'dev-performance',
+  'dev-releases',
+  'dev-reference',
+];
 
 const VIEWS = {
   'dev-health': Health,
   'dev-endpoints': Endpoints,
+  'dev-performance': Performance,
   'dev-releases': Releases,
   'dev-reference': Reference,
 };
