@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+#
+# Runs before every push. It exists because this org is on GitHub's Free plan,
+# where private repositories get no branch protection, no rulesets and no secret
+# scanning — the three things that would otherwise stop a bad push server-side.
+# Enforcing here is weaker: it is on the machine doing the pushing and anyone
+# can bypass it. It is not nothing, and it is what is available.
+#
+# Enable it once per clone:
+#
+#     git config core.hooksPath .githooks
+#
+# Bypass a single push deliberately:
+#
+#     ALLOW_MAIN=1 git push        # push straight to main
+#     SKIP_TESTS=1 git push        # skip the suites
+#     git push --no-verify         # skip this hook entirely
+#
+set -uo pipefail
+
+RED=$'\033[31m'; YEL=$'\033[33m'; DIM=$'\033[2m'; OFF=$'\033[0m'
+fail() { printf '%spre-push: %s%s\n' "$RED" "$*" "$OFF" >&2; }
+note() { printf '%s          %s%s\n' "$DIM" "$*" "$OFF" >&2; }
+
+REMOTE_REF_MAIN=0
+RANGE=""
+
+# stdin gives: <local ref> <local sha> <remote ref> <remote sha>
+while read -r localref localsha remoteref remotesha; do
+  [ "$localsha" = "0000000000000000000000000000000000000000" ] && continue
+  case "$remoteref" in refs/heads/main) REMOTE_REF_MAIN=1 ;; esac
+  if [ "$remotesha" = "0000000000000000000000000000000000000000" ]; then
+    # A new branch has no remote sha. `git diff <sha>` would compare the working
+    # tree to that commit and find nothing added, so the scan would pass on a
+    # branch that does carry a key. Diff from where this branch left the remote.
+    base="$(git rev-list "$localsha" --not --remotes=origin 2>/dev/null | tail -1)"
+    if [ -n "$base" ]; then
+      RANGE="${base}^..${localsha}"
+    else
+      RANGE="${localsha}^..${localsha}"
+    fi
+  else
+    RANGE="$remotesha..$localsha"
+  fi
+done
+
+# ------------------------------------------------------- main is for merges
+if [ "$REMOTE_REF_MAIN" = "1" ] && [ "${ALLOW_MAIN:-}" != "1" ]; then
+  fail "refusing to push straight to main."
+  note "This repo has no server-side branch protection, so review only happens"
+  note "if it is done on purpose. Push a branch and open a pull request:"
+  note ""
+  note "    git switch -c my-change && git push -u origin my-change"
+  note ""
+  note "If this push genuinely belongs on main, repeat it as:"
+  note ""
+  note "    ALLOW_MAIN=1 git push"
+  exit 1
+fi
+
+# ------------------------------------------------------------ secret scan
+# Deliberately narrow. A pattern that matches a real provider format almost
+# never fires falsely; a generic "secret = ..." rule fires constantly and gets
+# the whole hook disabled, which is worse than not having it.
+if [ -n "$RANGE" ]; then
+  ADDED="$(git diff --unified=0 "$RANGE" 2>/dev/null | grep '^+' | grep -v '^+++')"
+  HITS=""
+  add_hit() { HITS="${HITS}  $1\n"; }
+
+  scan() {
+    local label="$1" re="$2"
+    local found
+    found="$(printf '%s' "$ADDED" | grep -aEo -e "$re" | sort -u | head -3)"
+    [ -n "$found" ] && add_hit "$label: $(printf '%s' "$found" | tr '\n' ' ')"
+  }
+
+  scan "AWS access key id"     '\bAKIA[0-9A-Z]{16}\b'
+  scan "GitHub token"          '\bgh[pousr]_[A-Za-z0-9]{36,}\b'
+  scan "Slack token"           '\bxox[baprs]-[A-Za-z0-9-]{10,}'
+  scan "Google API key"        '\bAIza[0-9A-Za-z_-]{35}\b'
+  scan "private key block"     '-----BEGIN [A-Z ]*PRIVATE KEY-----'
+  scan "extended private key"  '\bxprv[A-Za-z0-9]{50,}\b'
+  scan "database URL with a password" '\b(postgres|postgresql|mysql|mongodb(\+srv)?|redis|amqp)://[^[:space:]:@]+:[^[:space:]@]{3,}@'
+
+  # Stripe live keys, minus the one in shield's own test fixture, which is
+  # Stripe's published documentation key and exists to be detected.
+  STRIPE="$(printf '%s' "$ADDED" | grep -aEo '\bsk_live_[A-Za-z0-9]{16,}\b' \
+            | grep -v '^sk_live_4eC39HqLyjWDarjtT1zdp7dc$' | sort -u | head -3)"
+  [ -n "$STRIPE" ] && add_hit "Stripe live secret key: $(printf '%s' "$STRIPE" | tr '\n' ' ')"
+
+  if [ -n "$HITS" ]; then
+    fail "these commits look like they carry credentials:"
+    printf "$HITS" >&2
+    note ""
+    note "Nothing was pushed. If a real secret is in a commit, rewriting the"
+    note "branch is not enough on its own — rotate the credential too."
+    note "If this is a test fixture, push once with: git push --no-verify"
+    exit 1
+  fi
+fi
+
+# ------------------------------------------------------------------ tests
+if [ "${SKIP_TESTS:-}" = "1" ]; then
+  note "tests skipped by SKIP_TESTS=1"
+  exit 0
+fi
+
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT" || exit 1
+FAILED=()
+
+for f in deploy/admin-api/test_*.py deploy/api-gateway/test_*.py deploy/contact-relay/test_*.py; do
+  [ -e "$f" ] || continue
+  ( cd "$(dirname "$f")" && python3 "$(basename "$f")" >/dev/null 2>&1 ) || FAILED+=("$f")
+done
+
+if [ ${#FAILED[@]} -gt 0 ]; then
+  fail "these suites fail, so the push is refused:"
+  for f in "${FAILED[@]}"; do note "$f"; done
+  note ""
+  note "Run one directly to see why. To push anyway: SKIP_TESTS=1 git push"
+  exit 1
+fi
+
+printf '%spre-push: suites pass, no credentials found%s\n' "$YEL" "$OFF" >&2
+exit 0
