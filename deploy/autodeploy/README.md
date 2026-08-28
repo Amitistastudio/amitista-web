@@ -89,6 +89,23 @@ systemctl disable --now amitista-autodeploy.timer
 Deploys then go back to being the manual commands in each component's own
 directory. Nothing else changes.
 
+## Working straight on main
+
+The maintainer does not open a pull request to themselves. What gates a deploy
+is CI going green on the commit, not a review, so pushing to `main` is a
+supported way to work and loses nothing while one person holds the account:
+
+```sh
+git config amitista.allowMainPush true      # once per clone
+```
+
+The suites and the credential scan still run on every push — those are what
+actually stop a bad push, and turning them off is a different decision entirely.
+The guard stays on by default for anyone who has not set the flag.
+
+A direct push that fails CI leaves `main` red and **deploys nothing**: the gate
+holds and production stays on the last commit that passed. Fix forward.
+
 ## The thing to know
 
 Auto-deploy means merging to `main` runs code as root on this server. `main` has

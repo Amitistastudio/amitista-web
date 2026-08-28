@@ -45,16 +45,27 @@ while read -r localref localsha remoteref remotesha; do
 done
 
 # ------------------------------------------------------- main is for merges
-if [ "$REMOTE_REF_MAIN" = "1" ] && [ "${ALLOW_MAIN:-}" != "1" ]; then
+# The lead works straight on main and that is fine: what gates a deploy is CI
+# going green on the commit, not a pull request, and a lone maintainer approving
+# their own diff catches nothing a passing suite does not. Everyone else pushes
+# a branch, so the guard stays on by default and is turned off per clone:
+#
+#     git config amitista.allowMainPush true
+#
+# The suites and the credential scan below still run either way. Those are what
+# actually stop a bad push, and nobody should be turning them off.
+if [ "$REMOTE_REF_MAIN" = "1" ] && [ "${ALLOW_MAIN:-}" != "1" ] \
+   && [ "$(git config --bool amitista.allowMainPush 2>/dev/null)" != "true" ]; then
   fail "refusing to push straight to main."
-  note "This repo has no server-side branch protection, so review only happens"
-  note "if it is done on purpose. Push a branch and open a pull request:"
+  note "Push a branch and open a pull request:"
   note ""
   note "    git switch -c my-change && git push -u origin my-change"
   note ""
-  note "If this push genuinely belongs on main, repeat it as:"
+  note "If you maintain this repo and work on main by choice, set it once:"
   note ""
-  note "    ALLOW_MAIN=1 git push"
+  note "    git config amitista.allowMainPush true"
+  note ""
+  note "Or, for this one push only:  ALLOW_MAIN=1 git push"
   exit 1
 fi
 
