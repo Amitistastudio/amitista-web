@@ -55,6 +55,20 @@ is what keeps the studio bot away from it. So the repository holds the source
 and `/opt/enchange` receives it. `data/`, `.env` and `node_modules` are never
 overwritten: state, secrets and installed packages belong to the live host.
 
+## Redeploying one thing
+
+The timer only reacts to `main` moving. If the deployed tree drifts on its own —
+someone edits `/opt` by hand, or a component was behind before this existed —
+nothing triggers, because nothing changed in git. That is what `--only` is for:
+
+```sh
+deploy/autodeploy/amitista-autodeploy.sh --only enchange
+```
+
+Components: `website`, `studio-bot`, `enchange`, `admin-api`, `api-gateway`,
+`shield`. It deploys from the current checkout and takes the same snapshot and
+rollback path as an automatic run.
+
 ## Watching it
 
 ```sh

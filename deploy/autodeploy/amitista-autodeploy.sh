@@ -17,6 +17,10 @@
 #     amitista-autodeploy.sh              deploy whatever is due
 #     amitista-autodeploy.sh --dry-run    say what it would do, change nothing
 #     amitista-autodeploy.sh --force      deploy even if CI has not reported
+#     amitista-autodeploy.sh --only NAME   redeploy one component from the
+#                                          current checkout, whether or not main
+#                                          moved — for when /opt has drifted
+#                                          rather than the repository
 #
 set -uo pipefail
 
@@ -29,13 +33,15 @@ ORG=Amitistastudio
 STATE=/var/lib/amitista/autodeploy
 STAMP="$(date -u +%Y%m%d-%H%M%S)"
 
-DRY=""; FORCE=""
-for a in "$@"; do
-  case "$a" in
+DRY=""; FORCE=""; ONLY=""
+while [ $# -gt 0 ]; do
+  case "$1" in
     --dry-run) DRY=1 ;;
     --force)   FORCE=1 ;;
-    *) echo "unknown argument: $a" >&2; exit 2 ;;
+    --only)    shift; ONLY="${1:-}"; [ -n "$ONLY" ] || { echo "--only needs a component name" >&2; exit 2; } ;;
+    *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
+  shift
 done
 
 log()  { printf '%s %s\n' "$(date -u +%H:%M:%S)" "$*"; }
@@ -242,6 +248,22 @@ sync_repo() {
   CHANGED="$(changed_between "$dir" "$before" "$after")"
   return 0
 }
+
+if [ -n "$ONLY" ]; then
+  step "redeploying $ONLY from the current checkout"
+  case "$ONLY" in
+    website)     run website     deploy_website ;;
+    studio-bot)  run studio-bot  deploy_studio_bot ;;
+    enchange)    run enchange    deploy_enchange ;;
+    admin-api)   run admin-api   deploy_api admin-api amitista-admin ;;
+    api-gateway) run api-gateway deploy_api api-gateway amitista-api ;;
+    shield)      run shield      deploy_shield ;;
+    *) die "unknown component: $ONLY (website, studio-bot, enchange, admin-api, api-gateway, shield)" ;;
+  esac
+  if [ ${#FAILED[@]} -gt 0 ]; then die "$ONLY did not come up and was rolled back"; fi
+  log "$ONLY redeployed"
+  exit 0
+fi
 
 step "amitista-web"
 if sync_repo "$WEB" amitista-web; then
