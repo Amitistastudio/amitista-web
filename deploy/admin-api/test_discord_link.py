@@ -133,7 +133,7 @@ opening = users.discord_state(OWNER)["prefs"]
 check("sign-in notices start off", opening["signin"] is False)
 check("board reminders start on", opening["boardDue"] is True)
 check("being put on a card starts on", opening["boardAssigned"] is True)
-check("the chattier board notices start off", opening["boardComment"] is False and opening["boardMoved"] is False)
+check("the chattier board notices start on", opening["boardComment"] is True and opening["boardMoved"] is True)
 check("no events are wanted yet", opening["events"] == [])
 check("and there are no quiet hours", opening["quiet"] is None)
 check("no sign-in notice is wanted yet", users.discord_wants(OWNER, "signin") is None)
