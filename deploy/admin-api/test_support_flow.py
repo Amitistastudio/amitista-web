@@ -530,11 +530,18 @@ check("claiming without a linked Discord is refused", status == 403)
 status, raw = request("POST", "/support/queue/reply", {"id": CHANNEL_ID, "body": "hello"}, cookie=desk)
 check("answering needs no link", status == 200)
 
+# Project stages are per-ticket and defined bot-side, so the panel cannot know
+# which keys are real and delegates that to the bot. What it can still refuse on
+# its own is a value of the wrong shape, and it must, so that garbage never
+# reaches a bot call at all.
 calls_before = len([1 for route, _ in calls if route == "/support/all/status"])
-status, raw = request("POST", "/support/queue/status", {"id": CHANNEL_ID, "status": "sandwich"}, cookie=owner)
-check("an unknown status is refused before the bot", status == 400)
+status, raw = request("POST", "/support/queue/status", {"id": CHANNEL_ID, "status": "Sandwich!"}, cookie=owner)
+check("a malformed status is refused before the bot", status == 400)
 check("the bot was not asked about it",
       len([1 for route, _ in calls if route == "/support/all/status"]) == calls_before)
+status, raw = request("POST", "/support/queue/status", {"id": CHANNEL_ID, "status": "sandwich"}, cookie=owner)
+check("a well-shaped but unknown key is the bot's to refuse",
+      len([1 for route, _ in calls if route == "/support/all/status"]) == calls_before + 1)
 status, raw = request("POST", "/support/queue/status", {"id": CHANNEL_ID, "status": "resolved"}, cookie=owner)
 check("a status change is sent", status == 200 and as_json(raw)["ticket"]["stage"] == "resolved")
 status, raw = request("POST", "/support/queue/status", {"id": CHANNEL_ID, "status": "build"}, cookie=owner)

@@ -91,14 +91,24 @@ tar --create --gzip --file "$TMP" \
     --exclude='node_modules' \
     --exclude='.ssr-build' \
     --exclude='ipcountry.json' \
+    --exclude='discord-bot/data/buckets' \
     --warning=no-file-changed \
+    --warning=no-file-removed \
     "${BACKUP_PATHS[@]}" \
     ${MONGO_PATHS[@]+"${MONGO_PATHS[@]}"} \
     2>"$TAR_ERR" || {
       status=$?
       [ "$status" -le 1 ] || {
         echo "backup: tar failed with $status" >&2
-        sed 's/^/backup: tar: /' "$TAR_ERR" >&2
+        if [ -s "$TAR_ERR" ]; then
+          sed 's/^/backup: tar: /' "$TAR_ERR" >&2
+        else
+          # An empty stderr beside a fatal status means the message belonged to
+          # a warning class silenced above, which in practice is a file that
+          # moved under tar while it read. Say so, rather than leaving the next
+          # reader with a bare number and nothing to go on.
+          echo "backup: tar: no stderr — a file most likely moved mid-read" >&2
+        fi
         rm -f "$TAR_ERR"
         exit "$status"
       }
