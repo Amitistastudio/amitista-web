@@ -135,7 +135,6 @@ export default function Footer() {
             onClick={scrollToTop}
             className="inline-flex items-center gap-2 hover:text-white transition-colors cursor-pointer"
           >
-            BACK TO TOP
             <ArrowUp size={12} strokeWidth={2} />
           </button>
         </div>
