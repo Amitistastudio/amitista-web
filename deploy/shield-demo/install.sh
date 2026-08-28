@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SHIELD_SRC="${SHIELD_SRC:-/root/amitista-repo/shield}"
+SHIELD_SRC="${SHIELD_SRC:-/root/website/shield}"
 TARGET=/opt/amitista/shield-demo
 NODE=/opt/node/bin/node
 NPM=/opt/node/bin/npm

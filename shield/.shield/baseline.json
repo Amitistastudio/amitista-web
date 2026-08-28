@@ -3,16 +3,16 @@
   "minSamples": 200,
   "routes": {
     "POST /login": {
-      "samples": 5,
+      "samples": 6,
       "frozen": false,
       "fields": {
         "body.user": {
-          "seen": 5,
+          "seen": 6,
           "types": {
-            "string": 5
+            "string": 6
           },
           "classes": {
-            "alpha": 5
+            "alpha": 6
           },
           "min": 1,
           "max": 1,
@@ -23,21 +23,21 @@
       }
     },
     "GET /clean": {
-      "samples": 7,
+      "samples": 8,
       "frozen": false,
       "fields": {}
     },
     "GET /go": {
-      "samples": 8,
+      "samples": 9,
       "frozen": false,
       "fields": {
         "query.next": {
-          "seen": 8,
+          "seen": 9,
           "types": {
-            "string": 8
+            "string": 9
           },
           "classes": {
-            "path": 8
+            "path": 9
           },
           "min": 10,
           "max": 10,
@@ -48,16 +48,16 @@
       }
     },
     "GET /echo": {
-      "samples": 8,
+      "samples": 9,
       "frozen": false,
       "fields": {
         "query.q": {
-          "seen": 8,
+          "seen": 9,
           "types": {
-            "string": 8
+            "string": 9
           },
           "classes": {
-            "text": 8
+            "text": 9
           },
           "min": 11,
           "max": 11,

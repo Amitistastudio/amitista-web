@@ -20,7 +20,9 @@ import {
   DISK_URGENT,
   DISK_WARN,
   TONE_TEXT,
+  deliverySettling,
   healthConcerns,
+  restartedRecently,
   serviceTone,
   timerTone,
 } from './shared';
@@ -42,7 +44,8 @@ export default function Health({ data }) {
       : 'green';
 
   const down = services.filter((service) => service.state !== 'active').length;
-  const restarting = services.filter((service) => (service.restarts ?? 0) > 0).length;
+  const restarting = services.filter(restartedRecently).length;
+  const settling = deliverySettling(health);
 
   return (
     <div className="space-y-6">
@@ -132,7 +135,7 @@ export default function Health({ data }) {
                 </span>
                 <span
                   className={`block text-[10px] tracking-wider uppercase ${
-                    (service.restarts ?? 0) > 0 ? 'text-amber-300' : 'text-neutral-600'
+                    restartedRecently(service) ? 'text-amber-300' : 'text-neutral-600'
                   }`}
                 >
                   {(service.restarts ?? 0) > 0
@@ -241,9 +244,13 @@ export default function Health({ data }) {
                 tone={relay.reachable ? 'text-emerald-400' : 'text-rose-400'}
               />
               <Row
-                label="Webhook"
-                value={relay.webhook ? 'configured' : 'missing'}
-                tone={relay.webhook ? 'text-emerald-400' : 'text-amber-300'}
+                label="Delivery to bot"
+                value={
+                  relay.webhook ? 'live' : settling ? `rechecking after ${settling} restarted` : 'not delivering'
+                }
+                tone={
+                  relay.webhook ? 'text-emerald-400' : settling ? 'text-amber-300' : 'text-rose-400'
+                }
               />
             </>
           ) : (

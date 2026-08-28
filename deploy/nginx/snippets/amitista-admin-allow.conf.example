@@ -1,0 +1,21 @@
+# Source addresses allowed to reach /admin. The real file is NOT in this
+# repository and must not be: it holds the operator's own home addresses, which
+# are both personal data and the exact list an attacker would want to know.
+#
+# Copy this to amitista-admin-allow.conf on the box, put the real addresses in,
+# and leave it there — nothing in deploy/ installs this file, so it survives on
+# its own:
+#
+#   install -m 644 amitista-admin-allow.conf.example \
+#       /etc/nginx/snippets/amitista-admin-allow.conf
+#   $EDITOR /etc/nginx/snippets/amitista-admin-allow.conf
+#   nginx -t && systemctl reload nginx
+#
+# Everything not listed gets `deny all`, and the admin location turns that into
+# a 404 rather than a 403, so a refused address is not told the panel is there.
+
+allow 2001:db8::/32;      # replace with your IPv6 prefix
+allow 203.0.113.10;       # replace with your IPv4 address
+allow 127.0.0.1;
+allow ::1;
+deny all;

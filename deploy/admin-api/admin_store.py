@@ -116,7 +116,7 @@ DEFAULT_ROLES = {
         "boards.manage",
         "transcripts.read",
         "developer.read",
-    },
+        },
     "viewer": {
         "overview.read",
         "api.keys",

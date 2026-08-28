@@ -1,12 +1,12 @@
 [Unit]
 Description=Amitista performance monitor
-Documentation=file:/root/amitista-repo/web/deploy/perf-monitor/perf-monitor.mjs
+Documentation=file:/root/website/deploy/perf-monitor/perf-monitor.mjs
 After=network-online.target nginx.service
 Wants=network-online.target
 
 [Service]
 Type=oneshot
 Environment=PATH=/opt/node/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-ExecStart=/opt/node/bin/node /root/amitista-repo/web/deploy/perf-monitor/perf-monitor.mjs
+ExecStart=/opt/node/bin/node /root/website/deploy/perf-monitor/perf-monitor.mjs
 TimeoutStartSec=600
 Nice=10

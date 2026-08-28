@@ -18,6 +18,11 @@ const BUDGETS = {
 };
 const REGRESSION = 1.35;
 const MIN_SHIFT_MS = 120;
+// A ratio alone is meaningless on a site this fast: 272ms → 400ms clears 1.35x
+// while still using a third of the LCP budget. A metric is only worth calling a
+// regression once it has also left the comfortable part of its budget, which is
+// what keeps the six-hourly run quiet unless something genuinely moved.
+const QUIET_FRACTION = 0.6;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -232,9 +237,10 @@ async function checkInvariants() {
   return problems;
 }
 
-function regressions(now, base) {
+function regressions(now, base, profile) {
   const out = [];
   if (!base) return out;
+  const budget = BUDGETS[profile];
 
   for (const page of now) {
     const previous = base.find((p) => p.path === page.path);
@@ -244,6 +250,7 @@ function regressions(now, base) {
       const then = previous[metric];
       const value = page[metric];
       if (!then || !value) continue;
+      if (value <= budget[metric] * QUIET_FRACTION) continue;
       if (value > then * REGRESSION && value - then > MIN_SHIFT_MS) {
         out.push(`${page.path} ${metric.toUpperCase()} ${then}ms → ${value}ms`);
       }
@@ -285,21 +292,47 @@ async function readJson(path, fallback) {
   }
 }
 
+// Alerts go to the Discord bot's relay on loopback, which is what
+// /etc/amitista/alerts.env is actually configured for (ALERT_URL + ALERT_TOKEN).
+// A bare ALERT_WEBHOOK Discord URL is still honoured if one is set, so an older
+// deployment keeps working.
+async function alertConfig() {
+  const env = await readFile('/etc/amitista/alerts.env', 'utf8').catch(() => '');
+  const from = (name) =>
+    process.env[name] ||
+    env.match(new RegExp(`^\\s*(?:export\\s+)?${name}=["']?([^"'\\n]+)`, 'm'))?.[1] ||
+    '';
+  return { url: from('ALERT_URL'), token: from('ALERT_TOKEN'), webhook: from('ALERT_WEBHOOK') };
+}
+
 async function alert(summary) {
-  let webhook = process.env.ALERT_WEBHOOK ?? '';
-  if (!webhook) {
-    const env = await readFile('/etc/amitista/alerts.env', 'utf8').catch(() => '');
-    webhook = env.match(/^\s*(?:export\s+)?ALERT_WEBHOOK=["']?([^"'\n]+)/m)?.[1] ?? '';
+  const { url, token, webhook } = await alertConfig();
+
+  if (url && token) {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ summary }),
+    }).catch((error) => {
+      process.stderr.write(`perf-monitor: could not reach the alert relay: ${error.message}\n`);
+      return null;
+    });
+    if (response && response.ok) return;
+    if (response) {
+      process.stderr.write(`perf-monitor: the alert relay answered ${response.status}\n`);
+    }
   }
-  if (!webhook) {
-    process.stderr.write(`perf-monitor: no ALERT_WEBHOOK, so this went undelivered:\n${summary}\n`);
+
+  if (webhook) {
+    await fetch(webhook, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content: `**amitista.com performance**\n${summary}` }),
+    }).catch(() => process.stderr.write('perf-monitor: could not send the alert\n'));
     return;
   }
-  await fetch(webhook, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content: `**amitista.com performance**\n${summary}` }),
-  }).catch(() => process.stderr.write('perf-monitor: could not send the alert\n'));
+
+  process.stderr.write(`perf-monitor: no alert destination, so this went undelivered:\n${summary}\n`);
 }
 
 async function main() {
@@ -342,7 +375,7 @@ async function main() {
   const problems = [
     ...invariants,
     ...overBudget(pages, profile),
-    ...regressions(pages, comparable),
+    ...regressions(pages, comparable, profile),
   ];
 
   const run = { at: new Date().toISOString(), profile, pages, problems };

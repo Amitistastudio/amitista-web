@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import bisect
+import errno
 import glob
 import hashlib
 import ipaddress
@@ -11,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
@@ -29,7 +31,12 @@ SERVICES = [
     ("amitista-shield-demo.service", "Shield evaluator"),
     ("amitista-shield-feed.service", "Shield rules feed"),
     ("amitista-ai.service", "AI relay"),
-    ("amitista-bot.service", "Discord bot"),
+    # amitista-bot.service — the old role-less unit — was stopped and disabled on
+    # 26 Aug 2026: it ran every module on the same token as the Support bot, so it
+    # was a second gateway session for one identity. Watching a retired unit means
+    # a permanent "Discord bot has failed" in the panel, because a unit that was
+    # SIGKILLed on its way out stays in `failed` until someone resets it. The three
+    # role units below cover its whole module set; see runbooks/bot-restart.sh.
     ("amitista-bot-security.service", "Discord bot — Security"),
     ("amitista-bot-support.service", "Discord bot — Support"),
     ("amitista-bot-website.service", "Discord bot — Website"),
@@ -207,6 +214,527 @@ def read_timers():
             }
         )
     return out
+
+# The reference rows in the developer group of the panel. This list used to be
+# written out by hand in the API, which is how it came to claim /root/bot still
+# existed for a day after the bot moved to /opt. Every row is resolved against
+# the box on each run instead, so a row that stops being true reads as missing
+# rather than reading as fact.
+#
+# check says how to resolve the row:
+#   dir  file  log  — lstat it, and carry the size or the entry count
+#   link            — read the symlink and check what it points at is there
+#   glob            — count the matches and take the newest
+#   repo            — branch, last commit and whether the tree is dirty
+#   releases        — how many are kept and which one is live
+#   script          — has to exist and be executable
+#   install         — compares a source directory against the installed copy
+#   none            — a command with nothing on disk to verify
+# path overrides value when the row prints a command rather than a path, and
+# unit/units name the services worth showing next to where they run from.
+REFERENCE = [
+    (
+        "Where the code lives",
+        [
+            {
+                "label": "Website repo",
+                "value": "/root/website",
+                "hint": "the site, its deploy tooling and shield/",
+                "check": "repo",
+            },
+            {
+                "label": "Bot repo",
+                "value": "/opt/amitista/discord-bot",
+                "hint": "one directory: source, history and runtime",
+                "check": "repo",
+            },
+            {
+                "label": "Site source",
+                "value": "/root/website/src",
+                "hint": "React, built by Vite",
+                "check": "dir",
+            },
+            {
+                "label": "Admin API source",
+                "value": "/root/website/deploy/admin-api",
+                "hint": "the /opt copy is what runs",
+                "check": "dir",
+            },
+            {
+                "label": "Operations manual",
+                "value": "/root/runbooks/OPERATIONS.md",
+                "hint": "the long answer to anything here",
+                "check": "file",
+            },
+        ],
+    ),
+    (
+        "Where it runs",
+        [
+            {
+                "label": "Served site",
+                "value": "/var/www/amitista.com/current",
+                "hint": "symlink to the live release",
+                "check": "link",
+            },
+            {
+                "label": "Releases",
+                "value": "/var/www/amitista.com/releases",
+                "hint": "older ones are pruned by the deploy",
+                "check": "releases",
+            },
+            {
+                "label": "Shared state",
+                "value": "/var/www/amitista.com/shared",
+                "hint": "status.json and friends",
+                "check": "dir",
+            },
+            {
+                "label": "Admin API",
+                "value": "/opt/amitista/admin-api/admin_api.py",
+                "hint": "serves this panel",
+                "check": "file",
+                "unit": "amitista-admin.service",
+            },
+            {
+                "label": "API gateway",
+                "value": "/opt/amitista/api-gateway/api_gateway.py",
+                "hint": "the token-gated public API",
+                "check": "file",
+                "unit": "amitista-api.service",
+            },
+            {
+                "label": "Contact relay",
+                "value": "/opt/amitista/contact-relay",
+                "hint": "the form on the site posts here",
+                "check": "dir",
+                "unit": "amitista-contact.service",
+            },
+            {
+                "label": "Discord bot",
+                "value": "/opt/amitista/discord-bot/bot.js",
+                "hint": "four units: core, security, support, website",
+                "check": "file",
+                "units": [
+                    "amitista-bot.service",
+                    "amitista-bot-security.service",
+                    "amitista-bot-support.service",
+                    "amitista-bot-website.service",
+                ],
+            },
+            {
+                "label": "Shield evaluator",
+                "value": "/opt/amitista/shield-demo",
+                "hint": "decides what a request may do",
+                "check": "dir",
+                "unit": "amitista-shield-demo.service",
+            },
+            {
+                "label": "Shield rules feed",
+                "value": "/opt/amitista/shield-feed",
+                "hint": "publishes what the evaluator reads",
+                "check": "dir",
+                "unit": "amitista-shield-feed.service",
+            },
+            {
+                "label": "AI relay",
+                "value": "/opt/amitista/ai-relay",
+                "hint": "answers site and legal questions",
+                "check": "dir",
+                "unit": "amitista-ai.service",
+            },
+        ],
+    ),
+    (
+        "Configuration & data",
+        [
+            {
+                "label": "Environment files",
+                "value": "/etc/amitista/*.env",
+                "hint": "600 root-only, six of them",
+                "check": "glob",
+            },
+            {
+                "label": "Vault keys",
+                "value": "/etc/amitista/vault-keys.json",
+                "hint": "the key to the sealed store",
+                "check": "file",
+            },
+            {
+                "label": "Panel snapshots",
+                "value": "/var/lib/amitista/admin/*.json",
+                "hint": "everything this group reads",
+                "check": "glob",
+            },
+            {
+                "label": "Session store",
+                "value": "/var/lib/amitista/admin/session",
+                "hint": "users.json, audit.jsonl, boards.json",
+                "check": "dir",
+            },
+            {
+                "label": "Backups",
+                "value": "/var/backups/amitista",
+                "hint": "nightly, GPG encrypted",
+                "check": "dir",
+            },
+        ],
+    ),
+    (
+        "Logs",
+        [
+            {
+                "label": "Site access",
+                "value": "/var/log/nginx/amitista.access.log",
+                "hint": None,
+                "check": "log",
+            },
+            {
+                "label": "Site errors",
+                "value": "/var/log/nginx/amitista.error.log",
+                "hint": "start here when a page 500s",
+                "check": "log",
+            },
+            {
+                "label": "CSP reports",
+                "value": "/var/log/nginx/amitista.csp.log",
+                "hint": "what the policy blocked",
+                "check": "log",
+            },
+            {
+                "label": "Firewall",
+                "value": "/var/log/nginx/amitista.firewall.log",
+                "hint": None,
+                "check": "log",
+            },
+            {
+                "label": "Any service",
+                "value": "journalctl -u <unit> -f",
+                "hint": "-n 200 --no-pager for a look back",
+                "check": "none",
+            },
+        ],
+    ),
+    (
+        "Everyday commands",
+        [
+            {
+                "label": "Build the site",
+                "value": "cd /root/website && npm run build",
+                "hint": "postbuild prerenders and emits the API",
+                "check": "none",
+            },
+            {
+                "label": "Deploy the site",
+                "value": "/root/website/deploy/deploy-local.sh",
+                "hint": "builds, verifies, rolls back on failure",
+                "check": "script",
+            },
+            {
+                "label": "Lint",
+                "value": "cd /root/website && npm run lint",
+                "hint": "oxlint",
+                "check": "none",
+            },
+            {
+                "label": "Deploy the admin API",
+                "value": (
+                    "install -o root -g amitista-admin -m 640 "
+                    "/root/website/deploy/admin-api/admin_api.py /opt/amitista/admin-api/"
+                ),
+                "hint": "then systemctl restart amitista-admin — the mode is not optional",
+                "path": "/root/website/deploy/admin-api",
+                "installed": "/opt/amitista/admin-api",
+                "check": "install",
+            },
+            {
+                "label": "Restart the bot",
+                "value": "/root/runbooks/bot-restart.sh",
+                "hint": "--check parses without touching anything",
+                "check": "script",
+            },
+            {
+                "label": "Refresh this panel",
+                "value": "systemctl start amitista-admin-snapshot.service",
+                "hint": "rebuilds every row here now",
+                "check": "none",
+                "unit": "amitista-admin-snapshot.timer",
+            },
+        ],
+    ),
+]
+
+REFERENCE_ENTRY_CAP = 5000
+
+def count_entries(path):
+    total = 0
+    try:
+        with os.scandir(path) as entries:
+            for _ in entries:
+                total += 1
+                if total >= REFERENCE_ENTRY_CAP:
+                    break
+    except OSError:
+        return None
+    return total
+
+def git_facts(path):
+    def run(args):
+        try:
+            result = subprocess.run(
+                ["git", "-C", path] + args, capture_output=True, text=True, timeout=5
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+        return result.stdout if result.returncode == 0 else None
+
+    # --porcelain=v1 --branch answers both questions in one call: the first line
+    # carries the branch, every line after it is a file the tree is dirty by.
+    status = run(["status", "--porcelain=v1", "--branch"])
+    if status is None:
+        return None
+
+    lines = status.splitlines()
+    branch = None
+    if lines and lines[0].startswith("## "):
+        branch = lines[0][3:].split("...", 1)[0].strip()
+        if branch.startswith("HEAD (no branch)"):
+            branch = "detached"
+    dirty = len([line for line in lines[1:] if line.strip()])
+
+    commit = None
+    committed = None
+    head = run(["log", "-1", "--format=%h %cI"])
+    if head:
+        parts = head.strip().split(" ", 1)
+        commit = parts[0] or None
+        if len(parts) > 1:
+            try:
+                committed = iso(datetime.fromisoformat(parts[1]).timestamp())
+            except ValueError:
+                committed = None
+
+    return {"branch": branch, "dirty": dirty, "commit": commit, "committed": committed}
+
+UNREADABLE = (errno.EACCES, errno.EPERM)
+
+def unreachable(error):
+    # This unit is sandboxed, and ProtectHome=yes turns /root into an empty
+    # directory it cannot traverse. A row under there is not gone — it simply
+    # is not visible from in here, and saying "missing" would be a worse lie
+    # than the hand-written list this replaced. EACCES is reported as its own
+    # state so the panel can say which it is.
+    return getattr(error, "errno", None) in UNREADABLE
+
+def hidden_row(out, note="not visible from the collector's sandbox"):
+    out["state"] = "unchecked"
+    out["detail"] = note
+    return out
+
+def file_digest(path):
+    try:
+        with open(path, "rb") as handle:
+            digest = hashlib.sha256()
+            for chunk in iter(lambda: handle.read(65536), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+    except OSError:
+        return None
+
+def install_drift(source, installed):
+    # "Is what I edited actually what is running" is the question this row is
+    # really asked, and it is the one the panel could never answer before. Only
+    # the modules the service loads are compared — tests and one-shot migrations
+    # are not part of the install, so drift in one of those is not news here.
+    try:
+        names = sorted(
+            name for name in os.listdir(source)
+            if name.endswith(".py")
+            and not name.startswith(("test_", "migrate_"))
+            and os.path.isfile(os.path.join(source, name))
+        )
+    except OSError as error:
+        return "hidden" if unreachable(error) else None
+
+    behind = []
+    for name in names:
+        there = os.path.join(installed, name)
+        if not os.path.isfile(there):
+            continue
+        if file_digest(os.path.join(source, name)) != file_digest(there):
+            behind.append(name)
+    return behind
+
+def reference_unit(names, states):
+    names = [name for name in names if isinstance(name, str)]
+    if not names:
+        return None
+
+    seen = [(name, states.get(name, "unknown")) for name in names]
+    if len(seen) == 1:
+        name, state = seen[0]
+        return {"name": name, "state": state, "detail": state}
+
+    up = [entry for entry in seen if entry[1] == "active"]
+    return {
+        "name": "%d units" % len(seen),
+        "state": "active" if len(up) == len(seen) else "failed",
+        "detail": "%d of %d running" % (len(up), len(seen)),
+    }
+
+def resolve_reference(row, states, live):
+    out = {
+        "label": row["label"],
+        "value": row["value"],
+        "hint": row.get("hint"),
+        "state": None,
+        "detail": None,
+        "bytes": None,
+        "changed": None,
+    }
+
+    unit = reference_unit(row.get("units") or [row.get("unit")], states)
+    if unit:
+        out["unit"] = unit
+
+    check = row.get("check", "none")
+    if check == "none":
+        return out
+
+    target = row.get("path") or row["value"]
+
+    if check == "glob":
+        matches = []
+        for name in glob.glob(target):
+            try:
+                matches.append((os.stat(name).st_mtime, name, os.stat(name).st_size))
+            except OSError:
+                continue
+        if not matches:
+            try:
+                os.listdir(os.path.dirname(target) or "/")
+            except OSError as error:
+                if unreachable(error):
+                    return hidden_row(out)
+            out["state"] = "missing"
+            out["detail"] = "nothing matches"
+            return out
+        matches.sort(reverse=True)
+        out["state"] = "ok"
+        out["detail"] = "%d file%s · newest %s" % (
+            len(matches),
+            "" if len(matches) == 1 else "s",
+            os.path.basename(matches[0][1]),
+        )
+        out["changed"] = iso(matches[0][0])
+        return out
+
+    try:
+        info = os.lstat(target)
+    except OSError as error:
+        if unreachable(error):
+            return hidden_row(out)
+        out["state"] = "missing"
+        out["detail"] = "not on this box"
+        return out
+
+    out["state"] = "ok"
+    out["changed"] = iso(info.st_mtime)
+
+    if check == "link":
+        try:
+            points_at = os.readlink(target)
+        except OSError:
+            points_at = None
+        if points_at:
+            out["detail"] = "→ %s" % os.path.basename(points_at.rstrip("/"))
+        if not os.path.exists(target):
+            out["state"] = "missing"
+            out["detail"] = "%s — and that is gone" % (out["detail"] or "broken symlink")
+        return out
+
+    if check == "releases":
+        try:
+            names = sorted(os.listdir(target), reverse=True)
+        except OSError:
+            names = []
+        kept = [name for name in names if os.path.isdir(os.path.join(target, name))]
+        out["detail"] = "%d kept%s" % (len(kept), (" · live %s" % live) if live else "")
+        return out
+
+    if check == "repo":
+        facts = git_facts(target)
+        if not facts:
+            out["detail"] = "%s entries — not a git repo" % count_entries(target)
+            return out
+        parts = []
+        if facts["branch"]:
+            parts.append("on %s" % facts["branch"])
+        if facts["commit"]:
+            parts.append(facts["commit"])
+        parts.append("clean" if not facts["dirty"] else "%d uncommitted" % facts["dirty"])
+        out["detail"] = " · ".join(parts)
+        out["changed"] = facts["committed"] or out["changed"]
+        return out
+
+    if check == "install":
+        behind = install_drift(target, row.get("installed") or "")
+        if behind == "hidden":
+            return hidden_row(out)
+        if behind is None:
+            out["state"] = "missing"
+            out["detail"] = "the source is not there to compare"
+        elif behind:
+            listed = ", ".join(behind[:3])
+            if len(behind) > 3:
+                listed += " and %d more" % (len(behind) - 3)
+            out["state"] = "drifted"
+            out["detail"] = "%s not installed to %s yet" % (
+                listed,
+                row.get("installed") or "the running copy",
+            )
+        else:
+            out["detail"] = "in step with %s" % (row.get("installed") or "the running copy")
+        return out
+
+    if check == "script":
+        if not os.path.isfile(target):
+            out["state"] = "missing"
+            out["detail"] = "not a file"
+        elif not os.access(target, os.X_OK):
+            out["state"] = "missing"
+            out["detail"] = "not executable"
+        else:
+            out["bytes"] = info.st_size
+        return out
+
+    if check == "dir":
+        total = count_entries(target)
+        if total is not None:
+            out["detail"] = "%s%d entr%s" % (
+                "over " if total >= REFERENCE_ENTRY_CAP else "",
+                total,
+                "y" if total == 1 else "ies",
+            )
+        return out
+
+    if check == "log":
+        out["bytes"] = info.st_size
+        return out
+
+    out["bytes"] = info.st_size
+    return out
+
+def read_reference(services, timers, live):
+    states = {}
+    for entry in list(services) + list(timers):
+        if isinstance(entry, dict) and isinstance(entry.get("unit"), str):
+            states[entry["unit"]] = entry.get("state") or "unknown"
+
+    return [
+        {"title": title, "rows": [resolve_reference(row, states, live) for row in rows]}
+        for title, rows in REFERENCE
+    ]
 
 def read_certificate():
     candidates = sorted(glob.glob("/etc/letsencrypt/live/*/cert.pem"))
@@ -1317,6 +1845,152 @@ def read_fail2ban():
         "totalBanned": sum(jail["totalBanned"] for jail in jails),
     }
 
+PERF_STATE = os.environ.get("AMITISTA_PERF_STATE", "/var/lib/amitista/perf")
+PERF_HISTORY = os.path.join(PERF_STATE, "history.jsonl")
+PERF_BASELINE = os.path.join(PERF_STATE, "baseline.json")
+
+# Mirrors BUDGETS in deploy/perf-monitor/perf-monitor.mjs. The monitor stays the
+# authority on whether a run passed — its own problems list is what the panel
+# shows — but the meters need the numbers to draw a bar against, and a budget
+# the panel cannot see is a bar with no end.
+PERF_BUDGETS = {
+    "broadband": {"lcp": 1200, "fcp": 900, "ttfb": 400, "cls": 0.1, "longTaskMs": 400, "bytes": 400000},
+    "slow-4g-4x-cpu": {"lcp": 2500, "fcp": 1800, "ttfb": 900, "cls": 0.1, "longTaskMs": 3000, "bytes": 400000},
+}
+
+# The table shows a run in full; the trend only charts what can be plotted
+# against a budget line, so bytes and long tasks are carried for the latest run
+# and left out of the series.
+PERF_FULL = ("ttfb", "fcp", "lcp", "cls", "longTaskMs", "bytes")
+PERF_TRENDED = ("ttfb", "fcp", "lcp", "cls")
+PERF_KEEP = 24
+
+def parse_iso(value):
+    if not isinstance(value, str) or not value:
+        return None
+    text = value.strip().replace("Z", "+00:00")
+    try:
+        return datetime.fromisoformat(text).timestamp()
+    except ValueError:
+        return None
+
+def release_at(releases, moment):
+    # Which release was serving when the run happened. Only the releases still on
+    # disk can be named — the deploy prunes past five — so an older run simply
+    # carries no release rather than a guess.
+    when = parse_iso(moment)
+    if when is None:
+        return None
+    for release in releases:
+        if not isinstance(release, dict):
+            continue
+        made = parse_iso(release.get("created"))
+        if made is not None and made <= when:
+            return release.get("name")
+    return None
+
+def perf_page(page, keys):
+    out = {}
+    for key in keys:
+        value = page.get(key)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        out[key] = value
+    return out
+
+def over_budget(page, budget):
+    # The same comparisons the monitor makes, so the panel and the alert it sent
+    # to Discord never disagree about whether a page is inside budget.
+    if not budget:
+        return []
+    out = []
+    for key in PERF_FULL:
+        value = page.get(key)
+        limit = budget.get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool) and limit and value > limit:
+            out.append(key)
+    return out
+
+def read_perf(releases):
+    try:
+        with open(PERF_HISTORY, encoding="utf-8") as handle:
+            lines = handle.readlines()
+    except OSError:
+        return None
+
+    runs = []
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(entry, dict) and isinstance(entry.get("pages"), list):
+            runs.append(entry)
+
+    if not runs:
+        return None
+
+    latest = runs[-1]
+    profile = latest.get("profile")
+    budget = PERF_BUDGETS.get(profile)
+
+    pages = []
+    for page in latest["pages"]:
+        if not isinstance(page, dict) or not isinstance(page.get("path"), str):
+            continue
+        entry = {"path": page["path"]}
+        entry.update(perf_page(page, PERF_FULL))
+        entry["lcpElement"] = page.get("lcpElement") if isinstance(page.get("lcpElement"), str) else None
+        injected = page.get("injected")
+        entry["injected"] = [str(item) for item in injected] if isinstance(injected, list) else []
+        entry["over"] = over_budget(entry, budget)
+        pages.append(entry)
+
+    # Only runs of the same profile can share a chart: a slow-4g run next to a
+    # broadband one on one axis would invent a regression that never happened.
+    same = [run for run in runs if run.get("profile") == profile][-PERF_KEEP:]
+    series = []
+    for run in same:
+        moment = run.get("at")
+        point = {"at": moment, "release": release_at(releases, moment), "pages": {}}
+        for page in run["pages"]:
+            if isinstance(page, dict) and isinstance(page.get("path"), str):
+                point["pages"][page["path"]] = perf_page(page, PERF_TRENDED)
+        series.append(point)
+
+    try:
+        with open(PERF_BASELINE, encoding="utf-8") as handle:
+            baseline = json.load(handle)
+    except (OSError, ValueError):
+        baseline = None
+
+    base = None
+    if isinstance(baseline, dict) and baseline.get("profile") == profile:
+        marks = {}
+        for page in baseline.get("pages") or []:
+            if isinstance(page, dict) and isinstance(page.get("path"), str):
+                marks[page["path"]] = perf_page(page, PERF_TRENDED)
+        base = {"at": baseline.get("at"), "pages": marks}
+
+    problems = latest.get("problems")
+    return {
+        "generated": iso(datetime.now(timezone.utc).timestamp()),
+        "profile": profile,
+        "budgets": budget,
+        "totalRuns": len(runs),
+        "latest": {
+            "at": latest.get("at"),
+            "release": release_at(releases, latest.get("at")),
+            "pages": pages,
+            "problems": [str(item) for item in problems] if isinstance(problems, list) else [],
+        },
+        "baseline": base,
+        "runs": series,
+    }
+
 def write_atomic(path, payload, owner):
     out_dir = os.path.dirname(path)
     os.makedirs(out_dir, exist_ok=True)
@@ -1349,6 +2023,9 @@ def main():
     security_path = os.environ.get(
         "ADMIN_SECURITY", os.path.join(os.path.dirname(out_path), "security.json")
     )
+    perf_path = os.environ.get(
+        "ADMIN_PERF", os.path.join(os.path.dirname(out_path), "perf.json")
+    )
     analytics_path = os.environ.get(
         "ADMIN_ANALYTICS", os.path.join(os.path.dirname(out_path), "analytics.json")
     )
@@ -1357,6 +2034,8 @@ def main():
     api = read_api_stats()
     buckets = api.pop("buckets", {})
     visits = api.pop("visits", None)
+    services = read_services()
+    timers = read_timers()
 
     payload = {
         "generated": iso(datetime.now(timezone.utc).timestamp()),
@@ -1364,17 +2043,28 @@ def main():
         "currentRelease": live,
         "releases": releases,
         "rollbackTargets": [r["name"] for r in releases if not r["current"] and r["hasIndex"]],
-        "services": read_services(),
-        "timers": read_timers(),
+        "services": services,
+        "timers": timers,
         "backups": read_backups(),
         "disk": read_disk(),
         "certificate": read_certificate(),
         "relay": read_relay(),
         "api": api,
+        "reference": read_reference(services, timers, live),
     }
 
     write_atomic(out_path, payload, owner)
     write_atomic(history_path, merge_history(history_path, buckets), owner)
+
+    # The perf monitor keeps its own state under /var/lib/amitista/perf, which
+    # the admin API cannot read: it is 0750 root:root and the API runs as
+    # amitista-admin. Projecting it here is the only way the panel sees it, and
+    # it goes in its own file rather than the overview so the dashboard payload
+    # does not carry a chart nothing on it draws.
+    perf = read_perf(releases)
+    if perf is not None:
+        write_atomic(perf_path, perf, owner)
+
     if visits is not None:
         write_atomic(analytics_path, merge_visits(analytics_path, visits), owner)
     write_atomic(

@@ -30,7 +30,7 @@ clean_stage() {
   find "$MONGO_STAGE" -type f -exec shred -u {} + 2>/dev/null || true
   rm -rf "$MONGO_STAGE"
 }
-trap 'rm -f "$TMP" "$TMP.gpg"; clean_stage' EXIT
+trap 'rm -f "$TMP" "$TMP.gpg" "$DEST/.tar-err-$STAMP"; clean_stage' EXIT
 
 MONGO_PATHS=()
 if systemctl is-active --quiet mongod && command -v mongodump >/dev/null; then
@@ -54,30 +54,56 @@ else
   echo "backup: mongod is not running, skipping Mongo" >&2
 fi
 
+# tar treats a named path that does not exist as a fatal error (exit 2), so a
+# directory that moves or is retired silently ends the nightly backup. Checking
+# first turns that into one line naming the path, instead of a bare exit code.
+BACKUP_PATHS=(
+  /root/website
+  /etc/nginx
+  /etc/amitista
+  /var/lib/amitista
+  /etc/letsencrypt
+  /etc/fail2ban/jail.local
+  /etc/ssh/sshd_config
+  /etc/ssh/sshd_config.d
+  /etc/sysctl.d
+  /etc/systemd/system/amitista-contact.service
+  /etc/systemd/system/mongod.service.d
+  /etc/mongod.conf
+  /opt/amitista
+  "$(readlink -f /var/www/amitista.com/current)"
+)
+
+MISSING=()
+for path in "${BACKUP_PATHS[@]}"; do
+  [ -e "$path" ] || MISSING+=("$path")
+done
+if [ "${#MISSING[@]}" -gt 0 ]; then
+  echo "backup: refusing to write an incomplete archive, these paths are gone:" >&2
+  for path in "${MISSING[@]}"; do echo "backup:   $path" >&2; done
+  exit 1
+fi
+
+# tar's own stderr is kept rather than discarded, so a future failure arrives
+# with the reason attached instead of just a status number.
+TAR_ERR="$DEST/.tar-err-$STAMP"
 tar --create --gzip --file "$TMP" \
     --exclude='node_modules' \
     --exclude='.ssr-build' \
     --exclude='ipcountry.json' \
     --warning=no-file-changed \
-    /root/amitista-repo \
-    /etc/nginx \
-    /etc/amitista \
-    /var/lib/amitista \
-    /etc/letsencrypt \
-    /etc/fail2ban/jail.local \
-    /etc/ssh/sshd_config \
-    /etc/ssh/sshd_config.d \
-    /etc/sysctl.d \
-    /etc/systemd/system/amitista-contact.service \
-    /etc/systemd/system/mongod.service.d \
-    /etc/mongod.conf \
-    /opt/amitista \
+    "${BACKUP_PATHS[@]}" \
     ${MONGO_PATHS[@]+"${MONGO_PATHS[@]}"} \
-    "$(readlink -f /var/www/amitista.com/current)" \
-    2>/dev/null || {
+    2>"$TAR_ERR" || {
       status=$?
-      [ "$status" -le 1 ] || { echo "backup: tar failed with $status" >&2; exit "$status"; }
+      [ "$status" -le 1 ] || {
+        echo "backup: tar failed with $status" >&2
+        sed 's/^/backup: tar: /' "$TAR_ERR" >&2
+        rm -f "$TAR_ERR"
+        exit "$status"
+      }
     }
+rm -f "$TAR_ERR"
 
 # The plaintext dump must not outlive the tar it was made for.
 clean_stage

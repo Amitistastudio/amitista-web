@@ -97,3 +97,7 @@ desktop.ini
 *.sqlite
 *.sqlite3
 .ssr-build
+
+# The admin allowlist holds the operator's own addresses. The example beside it
+# is the one that belongs in git.
+deploy/nginx/snippets/amitista-admin-allow.conf

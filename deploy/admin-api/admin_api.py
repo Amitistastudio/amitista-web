@@ -186,6 +186,22 @@ OVERVIEW_PATH = os.environ.get("ADMIN_OVERVIEW", "/var/lib/amitista/admin/overvi
 HISTORY_PATH = os.environ.get("ADMIN_HISTORY", "/var/lib/amitista/admin/history.json")
 SECURITY_PATH = os.environ.get("ADMIN_SECURITY", "/var/lib/amitista/admin/security.json")
 ANALYTICS_PATH = os.environ.get("ADMIN_ANALYTICS", "/var/lib/amitista/admin/analytics.json")
+PERF_PATH = os.environ.get("ADMIN_PERF", "/var/lib/amitista/admin/perf.json")
+# Groups handed out by account rather than by permission. A permission cannot
+# express this: an owner resolves to every permission at read time, so any owner
+# would hold whatever we invented. The account name is the one thing an owner
+# cannot grant themselves from inside the panel.
+#
+# Worth being plain about what this is not — it is a gate against panel users.
+# Anyone with root on this box can read this file and edit the list.
+PRIVATE_GROUPS = {
+    "github": ("blxr",),
+}
+
+def private_groups_for(name):
+    key = (name or "").strip().lower()
+    return sorted(group for group, allowed in PRIVATE_GROUPS.items() if key in allowed)
+
 INSTALLS_PATH = os.environ.get("ADMIN_SHIELD_INSTALLS", "/var/lib/amitista/shield-feed/state/installs.json")
 BRANDS_PUBLIC = os.environ.get("ADMIN_BRANDS_PUBLIC", "/var/www/amitista.com/shared/shield-brands.json")
 BRANDS_GROUP = os.environ.get("ADMIN_BRANDS_GROUP", "www-data")
@@ -1064,55 +1080,91 @@ def build_overview(granted=None):
 # without the group going dark, and can take developer.read off without
 # touching the dashboard.
 
-DEVELOPER_REFERENCE = {
-    "Where the code lives": [
-        ("Repository", "/root/amitista-repo", "web/ · discord-bot/ · shield/"),
-        ("Site source", "/root/amitista-repo/web/src", "React, built by Vite"),
-        ("Admin API source", "/root/amitista-repo/web/deploy/admin-api", "deployed to /opt"),
-        ("Bot source", "/root/amitista-repo/discord-bot", "sync-bot.sh pulls /opt back here"),
-    ],
-    "Where it runs": [
-        ("Served site", "/var/www/amitista.com/current", "symlink to the live release"),
-        ("Releases", "/var/www/amitista.com/releases", "last 12 kept, older pruned"),
-        ("Shared state", "/var/www/amitista.com/shared", "status.json and friends"),
-        ("Admin API", "/opt/amitista/admin-api/admin_api.py", "amitista-admin.service"),
-        ("API gateway", "/opt/amitista/api-gateway/api_gateway.py", "amitista-api.service"),
-        ("Discord bot", "/opt/amitista/discord-bot/bot.js", "amitista-bot*.service"),
-        ("Shield", "/opt/amitista/shield-demo · shield-feed", "evaluator and rules feed"),
-        ("AI relay", "/opt/amitista/ai-relay", "amitista-ai.service"),
-    ],
-    "Configuration & data": [
-        ("Environment files", "/etc/amitista/*.env", "admin · bot · shield · ai · contact"),
-        ("Panel snapshots", "/var/lib/amitista/admin/*.json", "overview · security · analytics"),
-        ("Backups", "/var/backups/amitista", "nightly, GPG encrypted"),
-    ],
-    "Logs": [
-        ("Site access", "/var/log/nginx/amitista.access.log", None),
-        ("Site errors", "/var/log/nginx/amitista.error.log", "start here when a page 500s"),
-        ("CSP reports", "/var/log/nginx/amitista.csp.log", "what the policy blocked"),
-        ("Firewall", "/var/log/nginx/amitista.firewall.log", None),
-        ("Any service", "journalctl -u <unit> -f", "-n 200 --no-pager for a look back"),
-    ],
-    "Everyday commands": [
-        ("Build the site", "cd /root/amitista-repo/web && npm run build", "postbuild prerenders"),
-        ("Lint", "cd /root/amitista-repo/web && npm run lint", "oxlint"),
-        ("Restart a service", "systemctl restart <unit>", "then check status"),
-        ("Pull the bot back", "/root/amitista-repo/sync-bot.sh", "/opt copy is the live one"),
-        ("Refresh this panel", "systemctl start amitista-admin-snapshot.service", "rebuilds the snapshot now"),
-    ],
-}
+PERF_PAGE_FIELDS = ("path", "ttfb", "fcp", "lcp", "cls", "longTaskMs", "bytes", "lcpElement", "injected", "over")
 
-def developer_reference():
-    return [
-        {
-            "title": title,
-            "rows": [
-                {"label": label, "value": value, "hint": hint}
-                for label, value, hint in rows
-            ],
-        }
-        for title, rows in DEVELOPER_REFERENCE.items()
-    ]
+def developer_perf():
+    # /var/lib/amitista/perf is 0750 root:root and this service runs as
+    # amitista-admin, so the numbers arrive the same way the reference does:
+    # collected by the snapshot timer, read back here as a file.
+    snapshot = read_json_file(PERF_PATH)
+    if not isinstance(snapshot, dict):
+        return None
+
+    latest = snapshot.get("latest")
+    if not isinstance(latest, dict):
+        return None
+
+    pages = []
+    for page in latest.get("pages") or []:
+        if isinstance(page, dict) and isinstance(page.get("path"), str):
+            pages.append({name: page.get(name) for name in PERF_PAGE_FIELDS})
+
+    runs = []
+    for run in snapshot.get("runs") or []:
+        if isinstance(run, dict) and isinstance(run.get("pages"), dict):
+            runs.append(
+                {
+                    "at": run.get("at"),
+                    "release": run.get("release"),
+                    "pages": {
+                        path: values
+                        for path, values in run["pages"].items()
+                        if isinstance(path, str) and isinstance(values, dict)
+                    },
+                }
+            )
+
+    problems = latest.get("problems")
+    return {
+        "generated": snapshot.get("generated"),
+        "profile": snapshot.get("profile"),
+        "budgets": snapshot.get("budgets") if isinstance(snapshot.get("budgets"), dict) else None,
+        "totalRuns": snapshot.get("totalRuns"),
+        "latest": {
+            "at": latest.get("at"),
+            "release": latest.get("release"),
+            "pages": pages,
+            "problems": [str(item) for item in problems] if isinstance(problems, list) else [],
+        },
+        "baseline": snapshot.get("baseline") if isinstance(snapshot.get("baseline"), dict) else None,
+        "runs": runs,
+    }
+
+REFERENCE_FIELDS = ("label", "value", "hint", "state", "detail", "bytes", "changed", "unit")
+
+def developer_reference(snapshot):
+    # The rows are resolved against the box by the snapshot collector, which
+    # runs as root and can see every path in them. This service cannot: it runs
+    # as amitista-admin under ProtectHome, so /root does not exist inside its
+    # namespace and half the list would read as missing if it looked for itself.
+    # So it only projects what the collector saw, and says nothing when the
+    # collector has not run yet rather than falling back to a written-out list
+    # that nothing keeps honest.
+    sections = snapshot.get("reference")
+    if not isinstance(sections, list):
+        return []
+
+    out = []
+    for section in sections:
+        if not isinstance(section, dict):
+            continue
+        title = section.get("title")
+        rows = section.get("rows")
+        if not isinstance(title, str) or not isinstance(rows, list):
+            continue
+
+        clean = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            if not isinstance(row.get("label"), str) or not isinstance(row.get("value"), str):
+                continue
+            clean.append({name: row.get(name) for name in REFERENCE_FIELDS})
+
+        if clean:
+            out.append({"title": title, "rows": clean})
+
+    return out
 
 def developer_releases(snapshot):
     # overview.json lists releases newest first, so the build before entry n is
@@ -1187,7 +1239,8 @@ def build_developer():
             "notFound": api.get("notFound") if isinstance(api.get("notFound"), list) else [],
         },
         "releases": developer_releases(snapshot),
-        "reference": developer_reference(),
+        "reference": developer_reference(snapshot),
+        "perf": developer_perf(),
     }
 
 def read_usage():
@@ -3756,6 +3809,7 @@ class Handler(BaseHTTPRequestHandler):
             "role": record.get("role"),
             "permissions": record.get("permissions") or [],
             "viewerPermissions": sorted(ROLES.get("viewer", ())),
+            "private": private_groups_for(record["name"]),
             "mustChange": bool(record.get("mustChange")),
             "expires": session["exp"],
         }
@@ -4911,6 +4965,7 @@ class Handler(BaseHTTPRequestHandler):
                 "role": fresh.get("role"),
                 "permissions": fresh.get("permissions") or [],
                 "viewerPermissions": sorted(ROLES.get("viewer", ())),
+                "private": private_groups_for(user),
                 "mustChange": bool(fresh.get("mustChange")),
             },
             self.session_cookie(token, SESSION_HOURS * 3600),
@@ -5129,6 +5184,7 @@ class Handler(BaseHTTPRequestHandler):
                 "role": fresh.get("role"),
                 "permissions": fresh.get("permissions") or [],
                 "viewerPermissions": sorted(ROLES.get("viewer", ())),
+                "private": private_groups_for(user),
                 "mustChange": bool(fresh.get("mustChange")),
             },
             self.session_cookie(token, SESSION_HOURS * 3600),

@@ -25,6 +25,8 @@ import {
   Gauge,
   Rocket,
   BookMarked,
+  Zap,
+  FolderGit2,
 } from 'lucide-react';
 import Header from '../components/web1/Header';
 import Footer from '../components/web1/Footer';
@@ -50,6 +52,7 @@ import SignIn from '../components/admin/SignIn';
 import { Notice } from '../components/admin/ui';
 import GlobalSearch from '../components/admin/GlobalSearch';
 import DeveloperPanel, { DEVELOPER_VIEWS } from '../components/admin/DeveloperPanel';
+import GithubPanel, { GITHUB_VIEWS } from '../components/admin/GithubPanel';
 import {
   fetchSession,
   signOut,
@@ -167,6 +170,14 @@ const SECTIONS = [
     blurb: 'per-endpoint traffic, errors and latency, and which 404s are ours',
   },
   {
+    id: 'dev-performance',
+    label: 'Performance',
+    icon: Zap,
+    needs: 'developer.read',
+    group: 'developer',
+    blurb: 'what a real browser measures on five routes, against budget, run after run',
+  },
+  {
     id: 'dev-releases',
     label: 'Releases',
     icon: Rocket,
@@ -181,6 +192,14 @@ const SECTIONS = [
     needs: 'developer.read',
     group: 'developer',
     blurb: 'where everything lives on the box, the unit names, the logs and the commands',
+  },
+  {
+    id: 'github',
+    label: 'GitHub',
+    icon: FolderGit2,
+    needs: null,
+    group: 'github',
+    blurb: 'nothing here yet',
   },
   {
     id: 'accounts',
@@ -224,12 +243,17 @@ const SECTIONS = [
   },
 ];
 
+// Groups the server hands out per account rather than per permission. Named
+// here only so the nav can hide them; the server decides who is on the list.
+const PRIVATE_GROUPS = ['github'];
+
 const GROUPS = [
   { id: 'studio', label: 'Studio' },
   { id: 'platform', label: 'Platform' },
   { id: 'site', label: 'Site' },
   { id: 'logs', label: 'Logs' },
   { id: 'developer', label: 'Developer' },
+  { id: 'github', label: 'GitHub' },
   { id: 'people', label: 'People' },
   { id: 'you', label: 'You' },
 ];
@@ -514,6 +538,7 @@ export default function AdminPage() {
   const [user, setUser] = React.useState(null);
   const [role, setRole] = React.useState(null);
   const [permissions, setPermissions] = React.useState([]);
+  const [privateGroups, setPrivateGroups] = React.useState([]);
   const [viewerPermissions, setViewerPermissions] = React.useState([]);
   const [asUser, setAsUser] = React.useState(false);
   const [mustChange, setMustChange] = React.useState(false);
@@ -560,6 +585,7 @@ export default function AdminPage() {
       setRole(session.role ?? null);
       setPermissions(session.permissions ?? []);
       setViewerPermissions(session.viewerPermissions ?? []);
+      setPrivateGroups(session.private ?? []);
       setAsUser(false);
       setMustChange(Boolean(session.mustChange));
       setState(SIGNED_IN);
@@ -632,11 +658,15 @@ export default function AdminPage() {
     }
   }
 
+  // A private group is hidden from everyone the server did not name, owners
+  // included. An empty group also disappears from the nav on its own, so the
+  // heading only ever shows for an account that can open something under it.
   const allowed = mustChange
     ? SECTIONS.filter((entry) => entry.id === 'account')
     : SECTIONS.filter(
         (entry) =>
-          entry.needs === null || [entry.needs].flat().some((need) => held.includes(need)),
+          (!PRIVATE_GROUPS.includes(entry.group) || privateGroups.includes(entry.group)) &&
+          (entry.needs === null || [entry.needs].flat().some((need) => held.includes(need))),
       );
   const current = allowed.some((entry) => entry.id === section)
     ? section
@@ -797,6 +827,8 @@ export default function AdminPage() {
                     {current === 'firewall' && <FirewallPanel />}
 
                     {DEVELOPER_VIEWS.includes(current) && <DeveloperPanel view={current} />}
+
+                    {GITHUB_VIEWS.includes(current) && <GithubPanel />}
 
                     {current === 'accounts' && (
                       <AccountsPanel

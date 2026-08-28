@@ -1,4 +1,5 @@
 import React from 'react';
+import { formatAgo } from '../../../lib/admin';
 
 // A timer is late when it has missed the run systemd itself scheduled — not
 // when some fixed amount of time has passed. The timers here run anywhere from
@@ -30,6 +31,22 @@ export const DISK_URGENT = 90;
 
 export const BACKUP_STALE_HOURS = 36;
 
+// systemd's NRestarts only resets on `systemctl reset-failed` or a daemon
+// reload, so a bot that crashed once and has been solid ever since keeps
+// claiming "has restarted 1 time" forever. What is worth looking at is a
+// restart that just happened — a crash loop keeps pushing the service's
+// ActiveEnterTimestamp forward, so the age of the current run is the signal
+// and the counter on its own is only history.
+export const RESTART_RECENT_MS = 6 * 60 * 60 * 1000;
+
+// The contact relay hands enquiries to the website bot and caches the result of
+// that probe for 300s (DELIVERY_PROBE_TTL in contact_relay.py). While the
+// website bot is restarting the relay caches a hard "dead", and keeps serving it
+// after the bot is healthy again, so a false inside this window is a stale
+// answer rather than a lost enquiry.
+export const RELAY_PROBE_TTL_MS = 5 * 60 * 1000;
+export const RELAY_DELIVERY_UNIT = 'amitista-bot-website.service';
+
 export function agoMs(value) {
   if (typeof value !== 'string' || !value) return null;
   const parsed = Date.parse(value);
@@ -37,11 +54,30 @@ export function agoMs(value) {
   return Date.now() - parsed;
 }
 
+export function restartedRecently(service) {
+  if ((service?.restarts ?? 0) <= 0) return false;
+  const running = agoMs(service?.since);
+  return running !== null && running < RESTART_RECENT_MS;
+}
+
 export function serviceTone(service) {
   if (service?.state === 'failed') return 'rose';
   if (service?.state !== 'active') return 'amber';
-  if ((service?.restarts ?? 0) > 0) return 'amber';
+  if (restartedRecently(service)) return 'amber';
   return 'green';
+}
+
+// True when the relay's delivery probe cannot be trusted yet because the bot it
+// probes has only just come back up. Returns the service's label so the concern
+// can name what it is waiting on.
+export function deliverySettling(health) {
+  for (const service of health?.services ?? []) {
+    if (service?.unit !== RELAY_DELIVERY_UNIT) continue;
+    if (service.state !== 'active') return null;
+    const running = agoMs(service.since);
+    return running !== null && running < RELAY_PROBE_TTL_MS ? service.name : null;
+  }
+  return null;
 }
 
 export function timerTone(timer) {
@@ -69,8 +105,9 @@ export function healthConcerns(health, stale) {
   for (const service of health?.services ?? []) {
     if (service.state === 'failed') add('rose', `${service.name} has failed.`);
     else if (service.state !== 'active') add('amber', `${service.name} is ${service.state}.`);
-    else if ((service.restarts ?? 0) > 0) {
-      add('amber', `${service.name} has restarted ${service.restarts} time${service.restarts === 1 ? '' : 's'}.`);
+    else if (restartedRecently(service)) {
+      const times = `${service.restarts} time${service.restarts === 1 ? '' : 's'}`;
+      add('amber', `${service.name} has restarted ${times}, most recently ${formatAgo(service.since)}.`);
     }
   }
 
@@ -106,10 +143,20 @@ export function healthConcerns(health, stale) {
     add('amber', `The newest backup is ${Math.round(backupAge / 3600000)} hours old.`);
   }
 
+  // `webhook` is a kept key name, not a kept meaning. The relay stopped posting
+  // to a Discord webhook long ago and now hands enquiries to the bot directly,
+  // so the flag reports "the delivery path is live" — saying "no webhook
+  // configured" sent whoever read it hunting for a setting that no longer exists.
   const relay = health?.relay ?? null;
-  if (relay && relay.reachable === false) add('rose', 'The contact relay is not answering.');
-  if (relay && relay.reachable !== false && relay.webhook === false) {
-    add('amber', 'The contact relay is up but has no webhook configured.');
+  if (relay && relay.reachable === false) {
+    add('rose', 'The contact relay is not answering.');
+  } else if (relay && relay.webhook === false) {
+    const settling = deliverySettling(health);
+    if (settling) {
+      add('amber', `Enquiry delivery is unconfirmed while ${settling} settles — the relay rechecks within ${Math.round(RELAY_PROBE_TTL_MS / 60000)} minutes.`);
+    } else {
+      add('rose', 'The contact relay cannot hand enquiries to the bot — enquiries are going nowhere.');
+    }
   }
 
   return found;
