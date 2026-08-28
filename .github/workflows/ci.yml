@@ -20,10 +20,11 @@ jobs:
         with:
           python-version: '3.11'
 
-      # The suites import PyJWT; everything else they touch is stdlib or one of
-      # the *_double.py fakes checked in beside them. Pinned to the version the
-      # server's venv runs.
-      - run: pip install PyJWT==2.13.0
+      # The suites import PyJWT, and the Google ones reach RSAAlgorithm, which
+      # lives behind PyJWT's crypto extra — without it they fail on an import
+      # rather than an assertion. Pinned to what the server actually runs, which
+      # is 2.6.0; an earlier pin here claimed to match it and did not.
+      - run: pip install "PyJWT[crypto]==2.6.0"
 
       - name: admin-api suites
         working-directory: deploy/admin-api
