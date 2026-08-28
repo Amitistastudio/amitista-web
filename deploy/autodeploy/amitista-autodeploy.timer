@@ -1,0 +1,15 @@
+[Unit]
+Description=Check main for something to deploy
+
+[Timer]
+# Every five minutes. The jitter keeps the fetch off the exact minute boundary,
+# where the healthcheck, the snapshot timer and the perf monitor already sit.
+OnBootSec=5min
+OnUnitActiveSec=5min
+RandomizedDelaySec=60
+AccuracySec=30s
+# A deploy missed because the box was down still happens on the next boot.
+Persistent=true
+
+[Install]
+WantedBy=timers.target
