@@ -4,7 +4,6 @@ import Hero from '../components/web1/Hero';
 import OverviewSection from '../components/web1/OverviewSection';
 import DashboardSection from '../components/web1/DashboardSection';
 import Footer from '../components/web1/Footer';
-import AvailabilityBand from '../components/AvailabilityBand';
 import { onFirstInteraction } from '../lib/interaction';
 
 export default function HomePage() {
@@ -48,7 +47,6 @@ export default function HomePage() {
       <Header />
       <main id="main" tabIndex={-1} className="flex flex-col flex-1 focus:outline-none">
         <Hero />
-        <AvailabilityBand />
         <OverviewSection />
         <DashboardSection />
       </main>
