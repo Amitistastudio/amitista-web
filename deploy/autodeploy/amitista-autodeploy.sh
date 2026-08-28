@@ -139,7 +139,19 @@ deploy_studio_bot() {
     warn "not running after restart: $dead"
     return 1
   fi
-  log "three bot units running"
+
+  # The contact relay probes the bot's listener and caches the answer for five
+  # minutes, treating a refused connection as definitive. Restarting the bot
+  # therefore leaves the relay reporting "enquiries go nowhere" long after the
+  # bot is back, which trips the healthcheck into a false alarm — and its own
+  # remediation then restarts the relay anyway. Doing it here, deliberately and
+  # straight away, is a second of downtime instead of five minutes of a wrong
+  # answer.
+  systemctl restart amitista-contact
+  local relay; relay="$(settle_check amitista-contact)"
+  [ -n "$relay" ] && warn "amitista-contact did not come back after the bot restart"
+
+  log "three bot units running, contact relay re-probed"
 }
 
 # ================================================================ enchange
