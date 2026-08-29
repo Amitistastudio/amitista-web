@@ -102,6 +102,41 @@ settle_check() {
   printf '%s' "${dead[*]}"
 }
 
+# --------------------------------------------------------------- the scan
+# Everything below exists because of one silent failure: a deploy wrote its own
+# generated files back into the tracked checkout, and the next commit touching
+# one of them aborted the fast-forward. Nothing said so. The deploy simply
+# stopped happening, and looked exactly like an idle tick for ten minutes.
+#
+# The pattern generalises past that one bug — anything that leaves the checkout
+# dirty arms the same trap — so the checkout is inspected rather than trusted,
+# both before a merge is attempted and again after a deploy has run.
+
+DIRTY_SEEN=()
+
+scan_checkout() {
+  local dir="$1" repo="$2" dirty
+  dirty="$(git -C "$dir" status --porcelain --untracked-files=no 2>/dev/null | sed 's/^...//')"
+  [ -z "$dirty" ] && return 0
+  warn "$repo: tracked files are modified in the checkout. A commit touching any"
+  warn "$repo: of these will abort the fast-forward and stop deploys silently:"
+  printf '%s\n' "$dirty" | sed 's/^/        /' >&2
+  DIRTY_SEEN+=("$repo")
+  return 1
+}
+
+# A change that matches no component deploys nothing. That is usually correct —
+# a README edit should not restart a bot — but it is worth saying out loud,
+# because the case where it is wrong (a new directory nobody wired up) is
+# otherwise indistinguishable from the case where it is right.
+uncovered() {
+  local repo="$1" pattern="$2" rest
+  rest="$(printf '%s\n' "$CHANGED" | grep -v '^$' | grep -vE "$pattern")"
+  [ -z "$rest" ] && return 0
+  log "$repo: changed, but no component owns these — nothing was deployed for them:"
+  printf '%s\n' "$rest" | sed 's/^/        /'
+}
+
 # ================================================================ website
 deploy_website() {
   local before_release; before_release="$(readlink /var/www/amitista.com/current)"
@@ -278,6 +313,7 @@ if [ -n "$ONLY" ]; then
 fi
 
 step "amitista-web"
+scan_checkout "$WEB" amitista-web || true
 sync_repo "$WEB" amitista-web; SYNC=$?
 [ $SYNC -eq 2 ] && FAILED+=("amitista-web (sync)")
 if [ $SYNC -eq 0 ]; then
@@ -289,9 +325,11 @@ if [ $SYNC -eq 0 ]; then
     && run api-gateway deploy_api api-gateway amitista-api
   touches "$CHANGED" '^deploy/(ai-relay|contact-relay)/' \
     && warn "ai-relay or contact-relay changed and neither has an install.sh — deploy those by hand"
+  uncovered amitista-web '^(src/|public/|brand/|index\.html|vite\.config\.js|package(-lock)?\.json|scripts/|deploy/admin-api/|deploy/api-gateway/|deploy/(ai-relay|contact-relay)/)'
 fi
 
 step "amitista-bots"
+scan_checkout "$BOTS" amitista-bots || true
 sync_repo "$BOTS" amitista-bots; SYNC=$?
 [ $SYNC -eq 2 ] && FAILED+=("amitista-bots (sync)")
 if [ $SYNC -eq 0 ]; then
@@ -299,14 +337,32 @@ if [ $SYNC -eq 0 ]; then
     && run studio-bot deploy_studio_bot
   touches "$CHANGED" '^enchange/' \
     && run enchange deploy_enchange
+  uncovered amitista-bots '^(bot\.js|src/|assets/|package(-lock)?\.json|enchange/)'
 fi
 
 step "amitista-shield"
+scan_checkout "$SHIELD" amitista-shield || true
 sync_repo "$SHIELD" amitista-shield; SYNC=$?
 [ $SYNC -eq 2 ] && FAILED+=("amitista-shield (sync)")
 if [ $SYNC -eq 0 ]; then
   touches "$CHANGED" '^(src/|bin/|feed/|evaluator/|index\.js|package(-lock)?\.json)' \
     && run shield deploy_shield
+  uncovered amitista-shield '^(src/|bin/|feed/|evaluator/|index\.js|package(-lock)?\.json)'
+fi
+
+# A deploy that dirties its own checkout has armed the trap for the next commit,
+# not this one, so this is the only moment it is visible before it bites.
+step "scan"
+RESCAN=0
+for pair in "$WEB amitista-web" "$BOTS amitista-bots" "$SHIELD amitista-shield"; do
+  set -- $pair
+  scan_checkout "$1" "$2" || RESCAN=1
+done
+if [ $RESCAN -eq 0 ]; then
+  log "all three checkouts clean"
+else
+  warn "a deploy has left a checkout dirty — commit, ignore or stop writing those"
+  warn "files, or the next commit touching one of them will block the deploy"
 fi
 
 step "result"
