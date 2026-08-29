@@ -59,14 +59,13 @@ const COLUMNS = {
   4: 'grid-cols-1 sm:grid-cols-2 md:grid-cols-4',
 };
 
-function Portrait({ person, sizes, className = '', style, eager = false }) {
+function Portrait({ person, sizes, className = '', eager = false }) {
   const [failed, setFailed] = React.useState(false);
   const showImage = Boolean(person.avatar) && !failed;
 
   return (
     <div
       className={`overflow-hidden bg-[#0f0f14] flex items-center justify-center ${className}`}
-      style={style}
     >
       {showImage ? (
         <ResponsiveImage
@@ -92,33 +91,15 @@ function Portrait({ person, sizes, className = '', style, eager = false }) {
 const DIAGONAL = [
   {
     cut: 'cut-top-left',
-    centre: [33, 33],
     label: 'top-4 left-4',
   },
   {
     cut: 'cut-bottom-right',
-    centre: [67, 67],
     label: 'bottom-4 right-4',
   },
 ];
 
-const PAIR_ZOOM = 140;
-
-function aim(focal = [0.5, 0.5], centre) {
-  const offset = (fraction, target) =>
-    Math.min(0, Math.max(100 - PAIR_ZOOM, target - PAIR_ZOOM * fraction));
-
-  return {
-    transformOrigin: '0 0',
-    transform: `translate(${offset(focal[0], centre[0])}%, ${offset(focal[1], centre[1])}%) scale(${PAIR_ZOOM / 100})`,
-  };
-}
-
 function PairAvatar({ people, eager = false }) {
-  const [aimed, setAimed] = React.useState(false);
-
-  React.useEffect(() => setAimed(true), []);
-
   return (
     <div className="relative w-full aspect-square overflow-hidden bg-[#0f0f14]">
       {people.slice(0, 2).map((person, i) => {
@@ -129,8 +110,7 @@ function PairAvatar({ people, eager = false }) {
               person={person}
               eager={eager && i === 0}
               sizes="(min-width: 768px) 480px, (min-width: 640px) 70vw, 140vw"
-              className="absolute inset-0"
-              style={aimed ? aim(person.focal, cut.centre) : undefined}
+              className={`absolute inset-0 ${person.aim ?? ''}`}
             />
           </div>
         );

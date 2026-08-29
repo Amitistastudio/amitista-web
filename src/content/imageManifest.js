@@ -200,34 +200,26 @@ export const IMAGE_MANIFEST = {
     ]
   },
   "/team/wizzard.webp": {
-    "width": 735,
-    "height": 735,
+    "width": 600,
+    "height": 600,
     "avif": [
       {
-        "url": "/img/wizzard-400w.794e22c1.avif",
+        "url": "/img/wizzard-400w.48f7fc46.avif",
         "w": 400
       },
       {
-        "url": "/img/wizzard-640w.7b1c2e3a.avif",
-        "w": 640
-      },
-      {
-        "url": "/img/wizzard-735w.c3c5f205.avif",
-        "w": 735
+        "url": "/img/wizzard-600w.2c4b7b69.avif",
+        "w": 600
       }
     ],
     "webp": [
       {
-        "url": "/img/wizzard-400w.112a02e3.webp",
+        "url": "/img/wizzard-400w.3de6c209.webp",
         "w": 400
       },
       {
-        "url": "/img/wizzard-640w.7977e184.webp",
-        "w": 640
-      },
-      {
-        "url": "/img/wizzard-735w.15e5c197.webp",
-        "w": 735
+        "url": "/img/wizzard-600w.049bc5cd.webp",
+        "w": 600
       }
     ]
   },

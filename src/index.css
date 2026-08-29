@@ -421,6 +421,25 @@
   clip-path: polygon(100% 0, 100% 100%, 0 100%);
 }
 
+/* Team pair tile: zoom each portrait 140% and slide it so the subject's face
+   lands on the centroid of its triangle — (33%, 33%) top-left, (67%, 67%)
+   bottom-right. Offset is clamp(centroid - 140 * focal, -40%, 0), the -40%
+   floor being as far as a 140% image can travel before it stops covering.
+   These live here rather than in a style prop because the CSP is
+   style-src 'self' and prerender.mjs rejects inline styles in the markup. */
+.pair-aim-wizzard,
+.pair-aim-lacy {
+  transform-origin: 0 0;
+}
+
+.pair-aim-wizzard {
+  transform: translate(-37%, -13.2%) scale(1.4);
+}
+
+.pair-aim-lacy {
+  transform: translate(0%, -3%) scale(1.4);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .lab-bar {
     transition: none;
