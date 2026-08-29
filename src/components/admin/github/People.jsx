@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import {
   formatAgo,
+  githubAvatarUrl,
   queueGithubAccess,
   queueGithubInviteCancel,
   queueGithubRevoke,
@@ -403,7 +404,7 @@ function PersonRow({ person, repositories, actor, busy, open, onToggle, onGrant,
             ) : (
               <ChevronRight className="h-3.5 w-3.5 text-neutral-600 shrink-0" strokeWidth={2} />
             )}
-            <Avatar src={person.avatar} />
+            <Avatar src={person.avatar ? githubAvatarUrl(person.login) : null} />
             <span className="min-w-0">
               <Login login={person.login} url={person.url} />
               <span className="block text-[11px] text-neutral-500 mt-0.5">
@@ -926,7 +927,7 @@ export default function People({ data, onRefresh }) {
               className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3 px-4 sm:px-6 py-3 border-b border-[#17171d] last:border-b-0"
             >
               <span className="flex items-center gap-2.5 min-w-0">
-                <Avatar src={invite.avatar} />
+                <Avatar src={invite.avatar && invite.login ? githubAvatarUrl(invite.login) : null} />
                 <span className="min-w-0">
                   <span className="text-[13px] text-white break-all">
                     {invite.login ?? 'someone'}

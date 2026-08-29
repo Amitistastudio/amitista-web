@@ -705,6 +705,12 @@ export async function fetchGithubRepositories() {
   return unwrap(await call('/github/repositories'), 'Could not read the repository snapshot.');
 }
 
+// Avatars come back through the panel rather than straight off
+// avatars.githubusercontent.com, which img-src 'self' data: will not load.
+export function githubAvatarUrl(login) {
+  return `${BASE}/github/avatar?login=${encodeURIComponent(login)}`;
+}
+
 // The three that ask for a change rather than making one. What comes back says
 // the request was written down; whether GitHub accepted it shows up in the next
 // snapshot, about a minute later. The wording everywhere downstream keeps that

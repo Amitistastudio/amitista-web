@@ -475,6 +475,110 @@ for path in ("/github/access", "/github/access/remove", "/github/access/invite/c
     status, _, _ = request("GET", path, cookie=insider)
     check("%s cannot be reached with a GET" % path, status in (400, 404, 405, 501))
 
+# -------------------------------------------------------------------- avatars
+
+# The panel cannot hot-link avatars.githubusercontent.com: the site is served
+# under img-src 'self' data:, so the browser refuses the image outright. The
+# avatar route re-serves it from this origin instead. The host gate is the
+# whole of the defence — this route reaches the network on request, so what it
+# may reach has to stay a closed list.
+
+check("the discord cdn is fetchable", admin_api.remote_art("https://cdn.discordapp.com/avatars/1/a.png"))
+check("the github avatar cdn is fetchable", admin_api.remote_art("https://avatars.githubusercontent.com/u/1?v=4"))
+
+for bad, why in (
+    ("https://github.com/octocat.png", "github itself rather than its avatar cdn"),
+    ("http://avatars.githubusercontent.com/u/1", "the avatar cdn over plain http"),
+    ("https://avatars.githubusercontent.com.evil.test/u/1", "a host that merely starts the same way"),
+    ("https://evil.test/https://avatars.githubusercontent.com/u/1", "the cdn buried in a path"),
+    ("file:///etc/passwd", "a local file"),
+    ("http://169.254.169.254/latest/meta-data/", "the metadata service"),
+    ("https://avatars.githubusercontent.com/" + "a" * 400, "a url past the ceiling"),
+    ("", "nothing at all"),
+    (None, "a missing url"),
+):
+    check("not fetchable: %s" % why, admin_api.remote_art(bad) is None)
+
+# Resolved out of the snapshot the panel is already drawing, so the browser
+# never says which url to fetch and this service needs no GitHub token.
+with open(SNAPSHOT, "w", encoding="utf-8") as handle:
+    json.dump(
+        {
+            "generated": stamp(5),
+            "org": "Amitistastudio",
+            "branch": "main",
+            "people": {
+                "members": [
+                    {"login": "kostis4563", "avatar": "https://avatars.githubusercontent.com/u/1?v=4"},
+                    {"login": "nopicture", "avatar": None},
+                    {"login": "elsewhere", "avatar": "https://evil.test/u/2.png"},
+                ],
+            },
+            "repositories": [
+                dict(
+                    repo(),
+                    access=[{"login": "collab", "avatar": "https://avatars.githubusercontent.com/u/3?v=4"}],
+                    invites=[{"login": "invited", "avatar": "https://avatars.githubusercontent.com/u/4?v=4"}],
+                ),
+            ],
+        },
+        handle,
+    )
+
+check("a member's avatar resolves", admin_api.github_avatar_for("kostis4563").endswith("/u/1?v=4"))
+check("and the lookup is not case sensitive", admin_api.github_avatar_for("KOSTIS4563") is not None)
+check("a repository collaborator resolves", admin_api.github_avatar_for("collab").endswith("/u/3?v=4"))
+check("somebody still only invited resolves", admin_api.github_avatar_for("invited").endswith("/u/4?v=4"))
+check("somebody with no avatar resolves to nothing", admin_api.github_avatar_for("nopicture") is None)
+check("an avatar hosted off the cdn resolves to nothing", admin_api.github_avatar_for("elsewhere") is None)
+check("a login not in the snapshot resolves to nothing", admin_api.github_avatar_for("stranger") is None)
+check("an empty login resolves to nothing", admin_api.github_avatar_for("") is None)
+
+# The network stands in, so the gate and the route are what is under test here
+# and not GitHub's availability.
+served = []
+
+
+def fake_fetch(url):
+    served.append(url)
+    return ("image/png", b"\x89PNG stand-in")
+
+
+admin_api.fetch_art = fake_fetch
+admin_api.artwork.by_url.clear()
+
+status, _, _ = request("GET", "/github/avatar?login=kostis4563")
+check("a stranger cannot fetch an avatar", status == 401)
+
+status, _, _ = request("GET", "/github/avatar?login=kostis4563", cookie=outsider)
+check("an admin who is not named cannot fetch an avatar", status == 403)
+
+status, _, _ = request("GET", "/github/avatar?login=kostis4563", cookie=owner)
+check("nor can an owner, who holds every permission", status == 403)
+check("and nothing was fetched for any of them", served == [])
+
+status, raw, _ = request("GET", "/github/avatar?login=kostis4563", cookie=insider)
+check("the named account is handed the image", status == 200 and raw == b"\x89PNG stand-in")
+check("and it came from the avatar cdn", len(served) == 1 and served[0].startswith(admin_api.GITHUB_CDN))
+
+held = len(served)
+request("GET", "/github/avatar?login=kostis4563", cookie=insider)
+check("a second look is served from the cache", len(served) == held)
+
+status, _, _ = request("GET", "/github/avatar?login=stranger", cookie=insider)
+check("a login not in the snapshot is a 404", status == 404)
+
+status, _, _ = request("GET", "/github/avatar?login=elsewhere", cookie=insider)
+check("an avatar hosted off the cdn is a 404", status == 404)
+
+status, _, _ = request("GET", "/github/avatar", cookie=insider)
+check("no login at all is a 404", status == 404)
+check("and none of the refusals reached the network", len(served) == held)
+
+for method in ("POST", "DELETE", "PUT"):
+    status, _, _ = request(method, "/github/avatar", {} if method != "DELETE" else None, cookie=insider)
+    check("the avatar route offers no %s" % method.lower(), status in (400, 404, 405, 501))
+
 server.shutdown()
 
 if failures:

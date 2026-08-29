@@ -259,6 +259,7 @@ DISCORD_LINK_SECONDS = env_int("ADMIN_DISCORD_LINK_SECONDS", 600)
 DISCORD_CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
 DISCORD_CODE_LENGTH = 8
 DISCORD_CDN = "https://cdn.discordapp.com/"
+GITHUB_CDN = "https://avatars.githubusercontent.com/"
 DISCORD_ART = ("avatar", "banner", "decoration", "member", "bot")
 DISCORD_ART_BOT = "*bot*"
 DISCORD_ART_SECONDS = 900
@@ -1139,6 +1140,49 @@ def build_github():
     payload["stale"] = True if age is None else age > GITHUB_STALE_AFTER
     payload["queued"] = github_queued()
     return payload
+
+def github_avatar_for(login):
+    """The avatar the collector last saw for a login.
+
+    Resolved out of the same snapshot the panel is already drawing rather than
+    from a URL the browser hands over, so the panel can only ever ask for an
+    image of somebody it is showing, and this service still needs no GitHub
+    token of its own.
+    """
+    wanted = str(login or "").strip().lower()
+    if not wanted:
+        return None
+    snapshot = read_json_file(GITHUB_PATH)
+    if not isinstance(snapshot, dict):
+        return None
+
+    def found_in(entries):
+        for entry in entries or []:
+            if not isinstance(entry, dict):
+                continue
+            if str(entry.get("login") or "").strip().lower() != wanted:
+                continue
+            held = github_art(entry.get("avatar"))
+            if held:
+                return held
+        return None
+
+    people = snapshot.get("people")
+    if isinstance(people, dict):
+        for key in ("members", "invites"):
+            held = found_in(people.get(key))
+            if held:
+                return held
+
+    for repo in snapshot.get("repositories") or []:
+        if not isinstance(repo, dict):
+            continue
+        for key in ("access", "invites"):
+            held = found_in(repo.get(key))
+            if held:
+                return held
+    return None
+
 
 def github_queued():
     """Access changes that have been asked for and not yet carried out.
@@ -2187,8 +2231,23 @@ def discord_art(value):
     return url if url.startswith(DISCORD_CDN) and len(url) <= 400 else None
 
 
+def github_art(value):
+    url = str(value or "")
+    return url if url.startswith(GITHUB_CDN) and len(url) <= 400 else None
+
+
+def remote_art(value):
+    """The two content CDNs this service will fetch an image from.
+
+    fetch_art is reachable from a request, so the host is the whole of the
+    defence: anything not on this list is not fetched at all, whatever the
+    panel asked for.
+    """
+    return discord_art(value) or github_art(value)
+
+
 def fetch_art(url):
-    if not discord_art(url):
+    if not remote_art(url):
         return None
     request = urllib.request.Request(
         url,
@@ -3906,6 +3965,25 @@ class Handler(BaseHTTPRequestHandler):
     # happened — the panel is careful to word it that way too, because a change
     # that GitHub goes on to refuse would otherwise have been reported as done.
 
+    def handle_github_avatar(self):
+        """Re-serve a GitHub avatar from this origin.
+
+        The panel cannot hot-link avatars.githubusercontent.com: the site is
+        served under img-src 'self' data:, so the browser refuses the image.
+        Same answer as the Discord artwork above — fetch it here, cache it, and
+        hand it back same-origin.
+        """
+        self.require_private("github")
+        url = github_avatar_for(self.query("login", 64))
+        if url is None:
+            raise Rejected(404, "Not found.")
+
+        fetched = artwork.blob(url)
+        if fetched is None:
+            raise Rejected(502, "GitHub would not hand over that image.")
+
+        self.send_blob(fetched[0], fetched[1])
+
     def handle_github_grant(self):
         session = self.require_private("github")
         data = self.read_body()
@@ -4105,6 +4183,10 @@ class Handler(BaseHTTPRequestHandler):
         if route == "/github/repositories":
             self.require_private("github")
             self.reply(200, build_github())
+            return
+
+        if route == "/github/avatar":
+            self.handle_github_avatar()
             return
 
         if route == "/transcripts":
