@@ -278,7 +278,9 @@ if [ -n "$ONLY" ]; then
 fi
 
 step "amitista-web"
-if sync_repo "$WEB" amitista-web; then
+sync_repo "$WEB" amitista-web; SYNC=$?
+[ $SYNC -eq 2 ] && FAILED+=("amitista-web (sync)")
+if [ $SYNC -eq 0 ]; then
   touches "$CHANGED" '^(src/|public/|brand/|index\.html|vite\.config\.js|package(-lock)?\.json|scripts/)' \
     && run website deploy_website
   touches "$CHANGED" '^deploy/admin-api/' \
@@ -290,7 +292,9 @@ if sync_repo "$WEB" amitista-web; then
 fi
 
 step "amitista-bots"
-if sync_repo "$BOTS" amitista-bots; then
+sync_repo "$BOTS" amitista-bots; SYNC=$?
+[ $SYNC -eq 2 ] && FAILED+=("amitista-bots (sync)")
+if [ $SYNC -eq 0 ]; then
   touches "$CHANGED" '^(bot\.js|src/|assets/|package(-lock)?\.json)' \
     && run studio-bot deploy_studio_bot
   touches "$CHANGED" '^enchange/' \
@@ -298,18 +302,27 @@ if sync_repo "$BOTS" amitista-bots; then
 fi
 
 step "amitista-shield"
-if sync_repo "$SHIELD" amitista-shield; then
+sync_repo "$SHIELD" amitista-shield; SYNC=$?
+[ $SYNC -eq 2 ] && FAILED+=("amitista-shield (sync)")
+if [ $SYNC -eq 0 ]; then
   touches "$CHANGED" '^(src/|bin/|feed/|evaluator/|index\.js|package(-lock)?\.json)' \
     && run shield deploy_shield
 fi
 
 step "result"
+[ ${#DEPLOYED[@]} -gt 0 ] && log "deployed: ${DEPLOYED[*]}"
+
+# Failures are checked before the quiet path. A repository that could not be
+# fast-forwarded deploys nothing, which used to render as "nothing to deploy"
+# and exit 0 — indistinguishable from an idle tick, so a wedged deploy could sit
+# unnoticed for as long as it liked. It exits non-zero now, and systemd marks
+# the unit failed.
+if [ ${#FAILED[@]} -gt 0 ]; then
+  die "failed: ${FAILED[*]}"
+fi
+
 if [ ${#DEPLOYED[@]} -eq 0 ]; then
   log "nothing to deploy"
   exit 0
-fi
-[ ${#DEPLOYED[@]} -gt 0 ] && log "deployed: ${DEPLOYED[*]}"
-if [ ${#FAILED[@]} -gt 0 ]; then
-  die "these did not come up and were rolled back: ${FAILED[*]}"
 fi
 log "all good"
