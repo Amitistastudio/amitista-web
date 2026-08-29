@@ -378,12 +378,6 @@ check("an unreachable GitHub keeps the members it knew", out["members"] == org["
 
 # ------------------------------------------------ commits and lines per person
 
-# The tracking board's only source of "lines edited". Two things are pinned:
-# GitHub answers 202 with an empty object while it is still computing the
-# statistics, which must not read as "nobody has committed"; and every week
-# since the repository was made comes back, most of them zeroes, so only the
-# recent tail travels to the browser.
-
 weeks = [
     {"w": 1735257600 + index * 604800, "c": index, "a": index * 10, "d": index}
     for index in range(40)

@@ -10,27 +10,16 @@ import {
 } from 'lucide-react';
 import { formatAgo, githubAvatarUrl } from '../../../lib/admin';
 import { Empty, Figure, Notice, Panel, Pill, WindowSwitch } from '../ui';
-import { GithubLink, count, listOf, pullVerdict, repositoriesIn, short } from './shared';
-
-// Performance tracking: one person per row, and everything known about what
-// they have actually done.
-//
-// It is built from two sources that answer different questions, and the
-// difference matters enough to say on the page rather than blend away.
-//
-// The weekly contributor statistics are history — every commit and every line
-// added or removed, per person, per week, for as far back as GitHub keeps them.
-// That is where commits and lines edited come from, and it is the only place
-// they can come from: a commit listing says who and when and not how much, and
-// asking after each commit would be a request each.
-//
-// Everything else — open pull requests, open issues, who has been asked to
-// review — is the state of play right now, out of the same snapshot the other
-// sections read. It is not windowed, because "open" is not something that
-// happened during a particular week.
-//
-// Nothing here writes. It reads the file the deploy leaves behind, the same one
-// every other section in this group reads.
+import {
+  GithubLink,
+  commitByPerson,
+  count,
+  isPerson,
+  listOf,
+  pullVerdict,
+  repositoriesIn,
+  short,
+} from './shared';
 
 const DAY = 86400000;
 const SHOWN = 6;
@@ -46,15 +35,8 @@ const WORKDAY = [9, 18];
 
 const num = (value) => (typeof value === 'number' ? value.toLocaleString('en-GB') : '—');
 
-// Logins are matched between four different lists here and GitHub does not
-// promise the same casing in all of them, so everything is keyed folded and
-// only ever displayed as it came back.
 const key = (login) => String(login ?? '').toLowerCase();
 
-// A commit carries a git name and, separately, the account GitHub matched it
-// to. Only the account can be lined up against the weekly statistics, which are
-// per account and nothing else — so a commit without one still counts towards
-// the times below, and simply cannot be attributed to a row on the board.
 const accountOf = (commit) => (commit.login ? key(commit.login) : null);
 
 const dateLabel = (week) => {
@@ -67,24 +49,27 @@ const dateLabel = (week) => {
 function everything(repositories) {
   return {
     stats: repositories.flatMap((repo) =>
-      listOf(repo, 'stats').map((row) => ({ ...row, repo: repo.name })),
+      listOf(repo, 'stats')
+        .filter((row) => isPerson(row.login))
+        .map((row) => ({ ...row, repo: repo.name })),
     ),
     commits: repositories
       .flatMap((repo) => listOf(repo, 'commits').map((commit) => ({ ...commit, repo: repo.name })))
-      .filter((commit) => commit.at)
+      .filter((commit) => commit.at && commitByPerson(commit))
       .sort((a, b) => b.at.localeCompare(a.at)),
     pulls: repositories.flatMap((repo) =>
-      listOf(repo, 'pulls').map((pull) => ({ ...pull, repo: repo.name })),
+      listOf(repo, 'pulls')
+        .filter((pull) => isPerson(pull.author))
+        .map((pull) => ({ ...pull, repo: repo.name })),
     ),
     issues: repositories.flatMap((repo) =>
-      listOf(repo, 'issues').map((issue) => ({ ...issue, repo: repo.name })),
+      listOf(repo, 'issues')
+        .filter((issue) => isPerson(issue.author))
+        .map((issue) => ({ ...issue, repo: repo.name })),
     ),
   };
 }
 
-// The weeks every row is drawn against. Taken from the data rather than
-// generated from today's date, so somebody who has been away is still lined up
-// against everybody else instead of drifting a column.
 function weekAxis(stats, span) {
   const seen = new Set();
   stats.forEach((row) =>
@@ -97,9 +82,6 @@ function weekAxis(stats, span) {
 
 const blank = () => ({ commits: 0, added: 0, removed: 0 });
 
-// One row per person, summed across all three repositories and clipped to the
-// window. `ever` is deliberately not windowed: it is the whole history GitHub
-// has, and it is what says whether a quiet fortnight is new or normal.
 function board(stats, axis) {
   const inside = new Set(axis);
   const tally = new Map();
@@ -142,17 +124,9 @@ function board(stats, axis) {
     .sort((a, b) => b.commits - a.commits || b.lines - a.lines || a.login.localeCompare(b.login));
 }
 
-// The board with no statistics behind it. They are collected by the deploy, so
-// the first tick after this went out has none — rather than an empty page, the
-// commit listing gives commits and people, and the line columns say plainly
-// that they are not known yet.
 function fallbackBoard(commits) {
   const tally = new Map();
   commits.forEach((commit) => {
-    // Without an account there is nothing to line a commit up against, so the
-    // git name is the best key available — and it is also the only place the
-    // person's last commit can come from, since the map built from accounts
-    // will never have heard of them.
     const id = accountOf(commit) || key(commit.author) || 'unknown';
     const held = tally.get(id) ?? {
       id,
@@ -177,10 +151,6 @@ function fallbackBoard(commits) {
     .sort((a, b) => b.commits - a.commits);
 }
 
-// What is open, per person, right now. Four different relationships to a piece
-// of work, and they are not the same thing: whoever opened a pull request is
-// not whoever is being asked to read it, and whoever reported an issue is not
-// necessarily whoever has to fix it.
 function openWork(all) {
   const pullsBy = new Map();
   const issuesBy = new Map();
@@ -210,9 +180,6 @@ function openWork(all) {
   return { pullsBy, issuesBy, assigned, reviews, last };
 }
 
-// Every commit whose timestamp could be read, placed on a day and an hour in
-// the reader's own timezone — the question is when somebody was working, and
-// that is a local fact rather than a UTC one.
 function times(commits) {
   const grid = Array.from({ length: 7 }, () => new Array(24).fill(0));
   let placed = 0;
@@ -251,7 +218,7 @@ function byRepository(repositories, axis) {
   const inside = new Set(axis);
   return repositories
     .map((repo) => {
-      const rows = listOf(repo, 'stats');
+      const rows = listOf(repo, 'stats').filter((row) => isPerson(row.login));
       const people = new Set();
       const totals = rows.reduce((sum, row) => {
         listOf(row, 'weeks').forEach((week) => {
@@ -275,12 +242,6 @@ function byRepository(repositories, axis) {
     .sort((a, b) => b.lines - a.lines || b.commits - a.commits);
 }
 
-// ------------------------------------------------------------------ drawing
-
-// The avatar comes through the admin service rather than from GitHub's CDN,
-// which the page's own image policy will not load. A login it has never seen
-// has no image to serve, so a failed load falls back to the initial instead of
-// leaving a broken frame.
 function Avatar({ login, size = 'h-8 w-8' }) {
   const [failed, setFailed] = React.useState(false);
   return !failed && login ? (
@@ -300,11 +261,6 @@ function Avatar({ login, size = 'h-8 w-8' }) {
   );
 }
 
-// Added against removed, both to scale against the busiest row on the board.
-// `peak` is the largest combined total, so the two halves together never fill
-// more than the track and a row that is nearly all deletions looks like one —
-// which is a quite different week from one that is nearly all additions, and
-// the totals alone hide it.
 function SplitBar({ added, removed, peak }) {
   const width = (value) =>
     peak > 0 ? Math.min(100, Math.max(value > 0 ? 1.5 : 0, (value / peak) * 100)) : 0;
@@ -353,9 +309,6 @@ function Columns({ series, labels, peak, height = 34, tone = 'bg-purple-500/70' 
   );
 }
 
-// Seven rows of twenty-four. Five steps rather than a continuous scale: what a
-// heat map is being asked here is "does anything happen at three in the
-// morning", which wants a shade and not a number — the number is on hover.
 const HEAT = [
   'bg-[#15151b]',
   'bg-purple-500/25',
@@ -615,8 +568,6 @@ function Tally({ title, rows, empty }) {
     </div>
   );
 }
-
-// ----------------------------------------------------------------- the page
 
 export default function Tracking({ data }) {
   const [span, setSpan] = React.useState(12);

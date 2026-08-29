@@ -5,6 +5,13 @@ export const short = (sha) => (typeof sha === 'string' ? sha.slice(0, 7) : '—'
 
 export const count = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 
+const NOT_PEOPLE = new Set(['claude']);
+
+export const isPerson = (login) => !NOT_PEOPLE.has(String(login ?? '').trim().toLowerCase());
+
+export const commitByPerson = (commit) =>
+  commit?.login ? isPerson(commit.login) : isPerson(commit?.author);
+
 export const repositoriesIn = (data) =>
   Array.isArray(data?.repositories) ? data.repositories : [];
 

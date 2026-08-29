@@ -2,7 +2,7 @@ import React from 'react';
 import { Activity, Building2, TriangleAlert, Users } from 'lucide-react';
 import { formatAgo } from '../../../lib/admin';
 import { Empty, Figure, Panel, Pill, RankedBar, Sparkline } from '../ui';
-import { GithubLink, listOf, pullVerdict, repositoriesIn, short } from './shared';
+import { GithubLink, commitByPerson, listOf, pullVerdict, repositoriesIn, short } from './shared';
 
 const DAY = 86400000;
 const WINDOW = 14;
@@ -28,7 +28,7 @@ function everything(repositories) {
     ),
     commits: repositories
       .flatMap((repo) => listOf(repo, 'commits').map((commit) => ({ ...commit, repo: repo.name })))
-      .filter((commit) => commit.at)
+      .filter((commit) => commit.at && commitByPerson(commit))
       .sort((a, b) => b.at.localeCompare(a.at)),
     branches: repositories.flatMap((repo) =>
       listOf(repo, 'branches')
