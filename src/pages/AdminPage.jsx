@@ -27,6 +27,7 @@ import {
   BookMarked,
   Zap,
   FolderGit2,
+  CircleDot,
 } from 'lucide-react';
 import Header from '../components/web1/Header';
 import Footer from '../components/web1/Footer';
@@ -194,12 +195,23 @@ const SECTIONS = [
     blurb: 'where everything lives on the box, the unit names, the logs and the commands',
   },
   {
+    // Kept as 'github' rather than renamed to 'github-repositories': it is the
+    // section this group has always opened on, and the hash is a link people
+    // may already have.
     id: 'github',
-    label: 'GitHub',
+    label: 'Repositories',
     icon: FolderGit2,
     needs: null,
     group: 'github',
     blurb: 'whether what is on main is actually running on this box',
+  },
+  {
+    id: 'github-issues',
+    label: 'Issues',
+    icon: CircleDot,
+    needs: null,
+    group: 'github',
+    blurb: 'what is open across the three repositories, and what each one says',
   },
   {
     id: 'accounts',
@@ -828,7 +840,7 @@ export default function AdminPage() {
 
                     {DEVELOPER_VIEWS.includes(current) && <DeveloperPanel view={current} />}
 
-                    {GITHUB_VIEWS.includes(current) && <GithubPanel />}
+                    {GITHUB_VIEWS.includes(current) && <GithubPanel view={current} />}
 
                     {current === 'accounts' && (
                       <AccountsPanel
