@@ -72,6 +72,13 @@ MAX_PULLS = 20
 # most recent handful are looked into. Beyond that the list still shows them;
 # they just do not carry a verdict until one of the others is dealt with.
 MAX_PULL_DETAIL = 10
+# Everything ever raised, not only what is open, so the panel can answer "has
+# this been done before" without anybody leaving it. Shallow rows and one
+# conditional request per repository, which is what makes the depth affordable.
+MAX_PULL_HISTORY = 60
+# Every review on one pull request. A hundred is GitHub's page ceiling and far
+# past anything three people will produce, so this never has to page.
+MAX_REVIEWS = 100
 MAX_FILES = 40
 MAX_ISSUES = 30
 # Enough recent commits to draw a fortnight of activity and say who has been
@@ -469,6 +476,107 @@ def pull_ci(api, repo, sha, known):
     return "%s/%s" % (run.get("status") or "unknown", run.get("conclusion") or "pending")
 
 
+# The verdicts people have left on a pull request.
+#
+# GitHub keeps every review ever submitted, including the ones since superseded,
+# so the raw list says nothing about where a pull request stands. What counts is
+# each person's latest decisive review: an approval or a request for changes,
+# with a dismissal wiping out whichever it replaced. A review that only left a
+# comment is not a verdict at all and never overrides one — somebody who
+# approved and then commented has still approved.
+#
+# Reduced here rather than in the panel because the reduction is GitHub's rule
+# rather than a display choice, and getting it wrong would have the panel say a
+# pull request was approved when its approval had been dismissed.
+DECISIVE = ("APPROVED", "CHANGES_REQUESTED", "DISMISSED")
+
+
+def pull_reviews(api, repo, number, cached):
+    payload, state = api.get(
+        "/repos/%s/%s/pulls/%d/reviews?per_page=%d" % (ORG, repo, number, MAX_REVIEWS),
+        isinstance(cached, list),
+    )
+    if state != "ok" or not isinstance(payload, list):
+        return cached if isinstance(cached, list) else []
+
+    latest = {}
+    for entry in payload:
+        if not isinstance(entry, dict):
+            continue
+        login = ((entry.get("user") or {}).get("login"))
+        verdict = entry.get("state")
+        if not login or not isinstance(verdict, str):
+            continue
+        at = entry.get("submitted_at")
+        held = latest.get(login)
+        if verdict in DECISIVE:
+            latest[login] = {"login": login, "state": verdict, "at": at}
+        elif held is None:
+            latest[login] = {"login": login, "state": verdict, "at": at}
+
+    return [row for row in latest.values() if row["state"] != "PENDING"]
+
+
+def pull_history(api, repo, cached):
+    """Every pull request, open or not, as far back as the ceiling allows.
+
+    A separate request from the open list rather than a widening of it, because
+    the two want different things. The open list is asked in the order work
+    arrives and is looked into deeply; this one is asked newest-touched first
+    and stays shallow, so a hundred closed pull requests cost one round trip and
+    a few kilobytes rather than two hundred requests.
+
+    Open pull requests appear in both. That is deliberate: this is the record of
+    what has been raised, and leaving out the ones still in flight would make it
+    lie by omission. The panel shows the detailed copy where it has one.
+    """
+    payload, state = api.get(
+        "/repos/%s/%s/pulls?state=all&sort=updated&direction=desc&per_page=%d"
+        % (ORG, repo, MAX_PULL_HISTORY),
+        isinstance(cached, list),
+    )
+    if state != "ok" or not isinstance(payload, list):
+        return cached if isinstance(cached, list) else []
+
+    out = []
+    for entry in payload:
+        if not isinstance(entry, dict):
+            continue
+        number = entry.get("number")
+        if number is None:
+            continue
+        merged = entry.get("merged_at")
+        closed = entry.get("closed_at")
+        out.append(
+            {
+                "number": number,
+                "title": entry.get("title"),
+                "author": ((entry.get("user") or {}).get("login")),
+                "state": "merged" if merged else ("closed" if closed else "open"),
+                "draft": bool(entry.get("draft")),
+                "created": entry.get("created_at"),
+                "updated": entry.get("updated_at"),
+                "closed": closed,
+                "merged": merged,
+                "mergedBy": ((entry.get("merged_by") or {}).get("login")),
+                "head": ((entry.get("head") or {}).get("ref")),
+                "base": ((entry.get("base") or {}).get("ref")),
+                "labels": [
+                    {"name": label.get("name"), "colour": label.get("color")}
+                    for label in entry.get("labels") or []
+                    if isinstance(label, dict) and label.get("name")
+                ],
+                "reviewers": [
+                    who.get("login")
+                    for who in entry.get("requested_reviewers") or []
+                    if isinstance(who, dict) and who.get("login")
+                ],
+                "url": entry.get("html_url"),
+            }
+        )
+    return out
+
+
 def open_pulls(api, repo, cached):
     payload, state = api.get(
         "/repos/%s/%s/pulls?state=open&sort=created&direction=desc&per_page=%d"
@@ -494,6 +602,7 @@ def open_pulls(api, repo, cached):
             if index < MAX_PULL_DETAIL and number is not None:
                 row.update(pull_extra(api, repo, number, row))
                 row["changed"] = pull_files(api, repo, number, row.get("changed"))
+                row["reviews"] = pull_reviews(api, repo, number, row.get("reviews"))
                 if row.get("sha"):
                     row["ci"] = pull_ci(api, repo, row["sha"], entry)
             out.append(row)
@@ -536,6 +645,7 @@ def open_pulls(api, repo, cached):
         if index < MAX_PULL_DETAIL:
             row.update(pull_extra(api, repo, number, was))
             row["changed"] = pull_files(api, repo, number, was.get("changed"))
+            row["reviews"] = pull_reviews(api, repo, number, was.get("reviews"))
             row["ci"] = pull_ci(api, repo, sha, was)
         else:
             row["looked"] = False
@@ -796,6 +906,7 @@ def punch_card(api, repo, cached):
 def detail_for(api, repo, cached):
     facts = repo_facts(api, repo, cached.get("facts") or {})
     pulls = open_pulls(api, repo, cached.get("pulls"))
+    history = pull_history(api, repo, cached.get("history"))
     issues = open_issues(api, repo, cached.get("issues"))
     commits = recent_commits(api, repo, cached.get("commits"))
     branches = branch_drift(api, repo, facts.get("defaultBranch"), cached.get("branches"))
@@ -807,6 +918,7 @@ def detail_for(api, repo, cached):
     return {
         "facts": facts,
         "pulls": pulls,
+        "history": history,
         "issues": issues,
         "commits": commits,
         "branches": branches,
@@ -1228,6 +1340,7 @@ def inspect(name, path, api, known, want_detail):
         for key in (
             "facts",
             "pulls",
+            "history",
             "issues",
             "commits",
             "branches",

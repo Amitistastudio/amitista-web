@@ -164,10 +164,11 @@ check("and is not sent when nothing is held", api.conditional == [])
 
 DERIVED = ({"mergeable_state": "clean", "mergeable": True, "additions": 3}, "ok")
 FILES = ([], "ok")
+REVIEWS = ([], "ok")
 GREEN = ({"workflow_runs": [{"status": "completed", "conclusion": "success"}]}, "ok")
 
 pending = [{"number": 5, "sha": "abc", "ci": "in_progress/pending", "title": "waiting"}]
-api = FakeGitHub([(None, "unchanged"), DERIVED, FILES, GREEN])
+api = FakeGitHub([(None, "unchanged"), DERIVED, FILES, REVIEWS, GREEN])
 out = state.open_pulls(api, "amitista-web", pending)
 check("an unsettled verdict is re-asked even when the list has not moved", out[0]["ci"] == "completed/success")
 check("and nothing else about the pull request is disturbed", out[0]["title"] == "waiting")
@@ -176,7 +177,7 @@ check("and nothing else about the pull request is disturbed", out[0]["title"] ==
 # on the quiet path too. This is the case that shipped wrong once: a pull request
 # that had settled to clean went on being reported as having an unhappy check.
 stale = [{"number": 5, "sha": "abc", "ci": "completed/success", "mergeState": "unstable", "title": "done"}]
-api = FakeGitHub([(None, "unchanged"), DERIVED, FILES])
+api = FakeGitHub([(None, "unchanged"), DERIVED, FILES, REVIEWS])
 out = state.open_pulls(api, "amitista-web", stale)
 check("a stale merge state is refreshed even when the list has not moved", out[0]["mergeState"] == "clean")
 check("a settled verdict is not re-asked", not any("actions/runs" in path for path in api.asked))
@@ -196,6 +197,7 @@ many = [
 answers = [(many, "ok")]
 for _ in range(state.MAX_PULL_DETAIL):
     answers.append(({"additions": 1, "deletions": 0, "changed_files": 1, "commits": 1}, "ok"))
+    answers.append(([], "ok"))
     answers.append(([], "ok"))
     answers.append(({"workflow_runs": []}, "ok"))
 api = FakeGitHub(answers)
@@ -408,6 +410,114 @@ check("a person with no GitHub account is left out", state.contributions(
 ) == [])
 
 
+# ------------------------------------------- where a pull request stands
+
+# GitHub keeps every review ever left, so the raw list is a history and not a
+# verdict. What counts is each person's latest decisive one, and a comment is
+# never decisive: somebody who approved and then commented has still approved.
+
+
+def review(login, verdict, at):
+    return {"user": {"login": login}, "state": verdict, "submitted_at": at}
+
+
+def reviews_from(entries):
+    return {
+        row["login"]: row["state"]
+        for row in state.pull_reviews(FakeGitHub([(entries, "ok")]), "r", 1, None)
+    }
+
+check(
+    "the latest decisive review is the one that counts",
+    reviews_from([
+        review("a", "CHANGES_REQUESTED", "2026-01-01T00:00:00Z"),
+        review("a", "APPROVED", "2026-01-02T00:00:00Z"),
+    ]) == {"a": "APPROVED"},
+)
+check(
+    "a later comment does not undo an approval",
+    reviews_from([
+        review("a", "APPROVED", "2026-01-01T00:00:00Z"),
+        review("a", "COMMENTED", "2026-01-02T00:00:00Z"),
+    ]) == {"a": "APPROVED"},
+)
+check(
+    "a dismissal replaces what it dismissed",
+    reviews_from([
+        review("a", "APPROVED", "2026-01-01T00:00:00Z"),
+        review("a", "DISMISSED", "2026-01-02T00:00:00Z"),
+    ]) == {"a": "DISMISSED"},
+)
+check(
+    "somebody who only commented is still recorded as having looked",
+    reviews_from([review("b", "COMMENTED", "2026-01-01T00:00:00Z")]) == {"b": "COMMENTED"},
+)
+check(
+    "a review still being written is not a verdict",
+    reviews_from([review("c", "PENDING", None)]) == {},
+)
+check(
+    "each person counts once however many they left",
+    len(state.pull_reviews(FakeGitHub([([
+        review("a", "COMMENTED", "2026-01-01T00:00:00Z"),
+        review("a", "COMMENTED", "2026-01-02T00:00:00Z"),
+        review("a", "APPROVED", "2026-01-03T00:00:00Z"),
+    ], "ok")]), "r", 1, None)) == 1,
+)
+held = [{"login": "a", "state": "APPROVED", "at": None}]
+check(
+    "an unreachable GitHub keeps the reviews it knew",
+    state.pull_reviews(FakeGitHub([(None, "error")]), "r", 1, held) == held,
+)
+
+
+# ------------------------------------------------- every pull request raised
+
+
+def raised(number, **extra):
+    row = {
+        "number": number,
+        "title": "pr %d" % number,
+        "user": {"login": "someone"},
+        "head": {"ref": "branch"},
+        "base": {"ref": "main"},
+        "html_url": "u",
+    }
+    row.update(extra)
+    return row
+
+
+api = FakeGitHub([([
+    raised(1, merged_at="2026-01-02T00:00:00Z", closed_at="2026-01-02T00:00:00Z"),
+    raised(2, closed_at="2026-01-03T00:00:00Z"),
+    raised(3),
+], "ok")])
+rows = state.pull_history(api, "r", None)
+check("a merged pull request is recorded as merged", rows[0]["state"] == "merged")
+check("one closed without merging is not", rows[1]["state"] == "closed")
+check("and one still in flight is open", rows[2]["state"] == "open")
+check(
+    "the history asks for every state rather than only the open ones",
+    "state=all" in api.asked[0],
+)
+check("who merged it is kept", state.pull_history(FakeGitHub([([
+    raised(4, merged_at="2026-01-02T00:00:00Z", merged_by={"login": "kostis4563"}),
+], "ok")]), "r", None)[0]["mergedBy"] == "kostis4563")
+check(
+    "an entry with no number is dropped rather than drawn",
+    state.pull_history(FakeGitHub([([{"title": "nameless"}], "ok")]), "r", None) == [],
+)
+held = [{"number": 9, "state": "merged"}]
+check(
+    "an unreachable GitHub keeps the history it knew",
+    state.pull_history(FakeGitHub([(None, "error")]), "r", held) == held,
+)
+check(
+    "and a 304 does too, without asking again",
+    state.pull_history(FakeGitHub([(None, "unchanged")]), "r", held) == held,
+)
+
+
 # ---------------------------------------------------- when commits were made
 
 api = FakeGitHub([([[0, 0, 0], [1, 9, 4], [3, 14, 7]], "ok")])
@@ -442,6 +552,7 @@ check(
 detail_keys = {
     "facts": {"url": "u"},
     "pulls": [{"number": 1}],
+    "history": [{"number": 1, "state": "merged"}],
     "issues": [{"number": 2}],
     "commits": [{"sha": "abc"}],
     "branches": [{"name": "main"}],

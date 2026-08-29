@@ -1,8 +1,8 @@
 import React from 'react';
-import { Activity, Gauge, GitPullRequest } from 'lucide-react';
+import { Activity, Gauge, GitPullRequest, Timer, TriangleAlert } from 'lucide-react';
 import { formatAgo } from '../../../lib/admin';
 import { Empty, Figure, Panel, Pill, RankedBar, Sparkline } from '../ui';
-import { GithubLink, count, listOf, pullVerdict, repositoriesIn } from './shared';
+import { GithubLink, count, listOf, pullVerdict, repositoriesIn, short } from './shared';
 
 const DAY = 86400000;
 const SHOWN = 8;
@@ -27,51 +27,155 @@ const ageDays = (at) => {
   return Number.isNaN(parsed) ? null : Math.floor((Date.now() - parsed) / DAY);
 };
 
-// Only a completed run carries a verdict. Anything queued or still going has
-// not decided yet, so it counts as neither a pass nor a failure — otherwise a
-// busy minute would read as a drop in quality.
-function runHealth(runs) {
-  const settled = runs.filter((run) => run.status === 'completed');
-  const passed = settled.filter((run) => run.conclusion === 'success').length;
+// Newest first, on when GitHub started the run rather than the order it handed
+// them back — the collector keeps only the last ten per repository, and which
+// ten it kept is not a promise about their order.
+const newestFirst = (a, b) => String(b.created ?? '').localeCompare(String(a.created ?? ''));
+
+// A run that finished and decided nothing: skipped by a path filter, neutral,
+// or superseded by a newer push to the same branch. It is not a pass, and it is
+// certainly not a failure, so it is kept out of the rate altogether rather than
+// pulling it down for something nobody did wrong.
+const UNDECIDED = new Set(['skipped', 'neutral', 'stale']);
+
+// What a build is doing, in one word, with the tone to say it in. Everything
+// here counts through this one function so a row and a total can never disagree
+// about what a failure is. GitHub's own word is kept — 'cancelled' and
+// 'timed out' point somewhere quite different from a test going red, and which
+// one it is decides whether anybody needs to do anything.
+function buildState(run) {
+  if (run.status !== 'completed') {
+    if (run.status === 'in_progress') return { key: 'running', tone: 'amber', label: 'running' };
+    return {
+      key: 'running',
+      tone: 'neutral',
+      label:
+        typeof run.status === 'string' && run.status.length > 0
+          ? run.status.replace(/_/g, ' ')
+          : 'pending',
+    };
+  }
+  if (run.conclusion === 'success') return { key: 'passed', tone: 'green', label: 'passed' };
+  if (UNDECIDED.has(run.conclusion)) {
+    return { key: 'undecided', tone: 'neutral', label: run.conclusion };
+  }
   return {
-    total: runs.length,
-    settled: settled.length,
-    passed,
-    failed: settled.length - passed,
-    running: runs.length - settled.length,
-    rate: settled.length === 0 ? null : Math.round((passed / settled.length) * 100),
+    key: 'failed',
+    tone: 'rose',
+    label:
+      typeof run.conclusion === 'string' && run.conclusion.length > 0
+        ? run.conclusion.replace(/_/g, ' ')
+        : 'failed',
   };
 }
 
-// Worst first, because the point of the list is which repository to look at.
-// Repositories with no finished run are left out rather than shown at zero —
-// nothing has failed there, nothing has passed either, and a red bar would say
-// the wrong thing.
-function byRepository(repositories) {
-  return repositories
-    .map((repo) => ({ name: repo.name, ...runHealth(listOf(repo, 'runs')) }))
-    .filter((repo) => repo.settled > 0)
-    .sort((a, b) => a.rate - b.rate || b.settled - a.settled);
+// The rate is passes over passes and failures, so the runs that decided nothing
+// are in `undecided` and in neither half of it. Anything still going is in
+// `running` and counts as neither — otherwise a busy minute would read as a
+// drop in quality.
+function runHealth(runs) {
+  const states = runs.map(buildState);
+  const tally = (key) => states.filter((state) => state.key === key).length;
+  const passed = tally('passed');
+  const failed = tally('failed');
+  const settled = passed + failed;
+  return {
+    total: runs.length,
+    settled,
+    passed,
+    failed,
+    running: tally('running'),
+    undecided: tally('undecided'),
+    rate: settled === 0 ? null : Math.round((passed / settled) * 100),
+  };
 }
 
-// GitHub's own words for a run that did not pass, kept as they come back rather
-// than flattened into "failed": 'cancelled' and 'timed_out' point at something
-// quite different from a test going red, and which one it is decides whether
-// anybody needs to do anything.
-function failures(runs) {
+// Seconds as the collector recorded them, said the way a build is talked about.
+// Under a minute stays in seconds, because "0m 48s" reads as slower than it is.
+function took(seconds) {
+  if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds < 0) return null;
+  if (seconds < 60) return `${Math.round(seconds)}s`;
+  const minutes = Math.floor(seconds / 60);
+  const rest = Math.round(seconds % 60);
+  return rest === 0 ? `${minutes}m` : `${minutes}m ${rest}s`;
+}
+
+// The middle one rather than the mean: a single run that hung for twenty
+// minutes would move an average enough to make a fast pipeline look slow.
+function median(values) {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0 ? (sorted[middle - 1] + sorted[middle]) / 2 : sorted[middle];
+}
+
+const runsOf = (repo) => listOf(repo, 'runs').map((run) => ({ ...run, repo: repo.name }));
+
+// The latest run on each repository, worst first: what is broken, then what is
+// still going, then what passed. A repository with no run at all goes last and
+// says so — it is a real state and reading it as green would be a lie.
+const LATEST_ORDER = { failed: 0, running: 1, undecided: 2, passed: 3, none: 4 };
+
+function latestPerRepository(repositories) {
+  return repositories
+    .map((repo) => {
+      const runs = runsOf(repo).sort(newestFirst);
+      const run = runs[0] ?? null;
+      return {
+        name: repo.name,
+        run,
+        state: run ? buildState(run) : { key: 'none', tone: 'neutral', label: 'no run' },
+        health: runHealth(runs),
+      };
+    })
+    .sort(
+      (a, b) =>
+        LATEST_ORDER[a.state.key] - LATEST_ORDER[b.state.key] || a.name.localeCompare(b.name),
+    );
+}
+
+// Every failure the snapshot still holds, newest first, each keeping the run it
+// came from so the row can link straight at its logs.
+function failureHistory(runs) {
+  return runs.filter((run) => buildState(run).key === 'failed').sort(newestFirst);
+}
+
+// GitHub's own words for the failures, most common first. Kept as a single line
+// under the history rather than a panel of its own: it answers "is this one
+// thing going wrong repeatedly or five different things once".
+function failureReasons(runs) {
   const tally = new Map();
   runs
-    .filter((run) => run.status === 'completed' && run.conclusion !== 'success')
+    .filter((run) => buildState(run).key === 'failed')
     .forEach((run) => {
-      const reason =
-        typeof run.conclusion === 'string' && run.conclusion.length > 0
-          ? run.conclusion.replace(/_/g, ' ')
-          : 'unrecorded';
+      const reason = buildState(run).label;
       tally.set(reason, (tally.get(reason) ?? 0) + 1);
     });
   return [...tally.entries()]
-    .map(([reason, runs_]) => ({ reason, runs: runs_ }))
+    .map(([reason, count_]) => ({ reason, runs: count_ }))
     .sort((a, b) => b.runs - a.runs);
+}
+
+// How long a build takes on each repository. Only finished runs carry a usable
+// duration; one still going would report however long it has been up to now and
+// drag the middle down every time somebody pushes.
+function durations(repositories) {
+  return repositories
+    .map((repo) => {
+      const lengths = runsOf(repo)
+        .filter((run) => run.status === 'completed' && typeof run.seconds === 'number')
+        .map((run) => run.seconds)
+        .filter((seconds) => Number.isFinite(seconds) && seconds >= 0);
+      return {
+        name: repo.name,
+        runs: lengths.length,
+        middle: median(lengths),
+        slowest: lengths.length === 0 ? null : Math.max(...lengths),
+        fastest: lengths.length === 0 ? null : Math.min(...lengths),
+      };
+    })
+    .filter((repo) => repo.runs > 0)
+    .sort((a, b) => b.middle - a.middle);
 }
 
 // Lines changed is the honest measure of what a review is being asked to do.
@@ -99,8 +203,58 @@ function spread(pulls) {
   return { counts, labels: AGES.map((band) => band.label) };
 }
 
+const rateTone = (rate) =>
+  rate === null
+    ? 'text-neutral-500'
+    : rate === 100
+      ? 'text-emerald-400'
+      : rate >= 80
+        ? 'text-amber-300'
+        : 'text-rose-400';
+
+// One build, said the same way wherever it appears: what it was, what it
+// decided, which commit, how long it took, and a link at the run itself. The
+// link is the point of the row on a failure — the logs are one click from here
+// rather than a hunt through the Actions tab.
+function BuildRow({ run, state, repo, children }) {
+  const length = took(run.seconds);
+  return (
+    <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2 px-4 sm:px-6 py-3 border-b border-[#17171d] last:border-b-0">
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-[11px] text-neutral-500 font-mono">{repo}</span>
+          <Pill tone={state.tone}>{state.label}</Pill>
+          {run.name && <span className="text-[11px] text-neutral-600 truncate">{run.name}</span>}
+        </div>
+        <p className="text-[13px] text-white font-medium leading-snug break-words mt-1.5">
+          {run.subject || 'no commit message recorded'}
+        </p>
+        <p className="text-[11px] text-neutral-500 mt-1 tabular-nums">
+          <span className="font-mono">{short(run.sha)}</span>
+          {run.branch ? ` on ${run.branch}` : ''}
+          {run.event ? ` · ${run.event}` : ''}
+          {length ? ` · ${state.key === 'running' ? 'going' : 'took'} ${length}` : ''}
+          {run.created ? ` · ${formatAgo(run.created)}` : ''}
+        </p>
+        {children}
+      </div>
+      <GithubLink
+        href={run.url}
+        title={
+          state.key === 'failed'
+            ? `Open the failed run for ${short(run.sha)} on GitHub`
+            : 'Open this run on GitHub'
+        }
+      >
+        {state.key === 'failed' ? 'LOGS' : 'OPEN'}
+      </GithubLink>
+    </div>
+  );
+}
+
 export default function Performance({ data }) {
   const [full, setFull] = React.useState(false);
+  const [allFailures, setAllFailures] = React.useState(false);
   const repositories = repositoriesIn(data);
 
   if (repositories.length === 0) {
@@ -111,17 +265,20 @@ export default function Performance({ data }) {
     );
   }
 
-  const runs = repositories.flatMap((repo) => listOf(repo, 'runs'));
+  const runs = repositories.flatMap(runsOf);
   const pulls = repositories.flatMap((repo) =>
     listOf(repo, 'pulls').map((pull) => ({ ...pull, repo: repo.name })),
   );
 
   const health = runHealth(runs);
-  const perRepo = byRepository(repositories);
-  const reasons = failures(runs);
+  const latest = latestPerRepository(repositories);
+  const broken = failureHistory(runs);
+  const reasons = failureReasons(runs);
+  const lengths = durations(repositories);
   const sized = churn(pulls);
   const waiting = spread(pulls);
 
+  const slowest = lengths[0]?.middle ?? 0;
   const lines = sized.reduce((sum, pull) => sum + pull.lines, 0);
   const ages = pulls
     .map((pull) => ageDays(pull.created))
@@ -129,37 +286,29 @@ export default function Performance({ data }) {
     .sort((a, b) => b - a);
   const oldest = ages.length === 0 ? null : ages[0];
   const blocked = pulls.filter((pull) => pullVerdict(pull).tone === 'rose').length;
-  const worstReason = reasons[0]?.runs ?? 0;
   const heaviest = sized[0]?.lines ?? 0;
+  const failing = latest.filter((repo) => repo.state.key === 'failed');
 
   return (
     <div className="space-y-6">
       <div className="grid gap-3 grid-cols-2 lg:grid-cols-4">
         <Figure
-          label="Checks passing"
+          label="Builds passing"
           value={health.rate === null ? '—' : `${health.rate}%`}
-          tone={
-            health.rate === null
-              ? 'text-neutral-500'
-              : health.rate === 100
-                ? 'text-emerald-400'
-                : health.rate >= 80
-                  ? 'text-amber-300'
-                  : 'text-rose-400'
-          }
+          tone={rateTone(health.rate)}
           hint={
             health.settled === 0
-              ? 'no finished runs'
-              : `${health.passed} of ${count(health.settled, 'finished run', 'finished runs')}`
+              ? 'nothing has decided yet'
+              : `${health.passed} of ${count(health.settled, 'build', 'builds')} that decided`
           }
         />
         <Figure
-          label="Runs that failed"
+          label="Builds failed"
           value={health.failed}
           tone={health.failed === 0 ? 'text-emerald-400' : 'text-rose-400'}
           hint={
             health.running > 0
-              ? `${count(health.running, 'run is', 'runs are')} still going`
+              ? `${count(health.running, 'build is', 'builds are')} still going`
               : 'nothing in flight'
           }
         />
@@ -189,71 +338,133 @@ export default function Performance({ data }) {
         />
       </div>
 
+      <Panel
+        title="Latest build per repository"
+        icon={Gauge}
+        action={
+          <span className="flex flex-wrap items-center gap-2">
+            <Pill tone={health.passed > 0 ? 'green' : 'neutral'}>{health.passed} passed</Pill>
+            <Pill tone={health.failed > 0 ? 'rose' : 'neutral'}>{health.failed} failed</Pill>
+            {health.running > 0 && <Pill tone="amber">{health.running} running</Pill>}
+          </span>
+        }
+      >
+        {latest.map((repo) =>
+          repo.run === null ? (
+            <div
+              key={repo.name}
+              className="px-4 sm:px-6 py-3 border-b border-[#17171d] last:border-b-0"
+            >
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[11px] text-neutral-500 font-mono">{repo.name}</span>
+                <Pill tone="neutral">no run</Pill>
+              </div>
+              <p className="text-[12px] text-neutral-500 leading-relaxed mt-1.5">
+                GitHub has recorded no workflow run for this repository. Nothing deploys off a
+                repository with no run, so this is worth a look rather than a shrug.
+              </p>
+            </div>
+          ) : (
+            <BuildRow key={repo.name} run={repo.run} state={repo.state} repo={repo.name}>
+              <p className="text-[11px] text-neutral-600 mt-1">
+                {repo.health.settled === 0
+                  ? 'nothing else here has decided yet'
+                  : `${repo.health.passed}/${repo.health.settled} of the runs held for it passed${
+                      repo.health.running > 0 ? ` · ${repo.health.running} still going` : ''
+                    }`}
+              </p>
+            </BuildRow>
+          ),
+        )}
+        <p className="px-4 sm:px-6 py-3 text-[11px] text-neutral-600 leading-relaxed">
+          {failing.length > 0
+            ? `${count(failing.length, 'repository is', 'repositories are')} sitting on a failed build. Open the run for the logs; nothing deploys off a red commit.`
+            : 'Every repository’s newest run either passed or is still going.'}
+          {health.undecided > 0
+            ? ` ${count(health.undecided, 'run', 'runs')} decided nothing (skipped or superseded) and ${health.undecided === 1 ? 'is' : 'are'} left out of the rate.`
+            : ''}
+        </p>
+      </Panel>
+
       <div className="grid gap-4 lg:grid-cols-2">
         <Panel
-          title="Checks by repository"
-          icon={Gauge}
+          title="Builds that did not pass"
+          icon={TriangleAlert}
           action={
-            <Pill
-              tone={
-                health.rate === null
-                  ? 'neutral'
-                  : health.rate === 100
-                    ? 'green'
-                    : health.rate >= 80
-                      ? 'amber'
-                      : 'rose'
-              }
-            >
-              {health.rate === null ? 'no runs' : `${health.rate}%`}
-            </Pill>
+            broken.length > SHOWN ? (
+              <button
+                type="button"
+                onClick={() => setAllFailures((held) => !held)}
+                aria-expanded={allFailures}
+                className="text-[11px] font-semibold tracking-[0.12em] uppercase text-neutral-500 hover:text-white transition-colors"
+              >
+                {allFailures ? 'Show less' : `All ${broken.length}`}
+              </button>
+            ) : (
+              <Pill tone={broken.length === 0 ? 'green' : 'rose'}>
+                {broken.length === 0 ? 'clear' : broken.length}
+              </Pill>
+            )
           }
         >
-          {perRepo.length === 0 ? (
+          {broken.length === 0 ? (
             <Empty>
-              No workflow run has finished on any of the three repositories yet, so there is nothing
-              to work a pass rate out of. Runs still going are not counted either way.
+              Every build the snapshot holds either passed or is still going. This fills in the
+              moment one does not, newest first, each linking straight at its logs.
             </Empty>
           ) : (
-            perRepo.map((repo) => (
-              <RankedBar
-                key={repo.name}
-                name={repo.name}
-                value={`${repo.rate}%`}
-                percent={repo.rate}
-                detail={`${repo.passed} of ${count(repo.settled, 'finished run', 'finished runs')}${
-                  repo.running > 0 ? ` · ${repo.running} still going` : ''
-                }`}
-              />
-            ))
+            <>
+              {(allFailures ? broken : broken.slice(0, SHOWN)).map((run) => (
+                <BuildRow
+                  key={`${run.repo}-${run.sha}-${run.created}`}
+                  run={run}
+                  state={buildState(run)}
+                  repo={run.repo}
+                />
+              ))}
+              <p className="px-4 sm:px-6 py-3 text-[11px] text-neutral-600 leading-relaxed">
+                {count(broken.length, 'failure', 'failures')} in the{' '}
+                {count(health.settled, 'build', 'builds')} that decided
+                {reasons.length > 0
+                  ? ` · ${reasons.map((reason) => `${reason.runs} ${reason.reason}`).join(', ')}`
+                  : ''}
+                . The collector keeps the last ten runs per repository, so this reaches back as far
+                as those do and no further.
+              </p>
+            </>
           )}
         </Panel>
 
         <Panel
-          title="Why runs did not pass"
-          icon={Activity}
+          title="How long builds take"
+          icon={Timer}
           action={
-            <Pill tone={health.failed === 0 ? 'green' : 'rose'}>
-              {health.failed === 0 ? 'clear' : health.failed}
+            <Pill tone="neutral">
+              {slowest === 0 ? 'no times' : `${took(slowest)} at worst`}
             </Pill>
           }
         >
-          {reasons.length === 0 ? (
+          {lengths.length === 0 ? (
             <Empty>
-              Every finished run passed. This stays empty until one does not, and the word GitHub
-              uses for it appears here — a cancelled run and a red test read the same in a total and
-              mean quite different things.
+              No finished run came back with a duration, so there is nothing to time. A run still
+              going is left out on purpose — it would report however long it has been up to now.
             </Empty>
           ) : (
-            reasons.map((reason) => (
-              <RankedBar
-                key={reason.reason}
-                name={reason.reason}
-                value={reason.runs}
-                percent={worstReason === 0 ? 0 : (reason.runs / worstReason) * 100}
-                detail={`${count(reason.runs, 'run', 'runs')} of the ${health.settled} that finished`}
-              />
-            ))
+            <>
+              {lengths.map((repo) => (
+                <RankedBar
+                  key={repo.name}
+                  name={repo.name}
+                  value={took(repo.middle)}
+                  percent={slowest === 0 ? 0 : (repo.middle / slowest) * 100}
+                  detail={`${took(repo.fastest)}–${took(repo.slowest)} across ${count(repo.runs, 'finished run', 'finished runs')}`}
+                />
+              ))}
+              <p className="px-4 sm:px-6 py-3 text-[11px] text-neutral-600 leading-relaxed">
+                The middle run rather than the average, so one build that hung does not make a fast
+                pipeline look slow. The range beneath each is its fastest and slowest.
+              </p>
+            </>
           )}
         </Panel>
       </div>
@@ -280,7 +491,7 @@ export default function Performance({ data }) {
 
       <Panel
         title="Biggest first"
-        icon={GitPullRequest}
+        icon={Activity}
         action={
           sized.length > SHOWN ? (
             <button
