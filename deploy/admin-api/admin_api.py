@@ -202,6 +202,12 @@ def private_groups_for(name):
     key = (name or "").strip().lower()
     return sorted(group for group, allowed in PRIVATE_GROUPS.items() if key in allowed)
 
+GITHUB_PATH = os.environ.get("ADMIN_GITHUB", "/var/lib/amitista/admin/github.json")
+# The deploy ticks about once a minute. Ten minutes without a refresh means
+# the timer is not running, which is worth saying out loud rather than
+# quietly showing an hour-old commit as if it were current.
+GITHUB_STALE_AFTER = env_int("ADMIN_GITHUB_STALE", 600)
+
 INSTALLS_PATH = os.environ.get("ADMIN_SHIELD_INSTALLS", "/var/lib/amitista/shield-feed/state/installs.json")
 BRANDS_PUBLIC = os.environ.get("ADMIN_BRANDS_PUBLIC", "/var/www/amitista.com/shared/shield-brands.json")
 BRANDS_GROUP = os.environ.get("ADMIN_BRANDS_GROUP", "www-data")
@@ -1070,6 +1076,43 @@ def build_overview(granted=None):
             payload["stale"] = True
 
     return narrow_overview(payload, granted)
+
+# The GitHub group of the panel.
+#
+# Reads the snapshot the deploy writes each tick and says nothing the deploy did
+# not already establish. It cannot ask GitHub itself — the token is root-only
+# and this service runs under ProtectHome — and it deliberately gains no way to
+# change a repository. Looking is the whole feature.
+
+def github_age(generated):
+    if not isinstance(generated, str):
+        return None
+    try:
+        moment = time.strptime(generated, "%Y-%m-%dT%H:%M:%SZ")
+    except ValueError:
+        return None
+    return time.time() - time.mktime(moment) + time.timezone
+
+def build_github():
+    snapshot = read_json_file(GITHUB_PATH)
+    if snapshot is None:
+        return {
+            "generated": None,
+            "stale": True,
+            "collected": False,
+            "org": None,
+            "branch": None,
+            "repositories": [],
+        }
+
+    payload = dict(snapshot)
+    payload["collected"] = True
+    repositories = payload.get("repositories")
+    payload["repositories"] = repositories if isinstance(repositories, list) else []
+
+    age = github_age(payload.get("generated"))
+    payload["stale"] = True if age is None else age > GITHUB_STALE_AFTER
+    return payload
 
 # The developer group of the panel. Everything below is a projection of the
 # snapshot the admin-snapshot timer already writes — nothing here collects
@@ -3553,6 +3596,19 @@ class Handler(BaseHTTPRequestHandler):
             raise Rejected(403, "You do not have access to that.")
         return session
 
+    def require_private(self, group):
+        """A group handed out by account name rather than by permission.
+
+        Deliberately not a permission: an owner resolves to every permission at
+        read time, so any permission invented for this would be held by every
+        owner the moment it existed. The account list is the one thing an owner
+        cannot grant themselves from inside the panel.
+        """
+        session = self.require_session()
+        if group not in private_groups_for(session["record"]["name"]):
+            raise Rejected(403, "You do not have access to that.")
+        return session
+
     def allowed(self, permission):
         session = self.current_session()
         if session is None:
@@ -3863,6 +3919,11 @@ class Handler(BaseHTTPRequestHandler):
         if route == "/developer":
             self.require("developer.read")
             self.reply(200, build_developer())
+            return
+
+        if route == "/github/repositories":
+            self.require_private("github")
+            self.reply(200, build_github())
             return
 
         if route == "/transcripts":

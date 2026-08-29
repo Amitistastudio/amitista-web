@@ -31,6 +31,8 @@ ENCHANGE_LIVE=/opt/enchange
 TOKEN_FILE=/root/.gh-oauth
 ORG=Amitistastudio
 STATE=/var/lib/amitista/autodeploy
+GITHUB_STATE=/var/lib/amitista/admin/github.json
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STAMP="$(date -u +%Y%m%d-%H%M%S)"
 
 DRY=""; FORCE=""; ONLY=""
@@ -325,7 +327,9 @@ if [ $SYNC -eq 0 ]; then
     && run api-gateway deploy_api api-gateway amitista-api
   touches "$CHANGED" '^deploy/(ai-relay|contact-relay)/' \
     && warn "ai-relay or contact-relay changed and neither has an install.sh — deploy those by hand"
-  uncovered amitista-web '^(src/|public/|brand/|index\.html|vite\.config\.js|package(-lock)?\.json|scripts/|deploy/admin-api/|deploy/api-gateway/|deploy/(ai-relay|contact-relay)/)'
+  # deploy/autodeploy/ is owned but has no deploy step: the service runs these
+  # files straight out of the checkout, so a fast-forward is the deploy.
+  uncovered amitista-web '^(src/|public/|brand/|index\.html|vite\.config\.js|package(-lock)?\.json|scripts/|deploy/autodeploy/|deploy/admin-api/|deploy/api-gateway/|deploy/(ai-relay|contact-relay)/)'
 fi
 
 step "amitista-bots"
@@ -363,6 +367,16 @@ if [ $RESCAN -eq 0 ]; then
 else
   warn "a deploy has left a checkout dirty — commit, ignore or stop writing those"
   warn "files, or the next commit touching one of them will block the deploy"
+fi
+
+# Hand the admin panel what we just learned. It cannot ask GitHub itself: the
+# token is root-only and the admin service runs under ProtectHome, so /root does
+# not exist as far as it is concerned. Never fatal — a panel that cannot be
+# updated is not a reason to fail a deploy that worked.
+if [ -z "$DRY" ]; then
+  "$SELF_DIR/github-state.py" "$GITHUB_STATE" \
+    "amitista-web=$WEB" "amitista-bots=$BOTS" "amitista-shield=$SHIELD" \
+    | sed 's/^/       /' || warn "could not refresh the panel's repository snapshot"
 fi
 
 step "result"
