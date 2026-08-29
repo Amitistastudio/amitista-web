@@ -47,13 +47,15 @@ export const REPO_ROLES = [
     api: 'triage',
     label: 'triage',
     writes: false,
-    blurb: 'Read, plus closing, labelling and assigning issues and pull requests. Still cannot change the code.',
+    blurb:
+      'Read, plus tidying the tracker: closing and reopening issues, labels, milestones, assigning people, requesting reviews. Cannot push a line to any branch, cannot make a branch, and cannot merge a pull request.',
   },
   {
     api: 'push',
     label: 'write',
     writes: true,
-    blurb: 'Can push code to any branch that is not protected. This is the normal level for somebody working on it.',
+    blurb:
+      'Can push to any branch that is not protected, make branches, and merge pull requests. The normal level for somebody working on it.',
   },
   {
     api: 'maintain',

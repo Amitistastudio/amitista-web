@@ -606,6 +606,46 @@ function AddSomeone({ repositories, busy, onGrant }) {
   );
 }
 
+// How far "can change code" actually reaches on these repositories.
+//
+// A level says whether somebody may push. Which branches will accept that push
+// is a different mechanism entirely — branch protection — and confusing the two
+// is the easiest mistake to make here. Read from the branches the collector
+// already lists rather than assumed, because the answer changes the moment one
+// is protected.
+function Reach({ repositories }) {
+  const branches = repositories.flatMap((repo) =>
+    listOf(repo, 'branches').map((branch) => ({ ...branch, repo: repo.name })),
+  );
+  const guarded = branches.filter((branch) => branch.protected);
+  if (branches.length === 0) return null;
+
+  return (
+    <div className="mt-3 border-l-2 border-amber-500/40 pl-3">
+      <p className="text-[11px] text-neutral-500 leading-relaxed">
+        {guarded.length === 0 ? (
+          <>
+            <span className="text-amber-300">Nothing here is protected.</span> No branch on any of
+            these repositories requires a review or a passing check, so “can change code” means
+            pushing straight to <span className="font-mono">main</span> — and{' '}
+            <span className="font-mono">main</span> deploys itself about a minute later. Anyone at
+            write or above can put code on the live site without asking.
+          </>
+        ) : (
+          <>
+            <span className="text-neutral-300">
+              {guarded.map((branch) => `${branch.repo}:${branch.name}`).join(', ')}
+            </span>{' '}
+            {guarded.length === 1 ? 'is protected' : 'are protected'}, so a push there has to go
+            through whatever that protection asks for. Every other branch takes a direct push from
+            anyone at write or above.
+          </>
+        )}
+      </p>
+    </div>
+  );
+}
+
 function Step({ number, children }) {
   return (
     <p className="flex items-center gap-2 text-[11px] font-semibold text-neutral-400 tracking-[0.15em] uppercase mb-2">
@@ -865,10 +905,12 @@ export default function People({ data, onRefresh }) {
         <div className="px-4 sm:px-6 py-4">
           <Levels />
           <p className="text-[11px] text-neutral-600 leading-relaxed mt-3">
-            Weakest first. The line that matters most is between triage and write: everything above
-            it can change the code. Admin is the only one that can remove other people, or the
-            repository.
+            Weakest first. The line that matters is between triage and write: everything above it
+            can change the code, everything below it cannot — read and triage cannot push to any
+            branch, cannot make one, and cannot merge a pull request. Admin is the only level that
+            can remove other people, or the repository.
           </p>
+          <Reach repositories={repositories} />
         </div>
       </Panel>
 
