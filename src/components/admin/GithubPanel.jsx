@@ -6,23 +6,39 @@ import Repositories from './github/Repositories';
 import Issues from './github/Issues';
 import Pulls from './github/Pulls';
 import Organization from './github/Organization';
+import People from './github/People';
 
-export const GITHUB_VIEWS = ['github', 'github-issues', 'github-pulls', 'github-org'];
+export const GITHUB_VIEWS = [
+  'github',
+  'github-issues',
+  'github-pulls',
+  'github-org',
+  'github-people',
+];
 
 const VIEWS = {
   github: Repositories,
   'github-issues': Issues,
   'github-pulls': Pulls,
   'github-org': Organization,
+  'github-people': People,
 };
 
 // The group and its gate are real — only the accounts named in PRIVATE_GROUPS
 // on the server can reach it, and the server checks rather than trusting the
 // nav to hide it.
 //
-// Nothing in here can change a repository. It reads the snapshot the deploy
-// writes and reports it; there is no button that pushes, merges or deploys, and
-// adding one would mean handing this service a token it currently cannot read.
+// Nothing in here can change a repository's contents. It reads the snapshot the
+// deploy writes and reports it; there is no button that pushes, merges or
+// deploys, and adding one would mean handing this service a token it cannot
+// read.
+//
+// People and access is the one section that asks for a change, and it does not
+// make one either. It posts what it wants to the admin API, which writes it to
+// a queue directory, and the deploy — root, holding the token — decides at the
+// end of its next tick whether to carry it out. So a change here is a request
+// with about a minute of latency, and the section says so rather than
+// pretending otherwise.
 //
 // The sections are nav entries rather than tabs inside one, so AdminPage
 // renders this component for every one of them. That keeps it mounted while you

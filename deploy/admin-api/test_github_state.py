@@ -14,8 +14,10 @@ of blanking the panel.
 """
 
 import importlib.util
+import json
 import os
 import sys
+import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 COLLECTOR = os.path.join(HERE, "..", "autodeploy", "github-state.py")
@@ -39,16 +41,22 @@ def check(label, condition):
 class FakeGitHub:
     """Stands in for the API. Records what was asked and answers from a script."""
 
-    def __init__(self, answers):
+    def __init__(self, answers, sends=None):
         self.answers = answers
         self.asked = []
         self.conditional = []
+        self.sends = list(sends or [])
+        self.sent = []
 
     def get(self, path, have_cached=False):
         self.asked.append(path)
         if have_cached:
             self.conditional.append(path)
         return self.answers.pop(0)
+
+    def send(self, method, path, body=None):
+        self.sent.append((method, path, body))
+        return self.sends.pop(0) if self.sends else (None, 204, None)
 
 
 def issue(number, title, **extra):
@@ -251,6 +259,291 @@ check(
     # The bug this replaced shifted every path one character left.
     [line[3:] for line in " M deploy/thing.sh".splitlines()] == ["deploy/thing.sh"],
 )
+
+# ------------------------------------------------------------------- people
+
+def account(login, **extra):
+    entry = {
+        "login": login,
+        "avatar_url": "https://avatars.githubusercontent.com/%s" % login,
+        "html_url": "https://github.com/%s" % login,
+        "type": "User",
+    }
+    entry.update(extra)
+    return entry
+
+
+# Access by any route, and access somebody was actually given. They are not the
+# same list and the difference is what the panel can and cannot change: an
+# owner's access comes from the organisation, so offering to remove it here
+# would be offering something that does not work.
+api = FakeGitHub([
+    ([account("kostis4563", role_name="admin"), account("helper", role_name="write")], "ok"),
+    ([account("helper", role_name="write")], "ok"),
+])
+out = state.repo_access(api, "amitista-web", None)
+check("everyone with access is listed", [row["login"] for row in out] == ["kostis4563", "helper"])
+check("the strongest is listed first", out[0]["role"] == "admin")
+check("access through the organisation is marked as not direct", out[0]["direct"] is False)
+check("access somebody was given is marked direct", out[1]["direct"] is True)
+check("both lists are asked for", len(api.asked) == 2)
+
+# If the second question could not be answered, what was known about it last
+# time is carried rather than guessed. Guessing either way offers a control
+# that does not match reality.
+held = [dict(account("helper"), role="write", direct=True)]
+api = FakeGitHub([([account("helper", role_name="write")], "ok"), (None, "error")])
+check(
+    "an unanswerable second question keeps what was known about it",
+    state.repo_access(api, "x", held)[0]["direct"] is True,
+)
+
+api = FakeGitHub([(None, "unchanged")])
+check("a 304 keeps the access list", state.repo_access(api, "x", held) == held)
+
+# An empty list is an answer — "nobody has been added to this repository" — and
+# is the state these repositories are actually in. Treating it as nothing known
+# sends every one of these requests unconditionally, every tick, for ever.
+api = FakeGitHub([([], "ok"), ([], "ok")])
+state.repo_access(api, "x", [])
+check("knowing the answer is empty still sends a conditional request", api.conditional == api.asked)
+
+api = FakeGitHub([([], "ok")])
+state.repo_invites(api, "x", [])
+check("and the same for an empty invitation list", api.conditional == api.asked)
+
+api = FakeGitHub([([], "ok"), ([], "ok")])
+state.repo_access(api, "x", None)
+check("with nothing known at all it is not conditional", api.conditional == [])
+api = FakeGitHub([(None, "error")])
+check("an unreachable GitHub keeps the access list", state.repo_access(api, "x", held) == held)
+api = FakeGitHub([("not a list", "ok")])
+check("a nonsense access list is refused", state.repo_access(api, "x", held) == held)
+
+api = FakeGitHub([
+    (
+        [
+            {
+                "id": 88,
+                "invitee": account("newcomer"),
+                "inviter": account("kostis4563"),
+                "permissions": "write",
+                "created_at": "2026-08-20T10:00:00Z",
+                "expired": False,
+                "html_url": "https://github.com/o/r/invitations",
+            },
+            "not an object",
+        ],
+        "ok",
+    )
+])
+only = state.repo_invites(api, "amitista-web", None)
+check("an invitation is projected", len(only) == 1 and only[0]["id"] == 88)
+check("with who it went to", only[0]["login"] == "newcomer")
+check("who sent it", only[0]["by"] == "kostis4563")
+check("and what it would grant", only[0]["permission"] == "write")
+
+api = FakeGitHub([
+    ({"login": "Amitistastudio", "plan": {"name": "free", "filled_seats": 1, "seats": 1},
+      "two_factor_requirement_enabled": False, "default_repository_permission": "read",
+      "total_private_repos": 3}, "ok"),
+    ([account("kostis4563")], "ok"),
+    ([account("helper")], "ok"),
+    ([], "ok"),
+    ([], "ok"),
+])
+org = state.org_people(api, None)
+check("the organisation's settings are kept", org["org"]["defaultPermission"] == "read")
+check("including whether two-factor is required", org["org"]["twoFactorRequired"] is False)
+# GitHub's word for the top organisation role is "admin". Nobody calls it that
+# — GitHub's own interface says "owner" — so it is translated once, here.
+check("GitHub's 'admin' role is reported as owner", org["members"][0]["role"] == "owner")
+check("and a member as a member", org["members"][1]["role"] == "member")
+check("members come from two requests, not one per person", len(api.asked) == 5)
+
+api = FakeGitHub([
+    (None, "unchanged"),
+    ([account("kostis4563")], "ok"),
+    ([], "ok"),
+    ([account("kostis4563")], "ok"),
+    ([], "ok"),
+])
+out = state.org_people(api, org)
+check("a 304 on the organisation keeps its settings", out["org"] == org["org"])
+check("an account with no two-factor is named", out["withoutTwoFactor"] == ["kostis4563"])
+
+api = FakeGitHub([(None, "error"), (None, "error"), (None, "error"), (None, "error"), (None, "error")])
+out = state.org_people(api, org)
+check("an unreachable GitHub keeps the members it knew", out["members"] == org["members"])
+
+# ------------------------------------- everything asked of GitHub is carried
+
+# The quiet bug this replaced: two new keys were added to what detail_for
+# returns and not to what inspect carries between ticks. Nothing looked wrong —
+# the panel showed the right thing — but every one of those requests was sent
+# unconditionally every minute instead of being answered 304 for free, and the
+# first time GitHub was unreachable the whole lot would have vanished from the
+# panel rather than standing still.
+#
+# So this is the general form rather than a check for those two names: whatever
+# detail_for produces, inspect has to carry.
+
+detail_keys = {
+    "facts": {"url": "u"},
+    "pulls": [{"number": 1}],
+    "issues": [{"number": 2}],
+    "commits": [{"sha": "abc"}],
+    "branches": [{"name": "main"}],
+    "runs": [{"status": "completed"}],
+    "access": [{"login": "someone"}],
+    "invites": [{"id": 7}],
+}
+kept = state.inspect("x", "/nowhere-at-all", FakeGitHub([]), dict(detail_keys), False)
+missing = [key for key in detail_keys if key not in kept]
+check("everything GitHub answered for is carried to the next tick", missing == [])
+
+
+class CountingGitHub(FakeGitHub):
+    def get(self, path, have_cached=False):
+        self.asked.append(path)
+        if have_cached:
+            self.conditional.append(path)
+        return {"login": "x", "name": None, "plan": {}}, "ok"
+
+
+produced = state.detail_for(CountingGitHub([]), "x", {})
+check(
+    "and nothing detail_for produces is left out of that list",
+    sorted(produced) == sorted(detail_keys),
+)
+
+
+# --------------------------------------------------- what root will act on
+
+# The queue is written by the admin service, which runs as a different and less
+# privileged account. If that account were ever taken, this check is the whole
+# of what stands between it and handing somebody admin — so it is tested as the
+# security boundary it is, not as input validation.
+
+REPOS = {"amitista-web", "amitista-studio-bot"}
+ACTOR = "kostis4563"
+
+check(
+    "a whole grant is allowed",
+    state.check_intent(
+        {"action": "grant", "repo": "amitista-web", "login": "octocat", "permission": "push"},
+        REPOS, ACTOR,
+    ) is None,
+)
+
+for intent, why in (
+    ({"action": "delete-everything", "repo": "amitista-web", "login": "octocat"}, "an action nobody wrote"),
+    ({"action": "grant", "repo": "someone-elses-repo", "login": "octocat", "permission": "push"},
+     "a repository not on this box"),
+    ({"action": "grant", "repo": None, "login": "octocat", "permission": "push"}, "no repository"),
+    ({"action": "grant", "repo": "amitista-web", "login": "octo cat", "permission": "push"},
+     "a login with a space"),
+    ({"action": "grant", "repo": "amitista-web", "login": "../../../etc/passwd", "permission": "push"},
+     "a path pretending to be a login"),
+    ({"action": "grant", "repo": "amitista-web", "login": "octocat/../admin", "permission": "push"},
+     "a login that would climb out of the URL"),
+    ({"action": "grant", "repo": "amitista-web", "login": 5, "permission": "push"},
+     "a login that is not text"),
+    ({"action": "grant", "repo": "amitista-web", "login": "octocat", "permission": "owner"},
+     "a permission GitHub does not have"),
+    ({"action": "grant", "repo": "amitista-web", "login": "octocat", "permission": "write"},
+     "GitHub's display name for a permission"),
+    ({"action": "grant", "repo": "amitista-web", "login": "octocat"}, "no permission"),
+    ({"action": "revoke", "repo": "amitista-web", "login": ACTOR}, "this box's own account"),
+    ({"action": "revoke", "repo": "amitista-web", "login": ACTOR.upper()},
+     "this box's own account in different case"),
+    ({"action": "uninvite", "repo": "amitista-web", "invite": "88"}, "an invitation id as text"),
+    ({"action": "uninvite", "repo": "amitista-web", "invite": True}, "a boolean as an invitation id"),
+    ({"action": "uninvite", "repo": "amitista-web"}, "no invitation id"),
+):
+    check("%s is refused" % why, state.check_intent(intent, REPOS, ACTOR) is not None)
+
+# ------------------------------------------------------------- and then does it
+
+api = FakeGitHub([], sends=[({"id": 9}, 201, None)])
+out = state.carry_out(api, {"action": "grant", "repo": "amitista-web", "login": "octocat", "permission": "push"})
+check("a grant is a PUT on the collaborator", api.sent[0][0] == "PUT")
+check("at the login's own path", api.sent[0][1].endswith("/collaborators/octocat"))
+check("carrying the permission", api.sent[0][2] == {"permission": "push"})
+# 201 with a body is an invitation waiting to be accepted; 204 is access that
+# already existed changing level. Telling them apart matters: one of them is
+# not access yet.
+check("a body coming back means an invitation was sent", out["result"] == "invited")
+
+api = FakeGitHub([], sends=[(None, 204, None)])
+out = state.carry_out(api, {"action": "grant", "repo": "x", "login": "octocat", "permission": "admin"})
+check("no body means the level changed on access they had", out["result"] == "changed")
+check("and it counts as done", out["ok"] is True)
+
+api = FakeGitHub([], sends=[(None, 404, "Not Found")])
+out = state.carry_out(api, {"action": "revoke", "repo": "x", "login": "octocat"})
+check("a revoke is a DELETE", api.sent[0][0] == "DELETE")
+check("a refusal is recorded rather than raised", out["ok"] is False)
+check("with GitHub's own words for it", out["error"] == "Not Found")
+
+api = FakeGitHub([], sends=[(None, 204, None)])
+state.carry_out(api, {"action": "uninvite", "repo": "x", "invite": 88})
+check("cancelling an invitation deletes it by id", api.sent[0][1].endswith("/invitations/88"))
+
+# ---------------------------------------------------------------- the drain
+
+state.QUEUE_DIR = tempfile.mkdtemp(prefix="github-queue-test-")
+
+
+def queue(name, intent):
+    with open(os.path.join(state.QUEUE_DIR, name), "w", encoding="utf-8") as handle:
+        json.dump(intent, handle)
+
+
+def waiting():
+    return sorted(os.listdir(state.QUEUE_DIR))
+
+
+queue("1.json", {"id": "a", "action": "grant", "repo": "amitista-web", "login": "octocat", "permission": "push"})
+queue("2.json", {"id": "b", "action": "grant", "repo": "amitista-web", "login": "octocat", "permission": "admin"})
+api = FakeGitHub([], sends=[(None, 204, None), (None, 204, None)])
+log = state.drain_queue(api, REPOS, ACTOR, None)
+check("everything queued is carried out", len(api.sent) == 2)
+# Two changes to one person's access have to be made in the order they were
+# asked for, or the second silently undoes the first.
+check("in the order it was queued", [call[2]["permission"] for call in api.sent] == ["push", "admin"])
+check("the queue is emptied", waiting() == [])
+check("and what happened is written down", len(log) == 2)
+check("newest first, so the panel reads top-down", log[0]["permission"] == "admin")
+
+queue("3.json", {"id": "c", "action": "grant", "repo": "not-ours", "login": "octocat", "permission": "admin"})
+api = FakeGitHub([], sends=[])
+log = state.drain_queue(api, REPOS, ACTOR, log)
+check("a request that fails the check reaches GitHub not at all", api.sent == [])
+check("but is still recorded", log[0]["ok"] is False)
+check("with the reason", "not a repository on this box" in log[0]["error"])
+# Not retried. A wrong login fails identically every minute, and a loop nobody
+# can see is worse than a refusal somebody can read.
+check("and is not left to be tried again", waiting() == [])
+
+queue("4.json", {"id": "d", "action": "revoke", "repo": "amitista-web", "login": ACTOR})
+api = FakeGitHub([], sends=[])
+log = state.drain_queue(api, REPOS, ACTOR, log)
+check("this box's own access cannot be revoked from the panel", api.sent == [])
+
+with open(os.path.join(state.QUEUE_DIR, "5.json"), "w", encoding="utf-8") as handle:
+    handle.write("{not json")
+api = FakeGitHub([], sends=[])
+before = len(log)
+log = state.drain_queue(api, REPOS, ACTOR, log)
+check("a corrupt queue file is thrown away, not acted on", api.sent == [] and waiting() == [])
+check("and adds nothing to the log", len(log) == before)
+
+api = FakeGitHub([], sends=[])
+check("an empty queue leaves the log exactly as it was", state.drain_queue(api, REPOS, ACTOR, log) is log)
+
+state.QUEUE_DIR = os.path.join(state.QUEUE_DIR, "gone")
+check("a queue directory that does not exist is not an error", state.drain_queue(api, REPOS, ACTOR, log) is log)
 
 if failures:
     print("\n%d of %d checks FAILED: %s" % (len(failures), total, ", ".join(failures)))

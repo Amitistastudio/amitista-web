@@ -1080,9 +1080,31 @@ def build_overview(granted=None):
 # The GitHub group of the panel.
 #
 # Reads the snapshot the deploy writes each tick and says nothing the deploy did
-# not already establish. It cannot ask GitHub itself — the token is root-only
-# and this service runs under ProtectHome — and it deliberately gains no way to
-# change a repository. Looking is the whole feature.
+# not already establish. It cannot ask GitHub itself: the token is root-only and
+# this service runs under ProtectHome, so /root does not exist as far as it is
+# concerned. That is the arrangement, not a limitation to be worked around.
+#
+# One thing here does ask for a change to be made — who may reach a repository,
+# and at what level. It still does not talk to GitHub. It writes what it wants
+# into a queue directory, and the collector, which is root and does hold the
+# token, decides each tick whether to carry it out. The collector re-checks
+# every field rather than trusting this file, because this service is the less
+# privileged of the two and a queue is exactly what an attacker who had it would
+# reach for. So the worst this service can do on its own is fill a directory
+# with requests that get refused.
+
+GITHUB_QUEUE = os.environ.get("ADMIN_GITHUB_QUEUE", "/var/lib/amitista/admin/github-queue")
+
+# What GitHub takes for a repository collaborator, weakest first.
+GITHUB_ROLES = ("pull", "triage", "push", "maintain", "admin")
+
+# GitHub's own rule for a login: alphanumerics and single inner hyphens, up to
+# thirty-nine characters. Checked because the login ends up in a URL path.
+GITHUB_LOGIN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$")
+
+# Enough that nobody hits it by working, few enough that a stuck collector
+# cannot be used to fill the disk a request at a time.
+GITHUB_QUEUE_LIMIT = 50
 
 def github_age(generated):
     if not isinstance(generated, str):
@@ -1115,7 +1137,97 @@ def build_github():
 
     age = github_age(payload.get("generated"))
     payload["stale"] = True if age is None else age > GITHUB_STALE_AFTER
+    payload["queued"] = github_queued()
     return payload
+
+def github_queued():
+    """Access changes that have been asked for and not yet carried out.
+
+    Read back out of the queue directory rather than remembered, because the
+    collector is what empties it: a request is pending exactly as long as its
+    file is still there, and no bookkeeping on this side could say so as
+    truthfully.
+    """
+    out = []
+    try:
+        names = sorted(name for name in os.listdir(GITHUB_QUEUE) if name.endswith(".json"))
+    except OSError:
+        return out
+    for name in names[:GITHUB_QUEUE_LIMIT]:
+        intent = read_json_file(os.path.join(GITHUB_QUEUE, name))
+        if isinstance(intent, dict):
+            out.append(intent)
+    return out
+
+def github_queue(session, intent):
+    """Leave a request for the collector, and say nothing about the outcome.
+
+    Everything checked here is checked again by the collector, which is the
+    side that matters. This copy exists so that a mistake comes back as an
+    answer to the request that made it, instead of surfacing a minute later as
+    a line in a log.
+    """
+    if intent["action"] != "uninvite":
+        login = intent.get("login")
+        if not isinstance(login, str) or not GITHUB_LOGIN.match(login):
+            raise Rejected(400, "That is not a GitHub username.")
+    if intent["action"] == "grant" and intent.get("permission") not in GITHUB_ROLES:
+        raise Rejected(400, "That is not a permission GitHub takes.")
+
+    snapshot = read_json_file(GITHUB_PATH)
+    repositories = (snapshot or {}).get("repositories")
+    known = {
+        entry.get("name")
+        for entry in (repositories if isinstance(repositories, list) else [])
+        if isinstance(entry, dict)
+    }
+    if intent.get("repo") not in known:
+        raise Rejected(400, "There is no such repository on this box.")
+
+    if len(github_queued()) >= GITHUB_QUEUE_LIMIT:
+        raise Rejected(
+            429,
+            "There are already %d access changes waiting. The deploy carries them out about "
+            "once a minute — if they are not clearing, it has stopped." % GITHUB_QUEUE_LIMIT,
+        )
+
+    intent = dict(intent)
+    intent["id"] = secrets.token_hex(8)
+    intent["at"] = stamp()
+    intent["by"] = session["record"]["name"]
+
+    try:
+        os.makedirs(GITHUB_QUEUE, exist_ok=True)
+        handle = tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=GITHUB_QUEUE, prefix=".queue-", suffix=".tmp",
+            delete=False,
+        )
+        try:
+            json.dump(intent, handle)
+            handle.flush()
+            os.fsync(handle.fileno())
+            handle.close()
+            os.chmod(handle.name, 0o640)
+            # Named after the moment it was asked for, so the collector drains
+            # them in the order they were made — two changes to one person's
+            # access have to land the way they were asked for or the second
+            # undoes the first.
+            os.replace(handle.name, os.path.join(GITHUB_QUEUE, "%f-%s.json" % (time.time(), intent["id"])))
+        except BaseException:
+            try:
+                os.unlink(handle.name)
+            except OSError:
+                pass
+            raise
+    except OSError as failure:
+        log.warning("github queue write failed: %s", failure)
+        raise Rejected(503, "The request could not be written down. Nothing has been changed.")
+
+    log.info(
+        "github access queued by %s: %s %s %s",
+        intent["by"], intent["action"], intent.get("repo"), intent.get("login") or intent.get("invite"),
+    )
+    return {"queued": intent, "waiting": len(github_queued())}
 
 # The developer group of the panel. Everything below is a projection of the
 # snapshot the admin-snapshot timer already writes — nothing here collects
@@ -3789,6 +3901,72 @@ class Handler(BaseHTTPRequestHandler):
 
         self.reply(200, self.c2c_reply("/logs?" + urllib.parse.urlencode(wanted)))
 
+    # Access changes. Each one is written down and answered; none of them is
+    # carried out here. What comes back says what was asked for, not what
+    # happened — the panel is careful to word it that way too, because a change
+    # that GitHub goes on to refuse would otherwise have been reported as done.
+
+    def handle_github_grant(self):
+        session = self.require_private("github")
+        data = self.read_body()
+        answer = github_queue(
+            session,
+            {
+                "action": "grant",
+                "repo": data.get("repo"),
+                "login": str(data.get("login") or "").strip(),
+                "permission": data.get("permission"),
+            },
+        )
+        audit.record(
+            session["record"]["name"],
+            "github.accessQueued",
+            {
+                "repo": data.get("repo"),
+                "login": answer["queued"].get("login"),
+                "permission": answer["queued"].get("permission"),
+            },
+            self.client_ip(),
+        )
+        self.reply(200, answer)
+
+    def handle_github_revoke(self):
+        session = self.require_private("github")
+        data = self.read_body()
+        answer = github_queue(
+            session,
+            {
+                "action": "revoke",
+                "repo": data.get("repo"),
+                "login": str(data.get("login") or "").strip(),
+            },
+        )
+        audit.record(
+            session["record"]["name"],
+            "github.accessRevokeQueued",
+            {"repo": data.get("repo"), "login": answer["queued"].get("login")},
+            self.client_ip(),
+        )
+        self.reply(200, answer)
+
+    def handle_github_uninvite(self):
+        session = self.require_private("github")
+        data = self.read_body()
+        invite = data.get("invite")
+        if not isinstance(invite, int) or isinstance(invite, bool):
+            raise Rejected(400, "No invitation was named.")
+        answer = github_queue(
+            session,
+            {"action": "uninvite", "repo": data.get("repo"), "invite": invite},
+        )
+        audit.record(
+            session["record"]["name"],
+            "github.inviteCancelQueued",
+            {"repo": data.get("repo"), "invite": invite},
+            self.client_ip(),
+        )
+        self.reply(200, answer)
+
     def handle_transcripts(self):
         self.require("transcripts.read")
         wanted = []
@@ -4662,6 +4840,18 @@ class Handler(BaseHTTPRequestHandler):
 
         if route == "/boards/art":
             self.handle_board_art_set()
+            return
+
+        if route == "/github/access":
+            self.handle_github_grant()
+            return
+
+        if route == "/github/access/remove":
+            self.handle_github_revoke()
+            return
+
+        if route == "/github/access/invite/cancel":
+            self.handle_github_uninvite()
             return
 
         if route == "/boards/art/focus":

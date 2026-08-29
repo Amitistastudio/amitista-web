@@ -30,6 +30,7 @@ import {
   CircleDot,
   GitPullRequest,
   Building2,
+  KeyRound,
 } from 'lucide-react';
 import Header from '../components/web1/Header';
 import Footer from '../components/web1/Footer';
@@ -230,6 +231,14 @@ const SECTIONS = [
     needs: null,
     group: 'github',
     blurb: 'the health of all three at once, and what has been happening across them',
+  },
+  {
+    id: 'github-people',
+    label: 'People & access',
+    icon: KeyRound,
+    needs: null,
+    group: 'github',
+    blurb: 'who can reach which repository, at what level, and how to change it',
   },
   {
     id: 'accounts',

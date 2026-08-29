@@ -35,6 +35,10 @@ done
 
 install -d -m 750 -o root -g "$ACCOUNT" "$STATE_DIR"
 install -d -m 700 -o "$ACCOUNT" -g "$ACCOUNT" "$STATE_DIR/session"
+# The admin API leaves requested GitHub access changes here and the deploy,
+# running as root, carries them out. Owned by the service so it can write and
+# root can read; nobody else needs to see it at all.
+install -d -m 700 -o "$ACCOUNT" -g "$ACCOUNT" "$STATE_DIR/github-queue"
 install -d -m 700 -o root -g root /etc/amitista
 
 if [ ! -f "$ENV_FILE" ]; then

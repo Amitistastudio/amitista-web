@@ -24,7 +24,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 workspace = tempfile.mkdtemp(prefix="admin-github-test-")
 SNAPSHOT = os.path.join(workspace, "github.json")
+QUEUE = os.path.join(workspace, "github-queue")
 
+os.environ["ADMIN_GITHUB_QUEUE"] = QUEUE
 os.environ["ADMIN_STATE"] = workspace
 os.environ["ADMIN_SECRET"] = "7" * 64
 os.environ["ADMIN_REVOKED"] = os.path.join(workspace, "revoked-before")
@@ -352,11 +354,126 @@ status, body = read(insider)
 check("a carried-forward answer is still shown", body["repositories"][0]["pulls"][0]["number"] == 3)
 check("and the reason is passed on", "could not be reached" in body["note"])
 
+# ------------------------------------------------------- asking for access
+
+# This service holds no GitHub token and could not carry any of this out if it
+# wanted to. All it can do is leave a file for the collector, which is root and
+# checks the whole thing again before acting on it. So what is pinned here is
+# the two halves of that: nothing reaches the queue that should not, and what
+# does reach it is written down honestly enough for root to act on.
+
+write_snapshot([repo(), repo(name="amitista-studio-bot", path="/opt/amitista/studio-bot")])
+
+
+def queued():
+    try:
+        return sorted(name for name in os.listdir(QUEUE) if name.endswith(".json"))
+    except OSError:
+        return []
+
+
+def intents():
+    out = []
+    for name in queued():
+        with open(os.path.join(QUEUE, name), "r", encoding="utf-8") as handle:
+            out.append(json.load(handle))
+    return out
+
+
+def ask(path, body, cookie=insider):
+    status, raw, _ = request("POST", path, body, cookie=cookie)
+    return status, json.loads(raw or b"{}")
+
+status, _ = ask("/github/access", {"repo": "amitista-web", "login": "octocat", "permission": "push"}, cookie=None)
+check("a stranger cannot ask for access", status == 401)
+check("and nothing was written down", queued() == [])
+
+status, _ = ask("/github/access", {"repo": "amitista-web", "login": "octocat", "permission": "push"}, cookie=outsider)
+check("an admin who is not named cannot ask for access", status == 403)
+
+status, _ = ask("/github/access", {"repo": "amitista-web", "login": "octocat", "permission": "push"}, cookie=owner)
+check("nor can an owner, who holds every permission", status == 403)
+check("still nothing was written down", queued() == [])
+
+# ---- what is refused before it can be written down
+
+for bad, why in (
+    ({"repo": "amitista-web", "login": "octo cat", "permission": "push"}, "a login with a space"),
+    ({"repo": "amitista-web", "login": "-octocat", "permission": "push"}, "a login starting with a hyphen"),
+    ({"repo": "amitista-web", "login": "octo--cat", "permission": "push"}, "a login with a double hyphen"),
+    ({"repo": "amitista-web", "login": "a" * 40, "permission": "push"}, "a login past GitHub's ceiling"),
+    ({"repo": "amitista-web", "login": "../../etc/passwd", "permission": "push"}, "a path pretending to be a login"),
+    ({"repo": "amitista-web", "login": "octocat", "permission": "owner"}, "a permission GitHub does not have"),
+    ({"repo": "amitista-web", "login": "octocat", "permission": "write"}, "GitHub's display name for a permission"),
+    ({"repo": "amitista-web", "login": "octocat"}, "no permission at all"),
+    ({"repo": "not-a-repo", "login": "octocat", "permission": "push"}, "a repository not on this box"),
+    ({"login": "octocat", "permission": "push"}, "no repository at all"),
+):
+    status, body = ask("/github/access", bad)
+    check("%s is refused" % why, status == 400)
+check("none of the refused requests were written down", queued() == [])
+
+# ---- what is accepted
+
+status, body = ask("/github/access", {"repo": "amitista-web", "login": "octocat", "permission": "push"})
+check("a whole request is accepted", status == 200)
+check("and comes back as queued, not as done", "queued" in body and "done" not in body)
+check("one file is waiting", len(queued()) == 1)
+
+first = intents()[0]
+check("the queued file says what to do", first["action"] == "grant")
+check("and to which repository", first["repo"] == "amitista-web")
+check("and to whom", first["login"] == "octocat")
+check("and at what level", first["permission"] == "push")
+check("and who asked for it", first["by"] == INSIDER)
+check("and when", first["at"].endswith("Z"))
+check("and carries an id of its own", len(first["id"]) >= 8)
+
+status, body = ask("/github/access/remove", {"repo": "amitista-studio-bot", "login": "octocat"})
+check("a removal is accepted", status == 200)
+check("and needs no permission", intents()[1]["action"] == "revoke" and "permission" not in intents()[1])
+
+status, _ = ask("/github/access/invite/cancel", {"repo": "amitista-web", "invite": 4321})
+check("cancelling an invitation is accepted", status == 200)
+check("and carries the invitation's id as a number", intents()[2]["invite"] == 4321)
+
+for bad, why in (
+    ({"repo": "amitista-web", "invite": "4321"}, "an invitation id as text"),
+    ({"repo": "amitista-web", "invite": True}, "a boolean pretending to be an id"),
+    ({"repo": "amitista-web"}, "no invitation id"),
+):
+    status, _ = ask("/github/access/invite/cancel", bad)
+    check("cancelling with %s is refused" % why, status == 400)
+
+# Order matters and is carried by the filename: two changes to one person's
+# access have to be made in the order they were asked for, or the second undoes
+# the first.
+check("the queue is drained in the order it was written", queued() == sorted(queued()))
+check("three requests are waiting in total", len(queued()) == 3)
+
+# The panel is told what is waiting, so it can say "asked for" rather than
+# implying the change has happened.
+status, body = read(insider)
+check("what is waiting travels to the panel", len(body["queued"]) == 3)
+check("and says who asked", body["queued"][0]["by"] == INSIDER)
+
+for name in queued():
+    os.unlink(os.path.join(QUEUE, name))
+status, body = read(insider)
+check("an empty queue is an empty list, not a missing key", body["queued"] == [])
+
 # ------------------------------------------------------------- read only
 
+# Everything but access. The repositories route in particular must stay a read:
+# it is the one every section is built on, and a write on it would mean this
+# service could change something without root's say-so.
 for method in ("POST", "DELETE", "PUT"):
     status, _, _ = request(method, "/github/repositories", {} if method != "DELETE" else None, cookie=insider)
     check("the group offers no %s" % method.lower(), status in (400, 404, 405, 501))
+
+for path in ("/github/access", "/github/access/remove", "/github/access/invite/cancel"):
+    status, _, _ = request("GET", path, cookie=insider)
+    check("%s cannot be reached with a GET" % path, status in (400, 404, 405, 501))
 
 server.shutdown()
 

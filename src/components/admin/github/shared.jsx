@@ -26,6 +26,44 @@ export function GithubLink({ href, children = 'OPEN', title }) {
   );
 }
 
+// The five levels of access to a repository, weakest first.
+//
+// GitHub uses two vocabularies for these and mixes them in the same response.
+// The API takes 'pull' and 'push'; a collaborator's role_name comes back as
+// 'read' and 'write'; the other three are spelled the same either way. So every
+// level is looked up by either name and shown under one — the one GitHub's own
+// settings page uses, since that is where somebody goes to check.
+export const REPO_ROLES = [
+  { api: 'pull', label: 'read', blurb: 'Can clone and read it. Cannot push.' },
+  {
+    api: 'triage',
+    label: 'triage',
+    blurb: 'Read, plus managing issues and pull requests. Still cannot push.',
+  },
+  { api: 'push', label: 'write', blurb: 'Can push to any branch that is not protected.' },
+  {
+    api: 'maintain',
+    label: 'maintain',
+    blurb: 'Write, plus most settings. Cannot delete it or change who can reach it.',
+  },
+  {
+    api: 'admin',
+    label: 'admin',
+    blurb: 'Everything, including deleting it and changing who else can reach it.',
+  },
+];
+
+const BY_NAME = new Map();
+REPO_ROLES.forEach((role, index) => {
+  BY_NAME.set(role.api, { ...role, rank: index });
+  BY_NAME.set(role.label, { ...role, rank: index });
+});
+
+export const role = (value) => BY_NAME.get(value) ?? null;
+export const roleLabel = (value) => role(value)?.label ?? '—';
+export const roleApi = (value) => role(value)?.api ?? null;
+export const roleRank = (value) => role(value)?.rank ?? -1;
+
 // What is actually stopping this going in, in the order the answers matter. A
 // draft is nobody's problem yet; conflicts are the author's; a red run is the
 // author's too; everything else is the reviewer's. Each verdict says what to do

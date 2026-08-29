@@ -19,8 +19,13 @@ limit. It is not rationed now, because it does not need to be: every one of
 those is a conditional request, and GitHub does not charge for answering 304.
 An unchanged repository costs round trips and nothing else.
 
-Nothing here deploys or changes a repository. It only looks, and every request
-it makes is a GET.
+Almost all of it only looks, and every request it makes to read something is a
+GET. The one exception is access: the panel can ask for somebody's permission on
+a repository to be changed, and it leaves that request in a queue directory
+because it has no token to carry it out with. This process drains that queue —
+checking every field of it again from scratch, because the account that wrote it
+is not one this trusts — and records what happened. Nothing here deploys, merges
+or pushes.
 
     github-state.py OUT_PATH name=/path/to/checkout [name=/path ...]
     github-state.py --full OUT_PATH name=/path ...   ask GitHub everything now
@@ -28,6 +33,7 @@ it makes is a GET.
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -77,6 +83,30 @@ MAX_BODY = 1200
 MAX_BRANCHES = 30
 MAX_COMPARES = 8
 MAX_RUNS = 10
+MAX_PEOPLE = 100
+
+# Where the admin panel leaves a permission change it would like carried out.
+#
+# The panel cannot make one itself, and that is not an oversight to be fixed
+# later — the whole arrangement of this file exists so the token stays in root's
+# hands. So the panel writes what it wants into this directory, which it can
+# write and root can read, and this process decides whether to do it.
+#
+# Which means nothing in that directory is trusted. It is written by a service
+# running as a different, less privileged account; if that account were ever
+# taken, the queue is the first thing that would be used, so every field is
+# checked here again from scratch rather than believed.
+QUEUE_DIR = os.environ.get("ADMIN_GITHUB_QUEUE", "/var/lib/amitista/admin/github-queue")
+MAX_QUEUE_PER_TICK = 20
+MAX_ACTION_LOG = 25
+
+# The permissions GitHub takes for a repository collaborator, weakest first.
+ROLES = ("pull", "triage", "push", "maintain", "admin")
+
+# GitHub's own rule for a login: alphanumerics and single inner hyphens, up to
+# thirty-nine characters. Checked because the login goes into a URL path.
+LOGIN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$")
+
 
 # A run GitHub has finished with will never change its mind, so its verdict is
 # cached against the commit and never asked for twice. Anything else — queued,
@@ -234,6 +264,63 @@ class GitHub:
         except (urllib.error.URLError, OSError, ValueError):
             self.failed = True
             return None, "error"
+
+    def send(self, method, path, body=None):
+        """The only thing in this file that changes anything at GitHub.
+
+        Everything else is a GET, and deliberately so. This exists for one
+        reason: the admin panel has no token and no route to the internet worth
+        the name, so a permission change it wants made has to be carried out by
+        something that does. Returns (payload, status, error).
+
+        Never conditional. A cached ETag has nothing to do with a request that
+        is trying to change something, and sending If-None-Match on a PUT would
+        get it refused rather than skipped.
+        """
+        if not self.auth:
+            return None, None, "no token on this box"
+
+        headers = {
+            "Authorization": "token %s" % self.auth,
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "amitista-autodeploy/1.0",
+        }
+        data = None
+        if body is not None:
+            data = json.dumps(body).encode("utf-8")
+            headers["Content-Type"] = "application/json"
+
+        self.calls += 1
+        self.spent += 1
+        request = urllib.request.Request(
+            "https://api.github.com" + path, data=data, headers=headers, method=method
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=TIMEOUT) as answer:
+                self._note(answer.headers)
+                raw = answer.read()
+                try:
+                    return json.loads(raw) if raw else None, answer.status, None
+                except ValueError:
+                    return None, answer.status, None
+        except urllib.error.HTTPError as failure:
+            self._note(failure.headers)
+            reason = "GitHub refused it (%d)" % failure.code
+            try:
+                said = json.loads(failure.read())
+                if isinstance(said, dict) and said.get("message"):
+                    reason = said["message"]
+                    errors = said.get("errors")
+                    if isinstance(errors, list) and errors:
+                        first = errors[0]
+                        if isinstance(first, dict) and first.get("message"):
+                            reason = "%s — %s" % (reason, first["message"])
+            except (ValueError, OSError):
+                pass
+            return None, failure.code, reason
+        except (urllib.error.URLError, OSError) as failure:
+            return None, None, "GitHub could not be reached (%s)" % failure
 
     def _note(self, headers):
         for name, attribute in (
@@ -642,6 +729,8 @@ def detail_for(api, repo, cached):
     commits = recent_commits(api, repo, cached.get("commits"))
     branches = branch_drift(api, repo, facts.get("defaultBranch"), cached.get("branches"))
     runs = recent_runs(api, repo, cached.get("runs"))
+    access = repo_access(api, repo, cached.get("access"))
+    invites = repo_invites(api, repo, cached.get("invites"))
     return {
         "facts": facts,
         "pulls": pulls,
@@ -649,7 +738,346 @@ def detail_for(api, repo, cached):
         "commits": commits,
         "branches": branches,
         "runs": runs,
+        "access": access,
+        "invites": invites,
     }
+
+
+# ------------------------------------------------------------------- people
+
+# Who can reach the code, and how.
+#
+# Two different things wear the word "permission" here and they are kept apart
+# on purpose. An organisation role — owner or member — is about the
+# organisation. A repository role — read through admin — is about one
+# repository. Somebody can hold a repository at admin without being an owner,
+# and an owner holds every repository whether or not they were ever added to
+# one. The second case is the one that surprises people, so access records where
+# it came from and not only what it is.
+
+
+def person(entry, **extra):
+    if not isinstance(entry, dict) or not entry.get("login"):
+        return None
+    out = {
+        "login": entry.get("login"),
+        "avatar": entry.get("avatar_url"),
+        "url": entry.get("html_url"),
+        "type": entry.get("type") or "User",
+    }
+    out.update(extra)
+    return out
+
+
+def people_list(payload, **extra):
+    if not isinstance(payload, list):
+        return None
+    out = []
+    for entry in payload[:MAX_PEOPLE]:
+        made = person(entry, **extra)
+        if made:
+            out.append(made)
+    return out
+
+
+def actor_login(api, cached):
+    """The account the token belongs to.
+
+    Not decoration. It is the one account a queued change is never allowed to
+    touch: revoking its own admin would lock this box out of the repository, and
+    out of the deploy that would have put it back.
+    """
+    payload, state = api.get("/user", bool(cached))
+    if state != "ok" or not isinstance(payload, dict):
+        return cached
+    return payload.get("login") or cached
+
+
+def repo_access(api, repo, cached):
+    """Everyone who can reach one repository, and whether they were added to it.
+
+    Two questions, so two requests. `all` is who has access by any route;
+    `direct` is who was added to this repository specifically. Only the second
+    kind can be changed from here — an owner's access comes from the
+    organisation, and taking it away means changing their organisation role,
+    which is a different decision made somewhere else.
+    """
+    # isinstance rather than a truth test, throughout. An empty list is an
+    # answer — "nobody has been added to this repository" — and treating it as
+    # nothing known means asking again in full every tick for the state these
+    # repositories are actually in.
+    held = isinstance(cached, list)
+    everyone, state = api.get(
+        "/repos/%s/%s/collaborators?affiliation=all&per_page=100" % (ORG, repo), held
+    )
+    if state != "ok":
+        return cached if held else []
+    listed = people_list(everyone)
+    if listed is None:
+        return cached if held else []
+
+    roles = {}
+    for entry in everyone:
+        if isinstance(entry, dict) and entry.get("login"):
+            roles[entry["login"]] = entry.get("role_name")
+
+    added, direct_state = api.get(
+        "/repos/%s/%s/collaborators?affiliation=direct&per_page=100" % (ORG, repo), held
+    )
+    if direct_state == "ok" and isinstance(added, list):
+        direct = set(e.get("login") for e in added if isinstance(e, dict))
+    else:
+        # Carried from last time rather than guessed at. Guessing "not direct"
+        # greys out a control that does work; guessing "direct" offers one that
+        # cannot.
+        direct = set(
+            e.get("login") for e in (cached or []) if isinstance(e, dict) and e.get("direct")
+        )
+
+    for row in listed:
+        row["role"] = roles.get(row["login"])
+        row["direct"] = row["login"] in direct
+    listed.sort(
+        key=lambda row: (
+            -ROLES.index(row["role"]) if row.get("role") in ROLES else 0,
+            row["login"],
+        )
+    )
+    return listed
+
+
+def repo_invites(api, repo, cached):
+    """Invitations sent for this repository that nobody has accepted yet.
+
+    Worth a list of their own. An invitation is access that has been decided on
+    and has not happened, and one that has sat unanswered for weeks usually
+    means it went to the wrong person.
+    """
+    payload, state = api.get(
+        "/repos/%s/%s/invitations?per_page=100" % (ORG, repo), isinstance(cached, list)
+    )
+    if state != "ok" or not isinstance(payload, list):
+        return cached if isinstance(cached, list) else []
+    out = []
+    for entry in payload[:MAX_PEOPLE]:
+        if not isinstance(entry, dict):
+            continue
+        invitee = entry.get("invitee") if isinstance(entry.get("invitee"), dict) else {}
+        inviter = entry.get("inviter") if isinstance(entry.get("inviter"), dict) else {}
+        out.append(
+            {
+                "id": entry.get("id"),
+                "login": invitee.get("login"),
+                "avatar": invitee.get("avatar_url"),
+                # GitHub calls this "permissions" on an invitation and
+                # "role_name" on a collaborator, and spells the same level
+                # differently in each.
+                "permission": entry.get("permissions"),
+                "created": entry.get("created_at"),
+                "expired": bool(entry.get("expired")),
+                "by": inviter.get("login"),
+                "url": entry.get("html_url"),
+            }
+        )
+    return out
+
+
+def org_people(api, cached):
+    """The organisation itself: its members, its settings, its open invitations.
+
+    Members come back from two role-filtered requests rather than one list plus
+    a membership lookup per person. That is two requests however many people
+    there are, which matters less today than it will later.
+    """
+    held = cached if isinstance(cached, dict) else {}
+    out = dict(held)
+
+    facts, state = api.get("/orgs/%s" % ORG, bool(held.get("org")))
+    if state == "ok" and isinstance(facts, dict):
+        plan = facts.get("plan") if isinstance(facts.get("plan"), dict) else {}
+        out["org"] = {
+            "login": facts.get("login"),
+            "name": facts.get("name"),
+            "url": facts.get("html_url"),
+            "created": facts.get("created_at"),
+            "plan": plan.get("name"),
+            "seatsFilled": plan.get("filled_seats"),
+            "seats": plan.get("seats"),
+            # The three settings that decide what a new member gets without
+            # anybody deciding it again.
+            "twoFactorRequired": bool(facts.get("two_factor_requirement_enabled")),
+            "defaultPermission": facts.get("default_repository_permission"),
+            "membersCanCreateRepos": facts.get("members_can_create_repositories"),
+            "membersCanForkPrivate": facts.get("members_can_fork_private_repositories"),
+            "privateRepos": facts.get("total_private_repos"),
+            "outsideCollaborators": facts.get("collaborators"),
+        }
+
+    members = []
+    seen = set()
+    answered = False
+    for role in ("admin", "member"):
+        payload, state = api.get(
+            "/orgs/%s/members?role=%s&per_page=100" % (ORG, role), "members" in held
+        )
+        if state != "ok":
+            continue
+        answered = True
+        # GitHub's word for it is "admin". Everywhere a person reads it, it is
+        # "owner", so it is translated once here rather than in three places.
+        for row in people_list(payload, role="owner" if role == "admin" else "member") or []:
+            if row["login"] not in seen:
+                seen.add(row["login"])
+                members.append(row)
+    if answered:
+        out["members"] = members
+    elif "members" not in out:
+        out["members"] = []
+
+    weak, state = api.get(
+        "/orgs/%s/members?filter=2fa_disabled&per_page=100" % ORG, "withoutTwoFactor" in held
+    )
+    if state == "ok" and isinstance(weak, list):
+        out["withoutTwoFactor"] = [row["login"] for row in people_list(weak) or []]
+
+    invites, state = api.get("/orgs/%s/invitations?per_page=100" % ORG, "invites" in held)
+    if state == "ok" and isinstance(invites, list):
+        rows = []
+        for entry in invites[:MAX_PEOPLE]:
+            if not isinstance(entry, dict):
+                continue
+            inviter = entry.get("inviter") if isinstance(entry.get("inviter"), dict) else {}
+            rows.append(
+                {
+                    "login": entry.get("login"),
+                    "email": entry.get("email"),
+                    "role": entry.get("role"),
+                    "created": entry.get("created_at"),
+                    "failed": entry.get("failed_reason"),
+                    "by": inviter.get("login"),
+                }
+            )
+        out["invites"] = rows
+
+    return out
+
+
+# ------------------------------------------------------------- carrying it out
+
+def read_intent(path):
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+    except (OSError, ValueError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def refuse(intent, why):
+    return dict(intent, ok=False, done=now(), error=why, status=None)
+
+
+def check_intent(intent, repos, actor):
+    """Whether a queued change is one we are willing to make.
+
+    Checked here in full, and not because the panel did not check it — it did.
+    The panel is not what this trusts. The queue is a directory written by a
+    service running as another account; if that account were ever taken, this
+    function is the whole of what stands between it and handing somebody admin.
+    """
+    if intent.get("action") not in ("grant", "revoke", "uninvite"):
+        return "not something this knows how to do"
+
+    repo = intent.get("repo")
+    if repo not in repos:
+        return "%s is not a repository on this box" % (repo or "that")
+
+    if intent["action"] == "uninvite":
+        invite = intent.get("invite")
+        if not isinstance(invite, int) or isinstance(invite, bool):
+            return "no invitation was named"
+        return None
+
+    login = intent.get("login")
+    if not isinstance(login, str) or not LOGIN.match(login):
+        return "%r is not a GitHub login" % (login,)
+    if actor and login.lower() == actor.lower():
+        # The rail that matters. Revoking this account's own admin locks the box
+        # out of the repository, and out of the deploy that would undo it.
+        return "that is the account this box deploys with — change it on GitHub if you mean it"
+
+    if intent["action"] == "grant" and intent.get("permission") not in ROLES:
+        return "%r is not a permission GitHub takes" % (intent.get("permission"),)
+    return None
+
+
+def carry_out(api, intent):
+    repo = intent["repo"]
+    action = intent["action"]
+
+    if action == "grant":
+        payload, status, error = api.send(
+            "PUT",
+            "/repos/%s/%s/collaborators/%s" % (ORG, repo, intent["login"]),
+            {"permission": intent["permission"]},
+        )
+        # 201 with a body means an invitation was created and is waiting to be
+        # accepted. 204 and no body means they already had access and only the
+        # level moved. Worth telling apart: one of them is not access yet.
+        result = None
+        if error is None:
+            result = "invited" if isinstance(payload, dict) and payload.get("id") else "changed"
+        return dict(intent, ok=error is None, done=now(), status=status, error=error, result=result)
+
+    if action == "revoke":
+        payload, status, error = api.send(
+            "DELETE", "/repos/%s/%s/collaborators/%s" % (ORG, repo, intent["login"])
+        )
+        return dict(
+            intent, ok=error is None, done=now(), status=status, error=error, result="removed"
+        )
+
+    payload, status, error = api.send(
+        "DELETE", "/repos/%s/%s/invitations/%d" % (ORG, repo, intent["invite"])
+    )
+    return dict(
+        intent, ok=error is None, done=now(), status=status, error=error, result="cancelled"
+    )
+
+
+def drain_queue(api, repos, actor, previous):
+    """Carry out what the panel has asked for, then record what happened.
+
+    Every intent leaves the queue whether it worked or not. A failure is not
+    retried on its own: a login that does not exist, or a permission GitHub will
+    not take, fails identically every minute, and a loop nobody can see is worse
+    than a refusal somebody can read. What happened goes into the snapshot
+    instead, where the person who asked for it will be looking.
+    """
+    done = []
+    try:
+        names = sorted(name for name in os.listdir(QUEUE_DIR) if name.endswith(".json"))
+    except OSError:
+        return previous
+
+    for name in names[:MAX_QUEUE_PER_TICK]:
+        path = os.path.join(QUEUE_DIR, name)
+        intent = read_intent(path)
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+        if intent is None:
+            continue
+
+        why = check_intent(intent, repos, actor)
+        done.append(refuse(intent, why) if why else carry_out(api, intent))
+
+    if not done:
+        return previous
+
+    kept = previous if isinstance(previous, list) else []
+    return (list(reversed(done)) + kept)[:MAX_ACTION_LOG]
 
 
 # ---------------------------------------------------------------- assembling
@@ -715,9 +1143,14 @@ def inspect(name, path, api, known, want_detail):
         if remote and remote != head:
             entry["tip"] = commit_facts(path, "origin/%s" % BRANCH)
 
+    # Everything GitHub answered for last time. Two jobs, and the second is the
+    # one that bites: it is what a conditional request falls back on, so a key
+    # missing from this list is re-asked in full every tick and thrown away
+    # whenever GitHub cannot be reached. Anything detail_for returns belongs
+    # here.
     carried = {
         key: known[key]
-        for key in ("facts", "pulls", "issues", "commits", "branches", "runs")
+        for key in ("facts", "pulls", "issues", "commits", "branches", "runs", "access", "invites")
         if key in known
     }
     if want_detail:
@@ -786,15 +1219,40 @@ def main():
 
     api = GitHub(auth, previous.get("etags"))
 
+    held_people = previous.get("people") if isinstance(previous.get("people"), dict) else {}
+    actor = actor_login(api, held_people.get("actor")) if auth else held_people.get("actor")
+
+    # Whatever the panel asked for is carried out before anything is read, so
+    # the snapshot written at the end of this tick shows the result rather than
+    # the state it replaced. Having carried something out is also reason enough
+    # to ask GitHub everything again however recently it was last asked: the
+    # person who asked for it is watching the page.
+    actions = held_people.get("actions")
+    carried = 0
+    if auth:
+        after = drain_queue(api, set(name for name, _ in pairs), actor, actions)
+        if after is not actions:
+            carried = len(after or []) - len(actions or [])
+            want_detail = True
+        actions = after
+
     repositories = []
     for name, path in pairs:
         repositories.append(inspect(name, path, api, cached(previous, name), want_detail))
+
+    people = org_people(api, held_people) if (want_detail and auth) else dict(held_people)
+    people["actor"] = actor
+    if actions:
+        people["actions"] = actions
+    else:
+        people.pop("actions", None)
 
     payload = {
         "generated": now(),
         "org": ORG,
         "branch": BRANCH,
         "repositories": repositories,
+        "people": people,
         "etags": api.etags,
     }
     payload["detail"] = now() if want_detail and not api.failed else previous.get("detail")
@@ -815,8 +1273,10 @@ def main():
     pulls = sum(len(entry.get("pulls") or []) for entry in repositories)
     issues = sum(len(entry.get("issues") or []) for entry in repositories)
     print(
-        "github state: %d/%d in sync and clean, %d open PR(s), %d open issue(s); %d request(s), %d charged%s"
-        % (clean, len(repositories), pulls, issues, api.calls, api.spent,
+        "github state: %d/%d in sync and clean, %d open PR(s), %d open issue(s)%s; %d request(s), %d charged%s"
+        % (clean, len(repositories), pulls, issues,
+           "" if carried <= 0 else ", %d access change(s) carried out" % carried,
+           api.calls, api.spent,
            "" if api.remaining is None else ", %d left this hour" % api.remaining)
     )
     return 0

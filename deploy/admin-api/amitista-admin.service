@@ -22,6 +22,10 @@ Group=amitista-admin
 NoNewPrivileges=yes
 ProtectSystem=strict
 ReadWritePaths=/var/lib/amitista/admin/session
+# Where a requested GitHub access change is left for the deploy to carry out.
+# Writable here and nowhere near the token, which is the whole point: this
+# service can ask, and only root can act.
+ReadWritePaths=/var/lib/amitista/admin/github-queue
 ReadWritePaths=/var/lib/amitista/tokens
 ReadWritePaths=/var/www/amitista.com/shared
 ProtectHome=yes

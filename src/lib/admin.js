@@ -705,6 +705,31 @@ export async function fetchGithubRepositories() {
   return unwrap(await call('/github/repositories'), 'Could not read the repository snapshot.');
 }
 
+// The three that ask for a change rather than making one. What comes back says
+// the request was written down; whether GitHub accepted it shows up in the next
+// snapshot, about a minute later. The wording everywhere downstream keeps that
+// distinction — "asked for", not "done".
+export async function queueGithubAccess(repo, login, permission) {
+  return unwrap(
+    await send('/github/access', { repo, login, permission }),
+    'Could not ask for that access change.',
+  );
+}
+
+export async function queueGithubRevoke(repo, login) {
+  return unwrap(
+    await send('/github/access/remove', { repo, login }),
+    'Could not ask for that access to be removed.',
+  );
+}
+
+export async function queueGithubInviteCancel(repo, invite) {
+  return unwrap(
+    await send('/github/access/invite/cancel', { repo, invite }),
+    'Could not ask for that invitation to be cancelled.',
+  );
+}
+
 export async function fetchAccount() {
   return unwrap(await call('/account'), 'Could not read your account.');
 }
