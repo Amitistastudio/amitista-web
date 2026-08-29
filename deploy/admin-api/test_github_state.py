@@ -778,11 +778,13 @@ def write_lines(path, entries):
             handle.write(json.dumps(entry) + "\n")
 
 
-def run(at, release, lcp, path="/", profile="broadband", **extra):
+def run(at, release, lcp, path="/", profile="broadband", samples=None, **extra):
     page = {"path": path, "lcp": lcp, "fcp": 400, "ttfb": 200, "cls": 0.01,
             "tbt": 0, "longTaskMs": 0, "bytes": 100000}
     page.update(extra)
     entry = {"at": at, "profile": profile, "pages": [page], "problems": []}
+    if samples is not None:
+        entry["samples"] = samples
     if release is not None:
         entry["release"] = {"release": release}
     return entry
@@ -875,6 +877,53 @@ report = state.site_performance(SITE)
 check("a throttled run is not compared against an unthrottled one",
       [entry["release"] for entry in report["releases"]] == ["20260820-090000"])
 check("the profile being reported on is said out loud", report["profile"] == "slow-4g-4x-cpu")
+
+# ---------------------------------------------- measured once, or measured
+
+# The bug this pins put a rose banner at the top of the panel reading "Commit
+# c701c74 increased Long tasks by 1402ms on /" over a commit that touched three
+# lines of Python and one string in the admin panel. The deploy starts the
+# monitor the moment a release goes live, so its one measurement lands while
+# installers are finishing and units are restarting — and / animates, so its
+# frames cross the 50ms line and every one of them starts counting. Six passes
+# of that same unchanged build measured 52, 62, 117, 131, 194 and 1534ms.
+write_lines(state.PERF_HISTORY, [
+    run("2026-08-20T08:10:00Z", "20260820-080000", 860),
+    run("2026-08-20T09:10:00Z", "20260820-090000", 1200),
+])
+moves = state.site_performance(SITE)["releases"][0]["moves"]
+check("one measurement against one measurement is not confirmed",
+      moves[0]["confirmed"] is False)
+check("and it says how few there were either side",
+      moves[0]["runs"] == {"now": 1, "before": 1})
+
+write_lines(state.PERF_HISTORY, [
+    run("2026-08-20T08:10:00Z", "20260820-080000", 860, samples=3),
+    run("2026-08-20T09:10:00Z", "20260820-090000", 1200, samples=3),
+])
+report = state.site_performance(SITE)
+moves = report["releases"][0]["moves"]
+check("a run the monitor took several passes over counts as several",
+      report["releases"][0]["runs"] == 3)
+check("and a comparison of two of those is confirmed", moves[0]["confirmed"] is True)
+
+# The passes are what count, not the lines. A release measured twice by the
+# six-hourly timer is as well attested as one the monitor measured twice in a
+# row, and neither should have to wait on the other's bookkeeping.
+write_lines(state.PERF_HISTORY, [
+    run("2026-08-20T08:10:00Z", "20260820-080000", 860, samples=2),
+    run("2026-08-20T09:10:00Z", "20260820-090000", 1200),
+    run("2026-08-20T09:40:00Z", "20260820-090000", 1210),
+])
+moves = state.site_performance(SITE)["releases"][0]["moves"]
+check("two lines are as good as one line of two passes",
+      moves[0]["runs"] == {"now": 2, "before": 2} and moves[0]["confirmed"] is True)
+
+# A history line written before any of this existed says nothing about passes.
+# It is one measurement, which is what it always was.
+check("a line with no count of its own is one measurement", state.run_samples({}) == 1)
+check("and so is one that claims a nonsense number",
+      state.run_samples({"samples": 0}) == 1 and state.run_samples({"samples": "3"}) == 1)
 
 # ------------------------------------------------------ rollbacks and gaps
 

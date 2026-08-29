@@ -5,6 +5,52 @@ import { createRafLoop } from '../lib/rafLoop';
 const MAX_DPR = 1.5;
 const TARGET_FPS = 30;
 
+// What this background is allowed to cost the main thread, and what happens
+// when it costs more.
+//
+// The shader is decoration. On anything with a working GPU a frame is a
+// millisecond or two and none of this comes into play. Where it does — a
+// software renderer, a cheap phone, a laptop already busy with something real —
+// asking for thirty frames a second is asking for something the device cannot
+// give, and the way that failure presents is the worst of both: the animation
+// is not smooth and the main thread is not free. Past 50ms a frame stops being
+// slow and becomes a long task, which is a real cost to whoever is reading the
+// page rather than watching the corner of it move.
+//
+// So the loop watches for both, and asks for less: half the rate first, and if a
+// second window at that rate is still bad it stops on the frame it has drawn. A
+// still gradient is what most of this looks like at any one moment anyway. Two
+// windows rather than one because a machine that was busy for a second is not a
+// machine that cannot do this.
+//
+// Two signals, because the cost lands in two different places and either one
+// alone misses half the devices. Timing the draw call catches a renderer that
+// does the work where it is asked to. It does not catch the common case: the
+// draw returns in a fortieth of a millisecond and the pixels are rasterised
+// later, on the same thread, where no timer in the page can see it — profiling
+// this page's hero shows 51% of the main thread in the browser's own code and
+// 4% in script. What that leaves behind is a frame rate below the one that was
+// asked for, which is measurable from here and is the honest summary of both.
+const SLOW_FRAME_MS = 8;
+const STOP_FRAME_MS = 20;
+// Below this share of the rate it asked for, the device is not keeping up.
+const RATE_FLOOR = 0.75;
+const SLOW_FPS = 15;
+// The first frames compile the shader and upload the geometry, and are not
+// what steady-state costs. Judged on a window of frames rather than one, so a
+// single interrupted frame does not stop the animation for the whole visit.
+const WARMUP_FRAMES = 3;
+const SAMPLE_FRAMES = 12;
+// A gap longer than this is the loop having been paused — the tab went away, or
+// the element scrolled off — not a frame that took that long to draw.
+const MAX_GAP_MS = 500;
+
+const middle = (values) => {
+  const sorted = [...values].sort((a, b) => a - b);
+  const half = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[half] : (sorted[half - 1] + sorted[half]) / 2;
+};
+
 const hexToRgb = hex => {
   const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
   return m ? [parseInt(m[1], 16) / 255, parseInt(m[2], 16) / 255, parseInt(m[3], 16) / 255] : [0.5, 0.4, 0.6];
@@ -183,12 +229,65 @@ const SilkCanvas = ({
     if (reduceMotion) {
       render(0);
     } else {
+      const now = () =>
+        (typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now());
+      let fps = TARGET_FPS;
+      let drawn = 0;
+      let costs = [];
+      let gaps = [];
+      let last = 0;
+
+      // Judged against what was asked for rather than a fixed number: at 15fps
+      // a frame has twice as long to arrive before the device is behind.
+      const strained = () => {
+        if (middle(costs) >= (fps > SLOW_FPS ? SLOW_FRAME_MS : STOP_FRAME_MS)) return true;
+        if (gaps.length < SAMPLE_FRAMES / 2) return false;
+        return 1000 / middle(gaps) < fps * RATE_FLOOR;
+      };
+
       loop = createRafLoop({
         element: container,
         fps: TARGET_FPS,
         onFrame: t => {
+          const started = now();
           if (!render(t)) return false;
           reveal();
+
+          const cost = now() - started;
+          drawn += 1;
+          if (drawn <= WARMUP_FRAMES) {
+            last = started;
+            return true;
+          }
+
+          costs.push(cost);
+          const gap = started - last;
+          // A gap this long is the loop having been paused rather than a frame
+          // that took that long, and a window holding one is thrown away rather
+          // than judged: coming back from a hidden tab should not cost the visit
+          // its animation.
+          if (last && gap > MAX_GAP_MS) {
+            costs = [];
+            gaps = [];
+          } else if (last && gap > 0) {
+            gaps.push(gap);
+          }
+          last = started;
+
+          if (costs.length >= SAMPLE_FRAMES) {
+            const bad = strained();
+            costs = [];
+            gaps = [];
+            // Always try asking for less before giving up, even when the first
+            // window is dreadful. Halving the rate is enough on most of the
+            // devices this catches.
+            if (bad && fps > SLOW_FPS) {
+              fps = SLOW_FPS;
+              loop.setFps(fps);
+            } else if (bad) {
+              return false;
+            }
+          }
           return true;
         }
       });

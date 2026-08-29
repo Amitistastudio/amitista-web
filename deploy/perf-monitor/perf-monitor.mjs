@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { readFile, readlink, writeFile, mkdir, rename } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
+import { cpus, loadavg } from 'node:os';
 
 const SITE = process.env.AMITISTA_PERF_URL ?? 'https://amitista.com';
 const STATE = process.env.AMITISTA_PERF_STATE ?? '/var/lib/amitista/perf';
@@ -36,6 +37,33 @@ const MIN_SHIFT_MS = 120;
 // regression once it has also left the comfortable part of its budget, which is
 // what keeps the six-hourly run quiet unless something genuinely moved.
 const QUIET_FRACTION = 0.6;
+
+// How busy the box may be before a measurement is worth taking, as a share of
+// its cores. The deploy starts this service the moment a release goes live, so
+// without this the run lands in the busiest minute the box ever has: installers
+// finishing, units restarting, the deploy's own collector asking GitHub for
+// thirty things. A page that animates is the one that suffers — its frames
+// stretch past the 50ms line and every one of them starts counting as a long
+// task, so the same build reads 120ms on a quiet box and 1500ms on a busy one.
+// That is not a regression, and it should never have been offered as one.
+const QUIET_LOAD = Number(process.env.AMITISTA_PERF_QUIET_LOAD ?? 0.7);
+const QUIET_WAIT_MS = Number(process.env.AMITISTA_PERF_QUIET_WAIT_MS ?? 150_000);
+const QUIET_POLL_MS = 5_000;
+
+// How many times every run measures, and how many more it takes when what it
+// measured looks like news.
+//
+// One pass against one pass is not enough to tell a change from the weather: six
+// passes of one unchanged build measured 52, 62, 117, 131, 194 and 1534ms of
+// long tasks on /. Two always, rather than one now and more later, because the
+// panel compares this release against the one before it and that one is not
+// going to be measured again — a run that only deepens itself when it sees
+// something would leave every comparison resting on whatever single reading the
+// previous release happened to get. The third pass is the one that matters when
+// a reading is wrong: it is the first count at which the middle reading throws
+// an outlier away rather than averaging it in.
+const MEASURE_PASSES = Number(process.env.AMITISTA_PERF_PASSES ?? 2);
+const CONFIRM_PASSES = Number(process.env.AMITISTA_PERF_CONFIRM_PASSES ?? 1);
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -372,6 +400,59 @@ const SHIFT_FLOOR = { lcp: MIN_SHIFT_MS, fcp: MIN_SHIFT_MS, ttfb: MIN_SHIFT_MS, 
 // with the same care as regressions — "which commit made the site slower" and
 // "did that fix actually work" are the same question asked from either end, and
 // only keeping the bad half would answer one of them.
+// The one-minute load average per core. A three-core box running a deploy sits
+// well over 1; idling it sits under 0.2.
+function busyness() {
+  return loadavg()[0] / Math.max(1, cpus().length);
+}
+
+async function waitForQuiet() {
+  const until = Date.now() + QUIET_WAIT_MS;
+  let load = busyness();
+  if (load <= QUIET_LOAD) return { load: Number(load.toFixed(2)), waited: 0 };
+
+  const start = Date.now();
+  process.stdout.write(`  box is busy (load ${load.toFixed(2)}/core) — waiting for it to settle\n`);
+  while (Date.now() < until) {
+    await sleep(QUIET_POLL_MS);
+    load = busyness();
+    if (load <= QUIET_LOAD) break;
+  }
+  const waited = Date.now() - start;
+  // Reported either way. A measurement taken on a box that never went quiet is
+  // still worth having — it is the only one there is going to be — but what it
+  // was competing with belongs in the record next to the numbers.
+  process.stdout.write(
+    `  ${load <= QUIET_LOAD ? 'settled' : 'still busy'} at ${load.toFixed(2)}/core` +
+      ` after ${(waited / 1000).toFixed(0)}s\n`,
+  );
+  return { load: Number(load.toFixed(2)), waited };
+}
+
+function middle(values) {
+  const sorted = values.filter((v) => typeof v === 'number').sort((a, b) => a - b);
+  if (!sorted.length) return null;
+  const half = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[half] : (sorted[half - 1] + sorted[half]) / 2;
+}
+
+// Several passes over the same routes, reduced to the middle reading of each
+// metric. The middle rather than the mean on purpose: one pass landing on a
+// busy second is exactly the thing being defended against, and an average
+// carries it into the answer while a median throws it away.
+function medianPages(passes) {
+  const first = passes[0] ?? [];
+  return first.map((page) => {
+    const readings = passes.map((pass) => pass.find((entry) => entry.path === page.path));
+    const out = { ...page };
+    for (const metric of ['ttfb', 'fcp', 'lcp', 'cls', 'load', 'longTaskMs', 'longestTaskMs', 'tbt', 'bytes']) {
+      const value = middle(readings.map((entry) => entry?.[metric]));
+      if (value !== null) out[metric] = metric === 'cls' ? Number(value.toFixed(4)) : Math.round(value);
+    }
+    return out;
+  });
+}
+
 function shifts(now, before) {
   const out = [];
   if (!Array.isArray(before)) return out;
@@ -484,6 +565,33 @@ async function main() {
   const rebase = Boolean(argOf('--rebaseline'));
   const dryRun = Boolean(argOf('--dry-run'));
 
+  const profile = throttle ? 'slow-4g-4x-cpu' : 'broadband';
+  const baseline = await readJson(BASELINE, null);
+  const comparable = baseline?.profile === profile ? baseline.pages : null;
+  const release = await liveRelease();
+
+  // The last measurement of a different release, on the same profile. Same
+  // profile because a throttled run against an unthrottled one is a comparison
+  // of the emulation and nothing else; a different release because comparing a
+  // release against itself is what the six-hourly timer does all day and it
+  // measures the weather on the box, not the code.
+  //
+  // Read before anything is measured, because whether this run needs a second
+  // and third pass depends on what the first one has to say about it.
+  const history = await readRuns();
+  const before = release
+    ? history
+        .filter(
+          (entry) =>
+            entry.profile === profile &&
+            entry.release?.release &&
+            entry.release.release !== release.release,
+        )
+        .at(-1)
+    : null;
+
+  const quiet = await waitForQuiet();
+
   const chrome = spawn(CHROMIUM, [
     '--headless=new',
     `--remote-debugging-port=${PORT}`,
@@ -497,14 +605,40 @@ async function main() {
 
   let pages = [];
   let invariants = [];
+  let samples = 1;
   try {
     const cdp = await Cdp.connect(await browserEndpoint());
-    for (const path of ROUTES) pages.push(await measure(cdp, path, { throttle }));
+    const pass = async () => {
+      const out = [];
+      for (const path of ROUTES) out.push(await measure(cdp, path, { throttle }));
+      return out;
+    };
+
+    const passes = [];
+    for (let i = 0; i < Math.max(1, MEASURE_PASSES); i += 1) passes.push(await pass());
     invariants = await checkInvariants();
+    pages = medianPages(passes);
+
+    // Nothing to report means nothing to prove. Anything else — over budget,
+    // moved against the baseline, moved against the last release — is worth the
+    // pass that turns an average of two into a middle of three.
+    const suspect =
+      overBudget(pages, profile).length > 0 ||
+      regressions(pages, comparable, profile).length > 0 ||
+      (before ? shifts(pages, before.pages).length > 0 : false);
+
+    if (suspect && CONFIRM_PASSES > 0) {
+      process.stdout.write(`\n  something moved — measuring ${CONFIRM_PASSES} more time(s) to be sure\n`);
+      for (let i = 0; i < CONFIRM_PASSES; i += 1) passes.push(await pass());
+      pages = medianPages(passes);
+    }
+
+    samples = passes.length;
   } finally {
     chrome.kill();
   }
 
+  if (samples > 1) process.stdout.write(`\n  middle of ${samples} passes:\n`);
   for (const page of pages) {
     process.stdout.write(
       `  ${page.path.padEnd(22)} ttfb ${String(page.ttfb).padStart(4)}ms  ` +
@@ -513,16 +647,12 @@ async function main() {
     );
   }
 
-  const profile = throttle ? 'slow-4g-4x-cpu' : 'broadband';
-  const baseline = await readJson(BASELINE, null);
-  const comparable = baseline?.profile === profile ? baseline.pages : null;
   const problems = [
     ...invariants,
     ...overBudget(pages, profile),
     ...regressions(pages, comparable, profile),
   ];
 
-  const release = await liveRelease();
   if (release) {
     process.stdout.write(
       `\n  release ${release.release}${
@@ -533,28 +663,18 @@ async function main() {
     );
   }
 
-  // The last measurement of a different release, on the same profile. Same
-  // profile because a throttled run against an unthrottled one is a comparison
-  // of the emulation and nothing else; a different release because comparing a
-  // release against itself is what the six-hourly timer does all day and it
-  // measures the weather on the box, not the code.
-  const history = await readRuns();
-  const before = release
-    ? history
-        .filter(
-          (entry) =>
-            entry.profile === profile &&
-            entry.release?.release &&
-            entry.release.release !== release.release,
-        )
-        .at(-1)
-    : null;
   const moved = before ? shifts(pages, before.pages) : [];
 
   const run = {
     at: new Date().toISOString(),
     profile,
     release,
+    // How many passes these numbers are the middle of, and how loaded the box
+    // was when they were taken. Both travel with the run because both decide
+    // how much the numbers are worth: the panel will not name a commit over a
+    // comparison that is one pass against one pass.
+    samples,
+    load: quiet.load,
     pages,
     problems,
     // What this is being compared against travels with the comparison. The

@@ -1788,12 +1788,31 @@ def measured_pages(runs):
     return out
 
 
-def metric_moves(now, before):
+# How many measurements each side of a comparison needs before the panel will
+# put a name to it. One pass against one pass is not a comparison: six passes of
+# one unchanged build measured 52, 62, 117, 131, 194 and 1534ms of long tasks on
+# /, and the deploy takes its pass in the busiest minute the box has. A move
+# under this is still shown — it is what there is to see — but as something
+# measured once, not as something a commit did.
+PERF_CONFIRM_RUNS = 2
+
+
+def run_samples(run):
+    """How many passes one history line is the middle of. Older lines are one."""
+    count = run.get("samples")
+    return count if isinstance(count, int) and count > 0 else 1
+
+
+def metric_moves(now, before, now_runs=None, before_runs=None):
     """What moved between two releases, per route and metric, both directions.
 
     Improvements are kept alongside regressions. The question the panel exists
     to answer cuts both ways — a release that was supposed to make the site
     faster and did nothing is worth seeing, and so is the fix that worked.
+
+    Each move carries how many measurements stand behind either end of it, and
+    whether that is enough to say a commit did it. The numbers are the same
+    either way; what changes is whether the panel is willing to name somebody.
     """
     was = {page["path"]: page for page in before}
     out = []
@@ -1834,6 +1853,13 @@ def metric_moves(now, before):
                     # the headline picked out across all of them cannot end up
                     # disagreeing about which was the worst thing that happened.
                     "weight": round(change / (PERF_FLOOR.get(name) or 1), 2),
+                    "runs": {"now": now_runs, "before": before_runs},
+                    "confirmed": (
+                        isinstance(now_runs, int)
+                        and isinstance(before_runs, int)
+                        and now_runs >= PERF_CONFIRM_RUNS
+                        and before_runs >= PERF_CONFIRM_RUNS
+                    ),
                 }
             )
     # Regressions first, worst of them at the front, then the improvements with
@@ -1938,7 +1964,11 @@ def site_performance(repositories):
             # not the commit it names. Carried through so the panel can decline
             # to blame anybody for it rather than blaming the wrong person.
             "dirty": bool(recorded.get("dirty")),
-            "runs": len(group),
+            # Passes, not history lines: the monitor writes one line for a run
+            # it measured several times and says how many in `samples`, so
+            # counting lines would undercount exactly the runs that were taken
+            # carefully enough to be worth trusting.
+            "runs": sum(run_samples(run) for run in group),
             "first": group[0].get("at"),
             "last": group[-1].get("at"),
             "pages": measured_pages(group),
@@ -1967,8 +1997,14 @@ def site_performance(repositories):
         older = entries[index + 1] if index + 1 < len(entries) else None
         if older is None:
             continue
-        entry["against"] = {"release": older["release"], "short": older.get("short")}
-        entry["moves"] = metric_moves(entry["pages"], older["pages"])
+        entry["against"] = {
+            "release": older["release"],
+            "short": older.get("short"),
+            "runs": older.get("runs"),
+        }
+        entry["moves"] = metric_moves(
+            entry["pages"], older["pages"], entry.get("runs"), older.get("runs")
+        )
 
     return {
         "measured": runs[-1].get("at"),

@@ -153,16 +153,31 @@ function routesIn(releases) {
 // second opinion about which regression was worst would sooner or later put one
 // metric at the top of this sentence and a different one at the front of that
 // release's own row, and there would be no way to tell which was right.
+//
+// A move only gets to name a commit once both ends of it were measured more
+// than once. The deploy takes its measurement in the minute it deploys, while
+// installers are finishing and units are restarting, and the page with the
+// animated hero reads twelve times worse on a busy box than a quiet one for the
+// same build. That is the weather, not a commit, and the sentence at the top of
+// this section is the last place it should be stated as fact. An unconfirmed
+// move is still shown — it is what there is to see — in the words of something
+// measured once.
 function worstRegression(releases) {
   let worst = null;
+  let unconfirmed = null;
   for (const release of releases) {
     for (const move of release.moves ?? []) {
       if (move.delta <= 0) continue;
       const weight = isNumber(move.weight) ? move.weight : move.delta;
-      if (worst === null || weight > worst.weight) worst = { release, move, weight };
+      const held = { release, move, weight, confirmed: move.confirmed !== false };
+      const slot = held.confirmed ? worst : unconfirmed;
+      if (slot === null || weight > slot.weight) {
+        if (held.confirmed) worst = held;
+        else unconfirmed = held;
+      }
     }
   }
-  return worst;
+  return worst ?? unconfirmed;
 }
 
 // "PR #184 increased LCP by 340ms on /" — or the commit, when the subject
@@ -178,6 +193,27 @@ function blame(release, move) {
     move.metric,
     Math.abs(move.delta),
   )} on ${move.path}`;
+}
+
+// The same fact as blame(), for a move that has not been measured enough times
+// to stand behind. It says what was read and when, and stops short of saying
+// what caused it.
+function looksSlower(release, move) {
+  const when = release.short ? `The release at ${release.short}` : `Release ${release.release}`;
+  return `${when} reads ${say(move.metric, Math.abs(move.delta))} worse on ${
+    METRICS[move.metric]?.label ?? move.metric
+  } at ${move.path}`;
+}
+
+function passes(move) {
+  const now = move.runs?.now;
+  const before = move.runs?.before;
+  if (!isNumber(now) || !isNumber(before)) return 'Measured too few times either side';
+  return `${count(now, 'measurement', 'measurements')} of it against ${count(
+    before,
+    'measurement',
+    'measurements',
+  )} of the release before it`;
 }
 
 function Move({ move }) {
@@ -197,6 +233,7 @@ function Move({ move }) {
       <span className="font-semibold">{METRICS[move.metric]?.label ?? move.metric}</span>
       {sayDelta(move.metric, move.delta)}
       <span className="text-neutral-500 font-mono">{move.path}</span>
+      {move.confirmed === false && <span className="text-neutral-500">measured once</span>}
     </span>
   );
 }
@@ -380,14 +417,24 @@ export default function Vitals({ data }) {
           the evidence for it. If nothing regressed, that is the answer and it
           is worth saying in as many words rather than leaving an absence. */}
       {worst ? (
-        <Notice tone="rose" icon={TrendingUp}>
+        <Notice tone={worst.confirmed ? 'rose' : 'amber'} icon={TrendingUp}>
           <span>
-            <strong className="font-semibold">{blame(worst.release, worst.move)}</strong>{' '}
+            <strong className="font-semibold">
+              {worst.confirmed
+                ? blame(worst.release, worst.move)
+                : looksSlower(worst.release, worst.move)}
+            </strong>{' '}
             <span className="opacity-80">
               ({say(worst.move.metric, worst.move.from)} → {say(worst.move.metric, worst.move.to)},
               against {worst.release.against?.short ?? worst.release.against?.release}
               {worst.release.last ? `, measured ${formatAgo(worst.release.last)}` : ''})
             </span>
+            {!worst.confirmed && (
+              <span className="block mt-1 opacity-80">
+                {passes(worst.move)} — not enough to tell a change from a busy box, so nobody is
+                named for it yet. The next measurement of either release settles it.
+              </span>
+            )}
           </span>
         </Notice>
       ) : (

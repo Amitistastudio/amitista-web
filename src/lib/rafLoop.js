@@ -1,7 +1,7 @@
 const MAX_DELTA = 100;
 
 export function createRafLoop({ element, fps = 0, onFrame, rootMargin = '150px' }) {
-  const interval = fps > 0 ? 1000 / fps : 0;
+  let interval = fps > 0 ? 1000 / fps : 0;
 
   let frame = null;
   let running = false;
@@ -64,6 +64,13 @@ export function createRafLoop({ element, fps = 0, onFrame, rootMargin = '150px' 
   sync();
 
   return {
+    // What the loop is allowed to ask of the device, changed while it runs. A
+    // caller that can see it is not keeping up needs a way to ask for less
+    // without tearing the loop down and building another one, which would lose
+    // the observer, the visibility handler and the frame it is in the middle of.
+    setFps(next) {
+      interval = next > 0 ? 1000 / next : 0;
+    },
     stop() {
       dead = true;
       halt();
