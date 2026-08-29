@@ -154,17 +154,25 @@ check("and is not sent when nothing is held", api.conditional == [])
 # it ran for — so a verdict that had not settled must still be asked after, or
 # it says "pending" for as long as the list stays still.
 
+DERIVED = ({"mergeable_state": "clean", "mergeable": True, "additions": 3}, "ok")
+FILES = ([], "ok")
+GREEN = ({"workflow_runs": [{"status": "completed", "conclusion": "success"}]}, "ok")
+
 pending = [{"number": 5, "sha": "abc", "ci": "in_progress/pending", "title": "waiting"}]
-api = FakeGitHub([(None, "unchanged"), ({"workflow_runs": [{"status": "completed", "conclusion": "success"}]}, "ok")])
+api = FakeGitHub([(None, "unchanged"), DERIVED, FILES, GREEN])
 out = state.open_pulls(api, "amitista-web", pending)
 check("an unsettled verdict is re-asked even when the list has not moved", out[0]["ci"] == "completed/success")
 check("and nothing else about the pull request is disturbed", out[0]["title"] == "waiting")
 
-settled = [{"number": 5, "sha": "abc", "ci": "completed/success", "title": "done"}]
-api = FakeGitHub([(None, "unchanged")])
-out = state.open_pulls(api, "amitista-web", settled)
-check("a settled verdict costs no request at all", len(api.asked) == 1)
-check("and is left as it was", out[0]["ci"] == "completed/success")
+# The merge state is recomputed by GitHub rather than stored, so it is refreshed
+# on the quiet path too. This is the case that shipped wrong once: a pull request
+# that had settled to clean went on being reported as having an unhappy check.
+stale = [{"number": 5, "sha": "abc", "ci": "completed/success", "mergeState": "unstable", "title": "done"}]
+api = FakeGitHub([(None, "unchanged"), DERIVED, FILES])
+out = state.open_pulls(api, "amitista-web", stale)
+check("a stale merge state is refreshed even when the list has not moved", out[0]["mergeState"] == "clean")
+check("a settled verdict is not re-asked", not any("actions/runs" in path for path in api.asked))
+check("and it is left as it was", out[0]["ci"] == "completed/success")
 
 # GitHub being unreachable is not the same as the list being unchanged: nothing
 # is asked after, and what was known is kept.
@@ -190,6 +198,14 @@ check(
     len([row for row in out if row.get("looked") is False]) == 3,
 )
 check("the ones looked into carry their size", out[0]["additions"] == 1)
+
+# The merge state is derived, so it is asked for unconditionally: GitHub's ETag
+# for a pull request does not reliably move when only mergeable_state changes,
+# and a stale one makes the panel state a wrong verdict confidently.
+api = FakeGitHub([({"additions": 1, "deletions": 0, "mergeable_state": "clean"}, "ok")])
+state.pull_extra(api, "x", 4, {"mergeable": False, "mergeState": "dirty"})
+check("the merge state is never asked for conditionally", api.conditional == [])
+check("and it is asked for at all", len(api.asked) == 1)
 
 # ------------------------------------------------------------- smaller promises
 

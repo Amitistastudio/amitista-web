@@ -306,8 +306,17 @@ def pull_extra(api, repo, number, known):
     mergeable is computed on demand and comes back null until GitHub has worked
     it out, which is a real answer and not the same as "no": the panel says it
     is still being worked out rather than guessing.
+
+    Asked unconditionally, unlike everything else here, and that is deliberate.
+    mergeable and mergeable_state are derived — GitHub recomputes them from the
+    merge and check status rather than storing them — and the resource's ETag
+    does not reliably move when only they change. Caught in the act: a pull
+    request sat at "unstable" through a 304 for minutes after GitHub had settled
+    it to "clean", so the panel was telling the reader a check was unhappy about
+    a pull request that was ready to merge. A wrong verdict is worse than the
+    request it saves, and only the newest few are asked after anyway.
     """
-    payload, state = api.get("/repos/%s/%s/pulls/%d" % (ORG, repo, number), bool(known))
+    payload, state = api.get("/repos/%s/%s/pulls/%d" % (ORG, repo, number))
     if state != "ok" or not isinstance(payload, dict):
         return known or {}
     body = payload.get("body")
@@ -374,15 +383,23 @@ def open_pulls(api, repo, cached):
 
     if state == "unchanged":
         # Nothing has been opened, closed or pushed to — that is what the list's
-        # own ETag settles. A workflow finishing does not touch the pull request
-        # it ran for, though, so a verdict that had not settled yet would sit
-        # there saying "pending" for as long as the list stayed still. Those are
-        # asked after; everything else is left exactly as it was.
+        # own ETag settles, and it is why the titles, authors and branches below
+        # are taken from what was already known.
+        #
+        # It settles nothing about the two things that move on their own. A
+        # workflow finishing does not touch the pull request it ran for, and the
+        # merge state is recomputed rather than stored. Both would otherwise sit
+        # frozen at whatever they were when the list last changed — which is how
+        # a ready pull request came to be reported as having an unhappy check.
         out = []
-        for entry in held:
+        for index, entry in enumerate(held):
             row = dict(entry)
-            if row.get("sha") and (row.get("ci") or "").split("/")[-1] not in TERMINAL:
-                row["ci"] = pull_ci(api, repo, row["sha"], {})
+            number = row.get("number")
+            if index < MAX_PULL_DETAIL and number is not None:
+                row.update(pull_extra(api, repo, number, row))
+                row["changed"] = pull_files(api, repo, number, row.get("changed"))
+                if row.get("sha"):
+                    row["ci"] = pull_ci(api, repo, row["sha"], entry)
             out.append(row)
         return out
 
