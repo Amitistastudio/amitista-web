@@ -128,7 +128,10 @@ export default function GithubPanel({ view }) {
       {error && <Notice tone="rose">{error}</Notice>}
 
       <div className={`transition-opacity duration-200 ${loading ? 'opacity-60' : 'opacity-100'}`}>
-        <View data={data} />
+        {/* Handed down so a section that has asked for something can watch for
+            it to land, rather than leaving somebody to press Refresh at a
+            deploy tick they cannot see. */}
+        <View data={data} onRefresh={load} />
       </div>
     </div>
   );
