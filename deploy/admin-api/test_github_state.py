@@ -207,6 +207,35 @@ state.pull_extra(api, "x", 4, {"mergeable": False, "mergeState": "dirty"})
 check("the merge state is never asked for conditionally", api.conditional == [])
 check("and it is asked for at all", len(api.asked) == 1)
 
+# --------------------------------------------------------- recent activity
+
+def commit(sha, subject, **extra):
+    entry = {
+        "sha": sha,
+        "commit": {"message": subject, "author": {"name": "Amitista Studio", "date": "2026-08-29T10:00:00Z"}},
+        "author": {"login": "kostis4563"},
+        "html_url": "https://github.com/o/r/commit/%s" % sha,
+    }
+    entry.update(extra)
+    return entry
+
+
+api = FakeGitHub([([commit("a" * 40, "Do a thing\n\nwith a body nobody wants in a list")], "ok")])
+only = state.recent_commits(api, "amitista-web", None)[0]
+check("a commit is cut to its subject", only["subject"] == "Do a thing")
+check("the sha is shortened", only["sha"] == "a" * 7)
+check("the signed author is kept", only["author"] == "Amitista Studio")
+check("so is the account, which is not always the same person", only["login"] == "kostis4563")
+check("and the date it was written", only["at"] == "2026-08-29T10:00:00Z")
+
+# A commit can carry an author git knows about and no GitHub account at all,
+# which comes back as a null rather than a missing key.
+api = FakeGitHub([([commit("b" * 40, "By a stranger", author=None)], "ok")])
+check("a commit with no GitHub account still lists", state.recent_commits(api, "x", None)[0]["login"] is None)
+
+api = FakeGitHub([(None, "error")])
+check("an unreachable GitHub keeps the commits it knew", state.recent_commits(api, "x", [{"sha": "held"}]) == [{"sha": "held"}])
+
 # ------------------------------------------------------------- smaller promises
 
 check("a blank line is not a subject", state.first_line("") == "")

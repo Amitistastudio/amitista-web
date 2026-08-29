@@ -68,6 +68,9 @@ MAX_PULLS = 20
 MAX_PULL_DETAIL = 10
 MAX_FILES = 40
 MAX_ISSUES = 30
+# Enough recent commits to see who has been working on what, across all three
+# repositories at once, without carrying a history nobody scrolls to.
+MAX_COMMITS = 15
 # Enough of the body to know what an issue is about without opening GitHub, and
 # little enough that thirty of them do not bloat the file the panel reads.
 MAX_BODY = 1200
@@ -502,6 +505,43 @@ def open_issues(api, repo, cached):
     return out
 
 
+def recent_commits(api, repo, cached):
+    """The last few commits on the default branch.
+
+    The workflow runs already carry a commit each, but only for commits a
+    workflow ran on, and only the run's view of them. This is the actual
+    activity: who has been committing, to what, and when.
+    """
+    payload, state = api.get(
+        "/repos/%s/%s/commits?per_page=%d" % (ORG, repo, MAX_COMMITS),
+        isinstance(cached, list),
+    )
+    if state != "ok" or not isinstance(payload, list):
+        return cached if isinstance(cached, list) else []
+
+    out = []
+    for entry in payload:
+        if not isinstance(entry, dict):
+            continue
+        commit = entry.get("commit") or {}
+        author = commit.get("author") or {}
+        # The account is not always the person: a commit can carry an author
+        # git knows about and no GitHub account at all. Both are kept, and the
+        # panel prefers the name that was actually signed.
+        account = entry.get("author") or {}
+        out.append(
+            {
+                "sha": (entry.get("sha") or "")[:7],
+                "subject": first_line(commit.get("message")),
+                "author": author.get("name"),
+                "login": account.get("login") if isinstance(account, dict) else None,
+                "at": author.get("date"),
+                "url": entry.get("html_url"),
+            }
+        )
+    return out
+
+
 def branch_drift(api, repo, default_branch, cached):
     """Every branch, and how far it has drifted from the default one.
 
@@ -599,9 +639,17 @@ def detail_for(api, repo, cached):
     facts = repo_facts(api, repo, cached.get("facts") or {})
     pulls = open_pulls(api, repo, cached.get("pulls"))
     issues = open_issues(api, repo, cached.get("issues"))
+    commits = recent_commits(api, repo, cached.get("commits"))
     branches = branch_drift(api, repo, facts.get("defaultBranch"), cached.get("branches"))
     runs = recent_runs(api, repo, cached.get("runs"))
-    return {"facts": facts, "pulls": pulls, "issues": issues, "branches": branches, "runs": runs}
+    return {
+        "facts": facts,
+        "pulls": pulls,
+        "issues": issues,
+        "commits": commits,
+        "branches": branches,
+        "runs": runs,
+    }
 
 
 # ---------------------------------------------------------------- assembling
@@ -669,7 +717,7 @@ def inspect(name, path, api, known, want_detail):
 
     carried = {
         key: known[key]
-        for key in ("facts", "pulls", "issues", "branches", "runs")
+        for key in ("facts", "pulls", "issues", "commits", "branches", "runs")
         if key in known
     }
     if want_detail:

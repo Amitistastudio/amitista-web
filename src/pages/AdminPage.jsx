@@ -29,6 +29,7 @@ import {
   FolderGit2,
   CircleDot,
   GitPullRequest,
+  Building2,
 } from 'lucide-react';
 import Header from '../components/web1/Header';
 import Footer from '../components/web1/Footer';
@@ -221,6 +222,14 @@ const SECTIONS = [
     needs: null,
     group: 'github',
     blurb: 'what is open, what it changes, and what is stopping it going in',
+  },
+  {
+    id: 'github-org',
+    label: 'Organisation',
+    icon: Building2,
+    needs: null,
+    group: 'github',
+    blurb: 'the health of all three at once, and what has been happening across them',
   },
   {
     id: 'accounts',
