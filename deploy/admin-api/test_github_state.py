@@ -147,6 +147,50 @@ api = FakeGitHub([([], "ok")])
 state.open_issues(api, "x", None)
 check("and is not sent when nothing is held", api.conditional == [])
 
+# ------------------------------- a settled list is not a settled pull request
+
+# The list's ETag settles whether anything was opened, closed or pushed to. It
+# says nothing about a workflow finishing, which does not touch the pull request
+# it ran for — so a verdict that had not settled must still be asked after, or
+# it says "pending" for as long as the list stays still.
+
+pending = [{"number": 5, "sha": "abc", "ci": "in_progress/pending", "title": "waiting"}]
+api = FakeGitHub([(None, "unchanged"), ({"workflow_runs": [{"status": "completed", "conclusion": "success"}]}, "ok")])
+out = state.open_pulls(api, "amitista-web", pending)
+check("an unsettled verdict is re-asked even when the list has not moved", out[0]["ci"] == "completed/success")
+check("and nothing else about the pull request is disturbed", out[0]["title"] == "waiting")
+
+settled = [{"number": 5, "sha": "abc", "ci": "completed/success", "title": "done"}]
+api = FakeGitHub([(None, "unchanged")])
+out = state.open_pulls(api, "amitista-web", settled)
+check("a settled verdict costs no request at all", len(api.asked) == 1)
+check("and is left as it was", out[0]["ci"] == "completed/success")
+
+# GitHub being unreachable is not the same as the list being unchanged: nothing
+# is asked after, and what was known is kept.
+api = FakeGitHub([(None, "error")])
+check("an unreachable GitHub keeps the pull requests it knew", state.open_pulls(api, "x", pending) == pending)
+
+# Only the newest few are looked into, because each one costs requests of its
+# own; the rest are still listed.
+many = [
+    {"number": n, "title": "pr %d" % n, "user": {"login": "x"}, "head": {"ref": "b", "sha": "s"}, "base": {"ref": "main"}, "html_url": "u"}
+    for n in range(state.MAX_PULL_DETAIL + 3)
+]
+answers = [(many, "ok")]
+for _ in range(state.MAX_PULL_DETAIL):
+    answers.append(({"additions": 1, "deletions": 0, "changed_files": 1, "commits": 1}, "ok"))
+    answers.append(([], "ok"))
+    answers.append(({"workflow_runs": []}, "ok"))
+api = FakeGitHub(answers)
+out = state.open_pulls(api, "x", None)
+check("every open pull request is listed", len(out) == state.MAX_PULL_DETAIL + 3)
+check(
+    "only the newest few are looked into",
+    len([row for row in out if row.get("looked") is False]) == 3,
+)
+check("the ones looked into carry their size", out[0]["additions"] == 1)
+
 # ------------------------------------------------------------- smaller promises
 
 check("a blank line is not a subject", state.first_line("") == "")
