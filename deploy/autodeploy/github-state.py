@@ -8,11 +8,16 @@ ProtectHome=yes — it cannot see /root at all, which is the point. So the deplo
 which is already root and already holds the token, writes what it knows to a
 file the panel is allowed to read. The token never leaves this process.
 
-Two cadences. Every tick, the cheap local questions: what is checked out, is it
-dirty, has main moved, did CI pass for the commit at the tip. Every few minutes,
-the questions only GitHub can answer — open pull requests, how far each branch
-has drifted, what the last workflow runs actually did, how big the repository
-has grown. Those are the ones worth having and the ones worth rationing.
+Two kinds of question, both asked every tick. The cheap local ones: what is
+checked out, is it dirty, has main moved, did CI pass for the commit at the tip.
+And the ones only GitHub can answer — open issues, open pull requests and what
+is holding each one up, how far each branch has drifted, what the last workflow
+runs actually did, how big the repository has grown.
+
+The second kind used to be rationed to every five minutes to spare the rate
+limit. It is not rationed now, because it does not need to be: every one of
+those is a conditional request, and GitHub does not charge for answering 304.
+An unchanged repository costs round trips and nothing else.
 
 Nothing here deploys or changes a repository. It only looks, and every request
 it makes is a GET.
