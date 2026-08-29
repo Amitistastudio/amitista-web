@@ -283,6 +283,45 @@ check("run history survives", len(only["runs"]) == 2)
 check("a failed run keeps its conclusion", only["runs"][1]["conclusion"] == "failure")
 check("run duration survives", only["runs"][0]["seconds"] == 33)
 
+# Issues reach the panel whole. The projection itself — and the fact that a pull
+# request is not an issue — is pinned in test_github_state.py, next to the code
+# that does it.
+write_snapshot(
+    [
+        repo(
+            issues=[
+                {
+                    "number": 12,
+                    "title": "The estimate form does not verify Turnstile",
+                    "author": "blxr",
+                    "labels": [{"name": "bug", "colour": "d73a4a"}],
+                    "assignees": ["blxr"],
+                    "milestone": "v2",
+                    "comments": 3,
+                    "created": stamp(7200),
+                    "updated": stamp(600),
+                    "url": "https://github.com/Amitistastudio/amitista-web/issues/12",
+                    "body": "The widget renders but nothing checks the token.",
+                    "clipped": False,
+                }
+            ]
+        ),
+        repo(name="amitista-bots", issues=[]),
+    ]
+)
+status, body = read(insider)
+web = next(entry for entry in body["repositories"] if entry["name"] == "amitista-web")
+check("issues reach the panel", len(web["issues"]) == 1)
+check("an issue keeps its number", web["issues"][0]["number"] == 12)
+check("an issue keeps its body", "nothing checks the token" in web["issues"][0]["body"])
+check("an issue keeps its labels", web["issues"][0]["labels"][0]["colour"] == "d73a4a")
+check("an issue keeps its assignees", web["issues"][0]["assignees"] == ["blxr"])
+check("an issue keeps the link to open it", web["issues"][0]["url"].endswith("/issues/12"))
+check(
+    "a repository with no issues says so with an empty list",
+    next(e for e in body["repositories"] if e["name"] == "amitista-bots")["issues"] == [],
+)
+
 # The collector's conditional-request bookkeeping is of no use to the panel and
 # grows without bound, so it must not be handed out.
 with open(SNAPSHOT, "w", encoding="utf-8") as handle:

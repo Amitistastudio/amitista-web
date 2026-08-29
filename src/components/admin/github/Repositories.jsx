@@ -101,6 +101,9 @@ function Repository({ repo }) {
   const tip = repo.tip ?? {};
   const facts = repo.facts ?? {};
   const pulls = listOf(repo, 'pulls').length;
+  // The real count. facts.openIssues is GitHub's, and GitHub counts pull
+  // requests as issues, so it reads far too high on a busy repository.
+  const issues = listOf(repo, 'issues').length;
   const others = listOf(repo, 'branches').filter((branch) => !branch.default).length;
 
   return (
@@ -166,6 +169,7 @@ function Repository({ repo }) {
                 facts.language,
                 typeof facts.sizeKb === 'number' ? `${(facts.sizeKb / 1024).toFixed(1)} MB` : null,
                 pulls > 0 ? count(pulls, 'open PR', 'open PRs') : null,
+                issues > 0 ? count(issues, 'open issue', 'open issues') : null,
                 others > 0 ? count(others, 'other branch', 'other branches') : null,
               ]
                 .filter(Boolean)

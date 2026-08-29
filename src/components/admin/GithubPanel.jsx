@@ -1,8 +1,17 @@
 import React from 'react';
-import { RefreshCw } from 'lucide-react';
+import { CircleDot, FolderGit2, RefreshCw } from 'lucide-react';
 import { fetchGithubRepositories, formatAgo } from '../../lib/admin';
-import { Button, Notice } from './ui';
+import { Button, Notice, SubNav } from './ui';
 import Repositories from './github/Repositories';
+import Issues from './github/Issues';
+import { listOf, repositoriesIn } from './github/shared';
+
+const TABS = [
+  { id: 'repositories', label: 'Repositories', icon: FolderGit2 },
+  { id: 'issues', label: 'Issues', icon: CircleDot },
+];
+
+const VIEWS = { repositories: Repositories, issues: Issues };
 
 export const GITHUB_VIEWS = ['github'];
 
@@ -14,15 +23,17 @@ export const GITHUB_VIEWS = ['github'];
 // writes and reports it; there is no button that pushes, merges or deploys, and
 // adding one would mean handing this service a token it currently cannot read.
 //
-// One section for now. The collector still gathers pull requests, branches and
-// workflow-run history — it costs nothing to keep, because conditional requests
-// mean unchanged data is not charged against the rate limit — so the sections
-// that read them come back by restoring their components from 2c2f34d rather
+// Both sections read the one snapshot the deploy writes, so there is one fetch
+// behind them. The collector also still gathers pull requests, branches and
+// workflow-run history: it costs nothing to keep, because conditional requests
+// mean unchanged data is not charged against the rate limit, so the sections
+// that read those come back by restoring their components from 2c2f34d rather
 // than by rebuilding anything.
 export default function GithubPanel() {
   const [data, setData] = React.useState(null);
   const [error, setError] = React.useState(null);
   const [loading, setLoading] = React.useState(false);
+  const [tab, setTab] = React.useState('repositories');
   const alive = React.useRef(true);
 
   const load = React.useCallback(async () => {
@@ -61,9 +72,28 @@ export default function GithubPanel() {
   // every few minutes, and saying so is cheaper than someone wondering why
   // something they just pushed is not reflected yet.
   const rate = data.rate ?? {};
+  const View = VIEWS[tab] ?? Repositories;
+  const issues = repositoriesIn(data).reduce(
+    (sum, repo) => sum + listOf(repo, 'issues').length,
+    0,
+  );
 
   return (
     <div className="space-y-6">
+      <div className="flex flex-wrap items-center gap-3">
+        <SubNav
+          tabs={TABS}
+          active={tab}
+          onPick={setTab}
+          badges={{ issues }}
+          label="GitHub sections"
+        />
+        <Button type="button" className="ml-auto" disabled={loading} onClick={load}>
+          <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} strokeWidth={2} />
+          Refresh
+        </Button>
+      </div>
+
       <div className="flex flex-wrap items-center gap-3">
         <p className="text-[11px] text-neutral-600 tabular-nums">
           {data.collected ? `checkouts read ${formatAgo(data.generated)}` : 'not collected yet'}
@@ -73,10 +103,6 @@ export default function GithubPanel() {
             ? ` · ${rate.remaining} API requests left this hour`
             : ''}
         </p>
-        <Button type="button" className="ml-auto" disabled={loading} onClick={load}>
-          <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} strokeWidth={2} />
-          Refresh
-        </Button>
       </div>
 
       {!data.collected && (
@@ -95,7 +121,7 @@ export default function GithubPanel() {
       {error && <Notice tone="rose">{error}</Notice>}
 
       <div className={`transition-opacity duration-200 ${loading ? 'opacity-60' : 'opacity-100'}`}>
-        <Repositories data={data} />
+        <View data={data} />
       </div>
     </div>
   );
