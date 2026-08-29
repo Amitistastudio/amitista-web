@@ -1,11 +1,8 @@
 import React from 'react';
 import { FolderGit2 } from 'lucide-react';
 import { formatAgo } from '../../../lib/admin';
-import { Empty, Notice, Panel, Pill, Row } from '../ui';
-
-const short = (sha) => (typeof sha === 'string' ? sha.slice(0, 7) : '—');
-
-const count = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+import { Empty, Panel, Pill, Row } from '../ui';
+import { GithubLink, count, listOf, short } from './shared';
 
 // The one question this view answers: is what is on GitHub actually running on
 // this box, and if not, what is holding it up? Every branch below ends in a
@@ -99,19 +96,33 @@ function verdict(repo) {
 
 function Repository({ repo }) {
   const state = verdict(repo);
-  const dirty = Array.isArray(repo.dirty) ? repo.dirty : [];
+  const dirty = listOf(repo, 'dirty');
   const head = repo.head ?? {};
   const tip = repo.tip ?? {};
+  const facts = repo.facts ?? {};
+  const pulls = listOf(repo, 'pulls').length;
+  const others = listOf(repo, 'branches').filter((branch) => !branch.default).length;
 
   return (
     <Panel
       title={repo.name}
       icon={FolderGit2}
-      action={<Pill tone={state.tone}>{state.label}</Pill>}
+      action={
+        <span className="flex items-center gap-3">
+          <Pill tone={state.tone}>{state.label}</Pill>
+          <GithubLink href={facts.url} />
+        </span>
+      }
     >
       <p className="px-4 sm:px-6 py-4 text-[13px] text-neutral-400 font-normal leading-relaxed border-b border-[#17171d]">
         {state.detail}
       </p>
+
+      {facts.description && (
+        <p className="px-4 sm:px-6 py-3 text-[12px] text-neutral-500 leading-relaxed border-b border-[#17171d]">
+          {facts.description}
+        </p>
+      )}
 
       {repo.present && (
         <>
@@ -147,6 +158,21 @@ function Repository({ repo }) {
             value={<span className="font-mono text-[12px]">{repo.path}</span>}
             tone="text-neutral-400"
           />
+          {facts.url && (
+            <Row
+              label="On GitHub"
+              value={[
+                facts.private ? 'private' : 'public',
+                facts.language,
+                typeof facts.sizeKb === 'number' ? `${(facts.sizeKb / 1024).toFixed(1)} MB` : null,
+                pulls > 0 ? count(pulls, 'open PR', 'open PRs') : null,
+                others > 0 ? count(others, 'other branch', 'other branches') : null,
+              ]
+                .filter(Boolean)
+                .join(' · ')}
+              tone="text-neutral-400"
+            />
+          )}
         </>
       )}
 
@@ -171,24 +197,8 @@ function Repository({ repo }) {
 export default function Repositories({ data }) {
   const repositories = Array.isArray(data.repositories) ? data.repositories : [];
 
-  if (!data.collected) {
-    return (
-      <Notice tone="amber">
-        The deploy has not written a repository snapshot yet. It is written at the end of every
-        deploy tick, so this fills in within a minute or two of the timer running.
-      </Notice>
-    );
-  }
-
   return (
     <div className="space-y-4">
-      {data.stale && (
-        <Notice tone="amber">
-          This snapshot was taken {formatAgo(data.generated)} and the deploy normally refreshes it
-          every minute. The deploy timer may have stopped — what is below could be well out of date.
-        </Notice>
-      )}
-
       {repositories.length === 0 ? (
         <Panel title="Repositories" icon={FolderGit2}>
           <Empty>The snapshot names no repositories.</Empty>

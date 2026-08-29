@@ -231,6 +231,88 @@ write_snapshot([repo(somethingNew={"deep": [1, 2]})])
 status, body = read(insider)
 check("unknown fields survive the round trip", body["repositories"][0]["somethingNew"] == {"deep": [1, 2]})
 
+# ------------------------------------------------- what GitHub itself said
+
+write_snapshot(
+    [
+        repo(
+            facts={
+                "description": "the site",
+                "private": True,
+                "sizeKb": 4798,
+                "openIssues": 0,
+                "defaultBranch": "main",
+                "url": "https://github.com/Amitistastudio/amitista-web",
+                "language": "JavaScript",
+            },
+            pulls=[
+                {
+                    "number": 7,
+                    "title": "Something in flight",
+                    "author": "blxr",
+                    "draft": False,
+                    "created": stamp(3600),
+                    "head": "a-branch",
+                    "base": "main",
+                    "url": "https://github.com/Amitistastudio/amitista-web/pull/7",
+                }
+            ],
+            branches=[
+                {"name": "main", "sha": "a" * 40, "protected": False, "default": True, "ahead": 0, "behind": 0},
+                {"name": "old-work", "sha": "d" * 40, "protected": False, "default": False, "ahead": 1, "behind": 20},
+            ],
+            runs=[
+                {"name": "CI", "status": "completed", "conclusion": "success", "sha": "abc1234",
+                 "branch": "main", "event": "push", "created": stamp(600), "seconds": 33,
+                 "url": "https://github.com/x/y/actions/runs/1", "subject": "a commit"},
+                {"name": "CI", "status": "completed", "conclusion": "failure", "sha": "def5678",
+                 "branch": "main", "event": "push", "created": stamp(9000), "seconds": 54,
+                 "url": "https://github.com/x/y/actions/runs/2", "subject": "an older commit"},
+            ],
+        )
+    ]
+)
+status, body = read(insider)
+only = body["repositories"][0]
+check("repository facts survive", only["facts"]["sizeKb"] == 4798)
+check("the GitHub url survives", only["facts"]["url"].endswith("/amitista-web"))
+check("an open pull request survives whole", only["pulls"][0]["number"] == 7)
+check("a drifted branch keeps both counts", only["branches"][1]["ahead"] == 1 and only["branches"][1]["behind"] == 20)
+check("the default branch is marked", only["branches"][0]["default"] is True)
+check("run history survives", len(only["runs"]) == 2)
+check("a failed run keeps its conclusion", only["runs"][1]["conclusion"] == "failure")
+check("run duration survives", only["runs"][0]["seconds"] == 33)
+
+# The collector's conditional-request bookkeeping is of no use to the panel and
+# grows without bound, so it must not be handed out.
+with open(SNAPSHOT, "w", encoding="utf-8") as handle:
+    json.dump(
+        {
+            "generated": stamp(5),
+            "repositories": [repo()],
+            "etags": {"/repos/x/y": 'W/"abc"'},
+            "rate": {"remaining": 4887, "limit": 5000},
+            "detail": stamp(120),
+        },
+        handle,
+    )
+status, body = read(insider)
+check("the etag map is not handed to the panel", "etags" not in body)
+check("the rate limit is handed to the panel", body["rate"]["remaining"] == 4887)
+check("when GitHub was last asked is handed to the panel", body["detail"] == stamp(120))
+
+# GitHub being unreachable must not empty the panel — the collector carries the
+# last known answer forward and says so.
+write_snapshot([repo(pulls=[{"number": 3, "title": "kept"}])])
+with open(SNAPSHOT, "r", encoding="utf-8") as handle:
+    carried = json.load(handle)
+carried["note"] = "GitHub could not be reached in full"
+with open(SNAPSHOT, "w", encoding="utf-8") as handle:
+    json.dump(carried, handle)
+status, body = read(insider)
+check("a carried-forward answer is still shown", body["repositories"][0]["pulls"][0]["number"] == 3)
+check("and the reason is passed on", "could not be reached" in body["note"])
+
 # ------------------------------------------------------------- read only
 
 for method in ("POST", "DELETE", "PUT"):

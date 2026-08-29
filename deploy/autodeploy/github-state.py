@@ -8,11 +8,17 @@ ProtectHome=yes — it cannot see /root at all, which is the point. So the deplo
 which is already root and already holds the token, writes what it knows to a
 file the panel is allowed to read. The token never leaves this process.
 
-Called at the end of every deploy tick, so the snapshot is at most one tick old
-— the same cadence as the deploy itself. Nothing here deploys or changes a
-repository; it only looks.
+Two cadences. Every tick, the cheap local questions: what is checked out, is it
+dirty, has main moved, did CI pass for the commit at the tip. Every few minutes,
+the questions only GitHub can answer — open pull requests, how far each branch
+has drifted, what the last workflow runs actually did, how big the repository
+has grown. Those are the ones worth having and the ones worth rationing.
+
+Nothing here deploys or changes a repository. It only looks, and every request
+it makes is a GET.
 
     github-state.py OUT_PATH name=/path/to/checkout [name=/path ...]
+    github-state.py --full OUT_PATH name=/path ...   ask GitHub everything now
 """
 
 import json
@@ -22,6 +28,7 @@ import subprocess
 import sys
 import tempfile
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
 
@@ -31,10 +38,23 @@ GROUP = os.environ.get("ADMIN_GROUP", "amitista-admin")
 BRANCH = "main"
 TIMEOUT = 20
 
+# How often the questions only GitHub can answer are actually asked. The deploy
+# ticks about once a minute; asking all of this every tick would be several
+# hundred requests an hour to learn nothing, since pull requests and branches do
+# not move on that timescale.
+DETAIL_SECONDS = int(os.environ.get("AUTODEPLOY_GITHUB_DETAIL_SECONDS", "300"))
+
+# Ceilings, so one runaway repository cannot bloat the file the panel reads or
+# the number of requests one refresh makes.
+MAX_PULLS = 20
+MAX_BRANCHES = 30
+MAX_COMPARES = 8
+MAX_RUNS = 10
+
 # A run GitHub has finished with will never change its mind, so its verdict is
 # cached against the commit and never asked for twice. Anything else — queued,
-# in progress, no run at all — is asked again next tick. That is what keeps this
-# well inside the rate limit: three repositories idling cost nothing.
+# in progress, no run at all — is asked again next tick. That is what keeps the
+# per-tick check free: three repositories idling cost nothing.
 TERMINAL = (
     "success",
     "failure",
@@ -49,6 +69,36 @@ TERMINAL = (
 
 def now():
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def parse_stamp(value):
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
+def age_seconds(value):
+    moment = parse_stamp(value)
+    if moment is None:
+        return None
+    return (datetime.now(timezone.utc) - moment).total_seconds()
+
+
+def seconds_between(start, end):
+    first, second = parse_stamp(start), parse_stamp(end)
+    if first is None or second is None:
+        return None
+    return max(0, int((second - first).total_seconds()))
+
+
+def first_line(value):
+    if not isinstance(value, str):
+        return ""
+    lines = value.splitlines()
+    return lines[0] if lines else ""
 
 
 def git(path, *args):
@@ -88,45 +138,271 @@ def token():
         return ""
 
 
-def ci_for(repo, sha, auth):
+class GitHub:
+    """Just enough of the API, with the rate limit taken seriously.
+
+    Conditional requests are the whole trick: GitHub answers an unchanged
+    resource with 304 and does not charge it against the hourly limit, so
+    re-asking about a repository nobody has touched is free. Every response's
+    ETag is kept in the snapshot and handed back on the next request.
+    """
+
+    def __init__(self, auth, etags):
+        self.auth = auth
+        self.etags = dict(etags or {})
+        self.remaining = None
+        self.limit = None
+        self.reset = None
+        self.calls = 0
+        self.spent = 0
+        self.failed = False
+
+    def get(self, path, have_cached=False):
+        """Returns (payload, state) where state is ok, unchanged or error.
+
+        Only "ok" carries a body worth projecting. On "unchanged" or "error" the
+        caller keeps whatever it recorded last time, so a GitHub outage leaves
+        the panel showing the last thing known to be true rather than an empty
+        page — clearly marked as such.
+
+        `have_cached` says whether the caller still holds the previous answer.
+        The conditional request is only sent when it does: a 304 with nothing to
+        fall back on would throw away the data instead of saving a request.
+        """
+        if not self.auth:
+            return None, "error"
+
+        headers = {
+            "Authorization": "token %s" % self.auth,
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "amitista-autodeploy/1.0",
+        }
+        tag = self.etags.get(path)
+        if tag and have_cached:
+            headers["If-None-Match"] = tag
+
+        self.calls += 1
+        request = urllib.request.Request("https://api.github.com" + path, headers=headers)
+        try:
+            with urllib.request.urlopen(request, timeout=TIMEOUT) as answer:
+                self._note(answer.headers)
+                payload = json.load(answer)
+                new_tag = answer.headers.get("ETag")
+                if new_tag:
+                    self.etags[path] = new_tag
+                else:
+                    self.etags.pop(path, None)
+                self.spent += 1
+                return payload, "ok"
+        except urllib.error.HTTPError as failure:
+            self._note(failure.headers)
+            if failure.code == 304:
+                return None, "unchanged"
+            # A 404 (renamed, or no longer visible to this token) and a 500 are
+            # different problems, but neither is worth discarding what we knew.
+            self.failed = True
+            self.spent += 1
+            return None, "error"
+        except (urllib.error.URLError, OSError, ValueError):
+            self.failed = True
+            return None, "error"
+
+    def _note(self, headers):
+        for name, attribute in (
+            ("X-RateLimit-Remaining", "remaining"),
+            ("X-RateLimit-Limit", "limit"),
+        ):
+            try:
+                setattr(self, attribute, int(headers.get(name)))
+            except (TypeError, ValueError):
+                pass
+        try:
+            self.reset = (
+                datetime.fromtimestamp(int(headers.get("X-RateLimit-Reset")), timezone.utc)
+                .replace(microsecond=0)
+                .isoformat()
+                .replace("+00:00", "Z")
+            )
+        except (TypeError, ValueError):
+            pass
+
+
+# ------------------------------------------------------------------ the tick
+
+def ci_verdict(api, repo, sha, cached_entry):
     """The workflow verdict for one exact commit.
 
-    Returns (verdict, remaining). The verdict deliberately keeps GitHub's own
-    two words — "completed/success", "queued/pending", "none" when no run has
-    been recorded — because collapsing them to a boolean is what made the last
-    stuck deploy unreadable. "unknown" means the question could not be asked,
-    which is not the same as a commit having failed, and the panel says so.
+    The verdict deliberately keeps GitHub's own two words — "completed/success",
+    "queued/pending", "none" when no run has been recorded — because collapsing
+    them to a boolean is what made the last stuck deploy unreadable. "unknown"
+    means the question could not be asked, which is not the same as a commit
+    having failed, and the panel says so.
     """
-    if not auth or not sha:
-        return "unknown", None
+    if not sha:
+        return "unknown"
+    if not api.auth:
+        return "unknown"
 
-    url = "https://api.github.com/repos/%s/%s/actions/runs?head_sha=%s&per_page=1" % (ORG, repo, sha)
-    request = urllib.request.Request(
-        url,
-        headers={
-            "Authorization": "token %s" % auth,
-            "Accept": "application/vnd.github+json",
-            "User-Agent": "amitista-autodeploy/1.0",
-        },
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=TIMEOUT) as answer:
-            remaining = answer.headers.get("X-RateLimit-Remaining")
-            payload = json.load(answer)
-    except (urllib.error.URLError, OSError, ValueError):
-        return "unknown", None
+    settled = (cached_entry.get("ci") or "").split("/")[-1] in TERMINAL
+    if cached_entry.get("remote") == sha and settled:
+        return cached_entry["ci"]
 
-    try:
-        remaining = int(remaining)
-    except (TypeError, ValueError):
-        remaining = None
-
+    payload, state = api.get("/repos/%s/%s/actions/runs?head_sha=%s&per_page=1" % (ORG, repo, sha))
+    if state != "ok" or not isinstance(payload, dict):
+        return "unknown"
     runs = payload.get("workflow_runs") or []
     if not runs:
-        return "none", remaining
+        return "none"
     run = runs[0]
-    return "%s/%s" % (run.get("status") or "unknown", run.get("conclusion") or "pending"), remaining
+    return "%s/%s" % (run.get("status") or "unknown", run.get("conclusion") or "pending")
 
+
+# ----------------------------------------------------------- the slow questions
+
+def repo_facts(api, repo, cached):
+    payload, state = api.get("/repos/%s/%s" % (ORG, repo), bool(cached))
+    if state != "ok" or not isinstance(payload, dict):
+        return cached or {}
+    return {
+        "description": payload.get("description"),
+        "private": bool(payload.get("private")),
+        "sizeKb": payload.get("size"),
+        "openIssues": payload.get("open_issues_count"),
+        "defaultBranch": payload.get("default_branch"),
+        "pushed": payload.get("pushed_at"),
+        "url": payload.get("html_url"),
+        "language": payload.get("language"),
+    }
+
+
+def open_pulls(api, repo, cached):
+    payload, state = api.get(
+        "/repos/%s/%s/pulls?state=open&sort=created&direction=desc&per_page=%d"
+        % (ORG, repo, MAX_PULLS),
+        isinstance(cached, list),
+    )
+    if state != "ok" or not isinstance(payload, list):
+        return cached if isinstance(cached, list) else []
+    return [
+        {
+            "number": entry.get("number"),
+            "title": entry.get("title"),
+            "author": ((entry.get("user") or {}).get("login")),
+            "draft": bool(entry.get("draft")),
+            "created": entry.get("created_at"),
+            "updated": entry.get("updated_at"),
+            "head": ((entry.get("head") or {}).get("ref")),
+            "base": ((entry.get("base") or {}).get("ref")),
+            "url": entry.get("html_url"),
+        }
+        for entry in payload
+        if isinstance(entry, dict)
+    ]
+
+
+def branch_drift(api, repo, default_branch, cached):
+    """Every branch, and how far it has drifted from the default one.
+
+    Branches that never get merged are the quiet kind of mess — the listing
+    alone does not show it, so each one is compared. Bounded, because the
+    comparison is a request each.
+    """
+    listing, state = api.get(
+        "/repos/%s/%s/branches?per_page=%d" % (ORG, repo, MAX_BRANCHES),
+        isinstance(cached, list),
+    )
+    if state != "ok" or not isinstance(listing, list):
+        return cached if isinstance(cached, list) else []
+
+    known = {entry.get("name"): entry for entry in (cached or []) if isinstance(entry, dict)}
+    base = default_branch or BRANCH
+    out = []
+    compared = 0
+
+    for entry in listing:
+        if not isinstance(entry, dict):
+            continue
+        name = entry.get("name")
+        sha = ((entry.get("commit") or {}).get("sha"))
+        row = {
+            "name": name,
+            "sha": sha,
+            "protected": bool(entry.get("protected")),
+            "default": name == base,
+        }
+        if name == base:
+            row["ahead"] = 0
+            row["behind"] = 0
+            out.append(row)
+            continue
+
+        was = known.get(name) or {}
+        # Nothing has moved on this branch since the last look, so the drift it
+        # had then is the drift it has now — unless the base moved, which the
+        # base's own sha tells us.
+        if was.get("sha") == sha and was.get("baseSha") == _sha_of(listing, base) and "ahead" in was:
+            out.append({**row, "ahead": was["ahead"], "behind": was["behind"], "baseSha": was.get("baseSha")})
+            continue
+
+        if compared >= MAX_COMPARES:
+            out.append(row)
+            continue
+        compared += 1
+        payload, compare_state = api.get(
+            "/repos/%s/%s/compare/%s...%s"
+            % (ORG, repo, urllib.parse.quote(base), urllib.parse.quote(name))
+        )
+        if compare_state == "ok" and isinstance(payload, dict):
+            row["ahead"] = payload.get("ahead_by")
+            row["behind"] = payload.get("behind_by")
+            row["baseSha"] = _sha_of(listing, base)
+        out.append(row)
+
+    return out
+
+
+def _sha_of(listing, name):
+    for entry in listing:
+        if isinstance(entry, dict) and entry.get("name") == name:
+            return (entry.get("commit") or {}).get("sha")
+    return None
+
+
+def recent_runs(api, repo, cached):
+    payload, state = api.get(
+        "/repos/%s/%s/actions/runs?per_page=%d" % (ORG, repo, MAX_RUNS),
+        isinstance(cached, list),
+    )
+    if state != "ok" or not isinstance(payload, dict):
+        return cached if isinstance(cached, list) else []
+    return [
+        {
+            "name": entry.get("name"),
+            "status": entry.get("status"),
+            "conclusion": entry.get("conclusion"),
+            "sha": (entry.get("head_sha") or "")[:7],
+            "branch": entry.get("head_branch"),
+            "event": entry.get("event"),
+            "created": entry.get("created_at"),
+            "seconds": seconds_between(entry.get("run_started_at"), entry.get("updated_at")),
+            "url": entry.get("html_url"),
+            "subject": first_line((entry.get("head_commit") or {}).get("message")),
+        }
+        for entry in (payload.get("workflow_runs") or [])
+        if isinstance(entry, dict)
+    ]
+
+
+def detail_for(api, repo, cached):
+    facts = repo_facts(api, repo, cached.get("facts") or {})
+    pulls = open_pulls(api, repo, cached.get("pulls"))
+    branches = branch_drift(api, repo, facts.get("defaultBranch"), cached.get("branches"))
+    runs = recent_runs(api, repo, cached.get("runs"))
+    return {"facts": facts, "pulls": pulls, "branches": branches, "runs": runs}
+
+
+# ---------------------------------------------------------------- assembling
 
 def cached(previous, name):
     for entry in previous.get("repositories") or []:
@@ -144,7 +420,7 @@ def read_previous(path):
     return payload if isinstance(payload, dict) else {}
 
 
-def inspect(name, path, auth, previous):
+def inspect(name, path, api, known, want_detail):
     entry = {"name": name, "path": path, "branch": BRANCH}
 
     head = git(path, "rev-parse", "HEAD")
@@ -165,44 +441,40 @@ def inspect(name, path, auth, previous):
                 "synced": False,
             }
         )
-        return entry, False
-
-    remote = git(path, "rev-parse", "origin/%s" % BRANCH)
-    dirty = git(path, "status", "--porcelain", "--untracked-files=no") or ""
-    behind = git(path, "rev-list", "--count", "HEAD..origin/%s" % BRANCH) if remote else None
-    ahead = git(path, "rev-list", "--count", "origin/%s..HEAD" % BRANCH) if remote else None
-
-    known = cached(previous, name)
-    asked = False
-    if remote and known.get("remote") == remote and (known.get("ci") or "").split("/")[-1] in TERMINAL:
-        verdict, remaining = known.get("ci"), None
     else:
-        verdict, remaining = ci_for(name, remote, auth)
-        asked = True
+        remote = git(path, "rev-parse", "origin/%s" % BRANCH)
+        dirty = git(path, "status", "--porcelain", "--untracked-files=no") or ""
+        behind = git(path, "rev-list", "--count", "HEAD..origin/%s" % BRANCH) if remote else None
+        ahead = git(path, "rev-list", "--count", "origin/%s..HEAD" % BRANCH) if remote else None
 
-    entry.update(
-        {
-            "present": True,
-            "local": head,
-            "remote": remote,
-            "behind": int(behind) if (behind or "").isdigit() else 0,
-            "ahead": int(ahead) if (ahead or "").isdigit() else 0,
-            "dirty": [line[3:] for line in dirty.splitlines() if line[3:]],
-            "ci": verdict,
-            "green": verdict == "completed/success",
-            "synced": bool(remote) and head == remote,
-            "head": commit_facts(path, "HEAD"),
-        }
-    )
-    if remote and remote != head:
-        entry["tip"] = commit_facts(path, "origin/%s" % BRANCH)
-    if remaining is not None:
-        entry["rateRemaining"] = remaining
-    if asked:
-        entry["checked"] = now()
-    elif known.get("checked"):
-        entry["checked"] = known["checked"]
-    return entry, asked
+        verdict = ci_verdict(api, name, remote, known)
+        entry.update(
+            {
+                "present": True,
+                "local": head,
+                "remote": remote,
+                "behind": int(behind) if (behind or "").isdigit() else 0,
+                "ahead": int(ahead) if (ahead or "").isdigit() else 0,
+                "dirty": [line[3:] for line in dirty.splitlines() if line[3:]],
+                "ci": verdict,
+                "green": verdict == "completed/success",
+                "synced": bool(remote) and head == remote,
+                "head": commit_facts(path, "HEAD"),
+            }
+        )
+        if remote and remote != head:
+            entry["tip"] = commit_facts(path, "origin/%s" % BRANCH)
+
+    carried = {key: known[key] for key in ("facts", "pulls", "branches", "runs") if key in known}
+    if want_detail:
+        entry.update(detail_for(api, name, carried))
+        entry["detail"] = now()
+    else:
+        entry.update(carried)
+        if known.get("detail"):
+            entry["detail"] = known["detail"]
+
+    return entry
 
 
 def write_atomic(path, payload):
@@ -233,13 +505,19 @@ def write_atomic(path, payload):
 
 
 def main():
-    if len(sys.argv) < 3:
-        print(__doc__.strip().splitlines()[-1].strip(), file=sys.stderr)
+    arguments = sys.argv[1:]
+    force = False
+    if arguments and arguments[0] == "--full":
+        force = True
+        arguments = arguments[1:]
+
+    if len(arguments) < 2:
+        print("usage: github-state.py [--full] OUT_PATH name=/path [name=/path ...]", file=sys.stderr)
         return 2
 
-    out_path = sys.argv[1]
+    out_path = arguments[0]
     pairs = []
-    for argument in sys.argv[2:]:
+    for argument in arguments[1:]:
         name, sep, path = argument.partition("=")
         if not sep or not name or not path:
             print("expected name=path, got %r" % argument, file=sys.stderr)
@@ -249,21 +527,29 @@ def main():
     auth = token()
     previous = read_previous(out_path)
 
+    since = age_seconds(previous.get("detail"))
+    want_detail = bool(auth) and (force or since is None or since >= DETAIL_SECONDS)
+
+    api = GitHub(auth, previous.get("etags"))
+
     repositories = []
-    asked_any = False
     for name, path in pairs:
-        entry, asked = inspect(name, path, auth, previous)
-        repositories.append(entry)
-        asked_any = asked_any or asked
+        repositories.append(inspect(name, path, api, cached(previous, name), want_detail))
 
     payload = {
         "generated": now(),
         "org": ORG,
         "branch": BRANCH,
         "repositories": repositories,
+        "etags": api.etags,
     }
+    payload["detail"] = now() if want_detail and not api.failed else previous.get("detail")
+    if api.remaining is not None:
+        payload["rate"] = {"remaining": api.remaining, "limit": api.limit, "reset": api.reset}
     if not auth:
-        payload["note"] = "no GitHub token on this box — CI verdicts are unavailable"
+        payload["note"] = "no GitHub token on this box — nothing could be asked of GitHub"
+    elif api.failed:
+        payload["note"] = "GitHub could not be reached in full; some of this may be from an earlier look"
 
     try:
         write_atomic(out_path, payload)
@@ -272,9 +558,11 @@ def main():
         return 1
 
     clean = sum(1 for entry in repositories if entry.get("synced") and not entry.get("dirty"))
+    pulls = sum(len(entry.get("pulls") or []) for entry in repositories)
     print(
-        "github state: %d/%d in sync and clean%s"
-        % (clean, len(repositories), "" if asked_any else " (CI verdicts cached)")
+        "github state: %d/%d in sync and clean, %d open pull request(s); %d request(s), %d charged%s"
+        % (clean, len(repositories), pulls, api.calls, api.spent,
+           "" if api.remaining is None else ", %d left this hour" % api.remaining)
     )
     return 0
 
