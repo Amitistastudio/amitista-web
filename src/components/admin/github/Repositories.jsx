@@ -28,6 +28,25 @@ function verdict(repo) {
     };
   }
 
+  // Diverged is checked before unpushed, and the order is the whole point. Both
+  // states have commits on the box that GitHub has not got, so an `ahead > 0`
+  // test on its own answers "unpushed" to both and never mentions the branch has
+  // moved as well. That reads as a thing to get round to. It is not: the two
+  // have different history, the deploy fast-forwards and a fast-forward is
+  // exactly what cannot happen here, so nothing new goes live until somebody
+  // puts the checkout back on the branch.
+  if (repo.ahead > 0 && repo.behind > 0) {
+    return {
+      tone: 'rose',
+      label: 'diverged',
+      detail:
+        `${count(repo.ahead, 'commit', 'commits')} on this box that ${repo.branch} has not got, and ` +
+        `${count(repo.behind, 'commit', 'commits')} on ${repo.branch} that this box has not. They are ` +
+        `different lines of history, so the deploy cannot fast-forward and nothing will go live ` +
+        `until the checkout is put back on ${repo.branch}.`,
+    };
+  }
+
   if (repo.ahead > 0) {
     return {
       tone: 'amber',
@@ -151,7 +170,7 @@ function Commit({ title, sha, facts = {}, url, tone = 'text-white', note }) {
 // rather than counted. "Behind by 2" tells you to wait; these two lines tell you
 // what you are waiting for, which is the difference between the page being
 // worth opening and not.
-function Waiting({ commits, behind, branch }) {
+function Waiting({ commits, behind, branch, diverged }) {
   return (
     <div className="px-4 sm:px-6 py-4 border-b border-[#17171d]">
       <p className="text-[11px] text-neutral-500 tracking-[0.12em] uppercase mb-3">
@@ -160,9 +179,11 @@ function Waiting({ commits, behind, branch }) {
 
       {commits.length === 0 ? (
         <p className="text-[12px] text-neutral-500 leading-relaxed">
-          {count(behind, 'commit is', 'commits are')} ahead of this box, but the checkout is older
-          than the run of commits GitHub listed, so they cannot be named here. {branch} on GitHub has
-          the full list.
+          {count(behind, 'commit is', 'commits are')} on {branch} that this box has not got.{' '}
+          {diverged
+            ? `They cannot be named here because the checkout is not on ${branch} at all — it is on a commit of its own, so there is no run of commits between the two to list.`
+            : 'They cannot be named here because the checkout is older than the run of commits GitHub listed.'}{' '}
+          {branch} on GitHub has the full list.
         </p>
       ) : (
         <ul className="space-y-2">
@@ -288,7 +309,12 @@ function Repository({ repo }) {
           )}
 
           {!repo.synced && repo.behind > 0 && (
-            <Waiting commits={pending} behind={repo.behind} branch={repo.branch} />
+            <Waiting
+              commits={pending}
+              behind={repo.behind}
+              branch={repo.branch}
+              diverged={repo.ahead > 0}
+            />
           )}
 
           <Row
@@ -340,8 +366,15 @@ function Repository({ repo }) {
 // The answer before the detail. Three panels of prose is fine once you know
 // something is wrong, and no use at all for finding out whether anything is.
 function Summary({ repositories }) {
+  // Diverged counts as broken here rather than as "behind". It is behind, but
+  // saying so puts it in the same sentence as a checkout that is merely a tick
+  // out of date, and the two want opposite things from the reader: one resolves
+  // itself in a minute, the other resolves itself never.
   const broken = repositories.filter(
-    (repo) => !repo.present || listOf(repo, 'dirty').length > 0,
+    (repo) =>
+      !repo.present ||
+      listOf(repo, 'dirty').length > 0 ||
+      (repo.ahead > 0 && repo.behind > 0),
   ).length;
   const behind = repositories.reduce((sum, repo) => sum + (repo.behind || 0), 0);
   const unpushed = repositories.reduce((sum, repo) => sum + (repo.ahead || 0), 0);
