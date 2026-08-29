@@ -4,12 +4,14 @@ import { fetchGithubRepositories, formatAgo } from '../../lib/admin';
 import { Button, Notice } from './ui';
 import Repositories from './github/Repositories';
 import Issues from './github/Issues';
+import Pulls from './github/Pulls';
 
-export const GITHUB_VIEWS = ['github', 'github-issues'];
+export const GITHUB_VIEWS = ['github', 'github-issues', 'github-pulls'];
 
 const VIEWS = {
   github: Repositories,
   'github-issues': Issues,
+  'github-pulls': Pulls,
 };
 
 // The group and its gate are real — only the accounts named in PRIVATE_GROUPS

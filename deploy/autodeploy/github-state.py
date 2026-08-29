@@ -57,6 +57,11 @@ DETAIL_SECONDS = int(os.environ.get("AUTODEPLOY_GITHUB_DETAIL_SECONDS", "60"))
 # Ceilings, so one runaway repository cannot bloat the file the panel reads or
 # the number of requests one refresh makes.
 MAX_PULLS = 20
+# Asking after each pull request costs a request or two of its own, so only the
+# most recent handful are looked into. Beyond that the list still shows them;
+# they just do not carry a verdict until one of the others is dealt with.
+MAX_PULL_DETAIL = 10
+MAX_FILES = 40
 MAX_ISSUES = 30
 # Enough of the body to know what an issue is about without opening GitHub, and
 # little enough that thirty of them do not bloat the file the panel reads.
@@ -290,17 +295,111 @@ def repo_facts(api, repo, cached):
     }
 
 
-def open_pulls(api, repo, cached):
+def pull_extra(api, repo, number, known):
+    """What the list of pull requests does not say.
+
+    How much changed, and whether it can actually go in, are only on the single
+    pull request endpoint — the list leaves out additions, deletions,
+    changed_files, commits and the merge state entirely. So each one is asked
+    after separately, which is why only the newest few are.
+
+    mergeable is computed on demand and comes back null until GitHub has worked
+    it out, which is a real answer and not the same as "no": the panel says it
+    is still being worked out rather than guessing.
+    """
+    payload, state = api.get("/repos/%s/%s/pulls/%d" % (ORG, repo, number), bool(known))
+    if state != "ok" or not isinstance(payload, dict):
+        return known or {}
+    body = payload.get("body")
+    text = body.strip() if isinstance(body, str) else ""
+    return {
+        "additions": payload.get("additions"),
+        "deletions": payload.get("deletions"),
+        "files": payload.get("changed_files"),
+        "commits": payload.get("commits"),
+        "mergeable": payload.get("mergeable"),
+        "mergeState": payload.get("mergeable_state"),
+        "body": text[:MAX_BODY],
+        "clipped": len(text) > MAX_BODY,
+    }
+
+
+def pull_files(api, repo, number, cached):
     payload, state = api.get(
-        "/repos/%s/%s/pulls?state=open&sort=created&direction=desc&per_page=%d"
-        % (ORG, repo, MAX_PULLS),
+        "/repos/%s/%s/pulls/%d/files?per_page=%d" % (ORG, repo, number, MAX_FILES),
         isinstance(cached, list),
     )
     if state != "ok" or not isinstance(payload, list):
         return cached if isinstance(cached, list) else []
     return [
         {
-            "number": entry.get("number"),
+            "path": entry.get("filename"),
+            "status": entry.get("status"),
+            "added": entry.get("additions"),
+            "removed": entry.get("deletions"),
+        }
+        for entry in payload
+        if isinstance(entry, dict) and entry.get("filename")
+    ]
+
+
+def pull_ci(api, repo, sha, known):
+    """The workflow verdict for the head of a pull request.
+
+    Cached against that exact commit, so a pull request nobody has pushed to
+    costs nothing to keep an eye on once its run has finished.
+    """
+    if not sha:
+        return "unknown"
+    settled = (known.get("ci") or "").split("/")[-1] in TERMINAL
+    if known.get("sha") == sha and settled:
+        return known["ci"]
+    payload, state = api.get("/repos/%s/%s/actions/runs?head_sha=%s&per_page=1" % (ORG, repo, sha))
+    if state != "ok" or not isinstance(payload, dict):
+        return "unknown"
+    runs = payload.get("workflow_runs") or []
+    if not runs:
+        return "none"
+    run = runs[0]
+    return "%s/%s" % (run.get("status") or "unknown", run.get("conclusion") or "pending")
+
+
+def open_pulls(api, repo, cached):
+    payload, state = api.get(
+        "/repos/%s/%s/pulls?state=open&sort=created&direction=desc&per_page=%d"
+        % (ORG, repo, MAX_PULLS),
+        isinstance(cached, list),
+    )
+    held = cached if isinstance(cached, list) else []
+
+    if state == "unchanged":
+        # Nothing has been opened, closed or pushed to — that is what the list's
+        # own ETag settles. A workflow finishing does not touch the pull request
+        # it ran for, though, so a verdict that had not settled yet would sit
+        # there saying "pending" for as long as the list stayed still. Those are
+        # asked after; everything else is left exactly as it was.
+        out = []
+        for entry in held:
+            row = dict(entry)
+            if row.get("sha") and (row.get("ci") or "").split("/")[-1] not in TERMINAL:
+                row["ci"] = pull_ci(api, repo, row["sha"], {})
+            out.append(row)
+        return out
+
+    if state != "ok" or not isinstance(payload, list):
+        return held
+
+    known = {entry.get("number"): entry for entry in held if isinstance(entry, dict)}
+
+    out = []
+    for index, entry in enumerate(payload):
+        if not isinstance(entry, dict):
+            continue
+        number = entry.get("number")
+        sha = ((entry.get("head") or {}).get("sha"))
+        was = known.get(number) or {}
+        row = {
+            "number": number,
             "title": entry.get("title"),
             "author": ((entry.get("user") or {}).get("login")),
             "draft": bool(entry.get("draft")),
@@ -308,11 +407,27 @@ def open_pulls(api, repo, cached):
             "updated": entry.get("updated_at"),
             "head": ((entry.get("head") or {}).get("ref")),
             "base": ((entry.get("base") or {}).get("ref")),
+            "sha": sha,
+            "labels": [
+                {"name": label.get("name"), "colour": label.get("color")}
+                for label in entry.get("labels") or []
+                if isinstance(label, dict) and label.get("name")
+            ],
+            "reviewers": [
+                person.get("login")
+                for person in entry.get("requested_reviewers") or []
+                if isinstance(person, dict) and person.get("login")
+            ],
             "url": entry.get("html_url"),
         }
-        for entry in payload
-        if isinstance(entry, dict)
-    ]
+        if index < MAX_PULL_DETAIL:
+            row.update(pull_extra(api, repo, number, was))
+            row["changed"] = pull_files(api, repo, number, was.get("changed"))
+            row["ci"] = pull_ci(api, repo, sha, was)
+        else:
+            row["looked"] = False
+        out.append(row)
+    return out
 
 
 def open_issues(api, repo, cached):

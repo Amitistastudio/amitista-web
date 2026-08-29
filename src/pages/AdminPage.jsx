@@ -28,6 +28,7 @@ import {
   Zap,
   FolderGit2,
   CircleDot,
+  GitPullRequest,
 } from 'lucide-react';
 import Header from '../components/web1/Header';
 import Footer from '../components/web1/Footer';
@@ -212,6 +213,14 @@ const SECTIONS = [
     needs: null,
     group: 'github',
     blurb: 'what is open across the three repositories, and what each one says',
+  },
+  {
+    id: 'github-pulls',
+    label: 'Pull requests',
+    icon: GitPullRequest,
+    needs: null,
+    group: 'github',
+    blurb: 'what is open, what it changes, and what is stopping it going in',
   },
   {
     id: 'accounts',
