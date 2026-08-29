@@ -57,22 +57,6 @@ const listSentence = (parts) =>
 // collaborator is on a repository and not in the organisation, and an owner is
 // in the organisation and on every repository without ever having been added to
 // one.
-// Where access that was not granted on the repository actually came from.
-//
-// The collector can only say "not added to this repository". It cannot say why,
-// because GitHub's collaborator list does not carry the reason. With the teams
-// alongside it the answer is usually recoverable, and it matters: access from a
-// team is changed by changing the team, access from being an owner is not
-// changed here at all.
-function sourceOf(teams, login, repo) {
-  const through = teams.filter(
-    (team) =>
-      (team.members ?? []).some((person) => person.login === login) &&
-      (team.repos ?? []).some((entry) => entry.name === repo),
-  );
-  return through.length > 0 ? through : null;
-}
-
 function everyone(repositories, members) {
   const rows = new Map();
   const take = (login, extra) => {
@@ -300,7 +284,7 @@ function Levels({ value, onPick, name, disabled }) {
 // about it. Controls only appear where they would work: access that comes from
 // being an owner cannot be taken away here, and saying so is more use than a
 // button that fails.
-function RepoAccess({ repo, held, login, self, teams, busy, onGrant, onRevoke }) {
+function RepoAccess({ repo, held, login, self, busy, onGrant, onRevoke }) {
   const current = held ? roleApi(held.role) : null;
   const [wanted, setWanted] = React.useState(current ?? 'pull');
 
@@ -308,16 +292,11 @@ function RepoAccess({ repo, held, login, self, teams, busy, onGrant, onRevoke })
     setWanted(current ?? 'pull');
   }, [current]);
 
-  const through = held && !held.direct ? sourceOf(teams, login, repo) : null;
   const note = self
     ? 'Not changeable here — this is the account the deploy uses, and taking its access away would stop the deploy that could put it back.'
-    : through
-      ? `Comes from the ${through.map((team) => team.name).join(' and ')} team${
-          through.length === 1 ? '' : 's'
-        }. Change it there, or take them out of it, and this follows.`
-      : held && !held.direct
-        ? 'Comes from their organisation role. Change that on GitHub, or it comes straight back.'
-        : null;
+    : held && !held.direct
+      ? 'Comes from their organisation role. Change that on GitHub, or it comes straight back.'
+      : null;
 
   return (
     <div className="py-3 border-b border-[#17171d] last:border-b-0">
@@ -332,13 +311,7 @@ function RepoAccess({ repo, held, login, self, teams, busy, onGrant, onRevoke })
                     read "read only", which is the reassuring answer to give
                     about a level we do not recognise. */}
                 {role(held.role) ? ` — ${roleGist(role(held.role))}` : ''}
-                {` · ${
-                  held.direct
-                    ? 'added to this repository'
-                    : through
-                      ? `through ${through.map((team) => team.name).join(' and ')}`
-                      : 'through the organisation'
-                }`}
+                {` · ${held.direct ? 'added to this repository' : 'through the organisation'}`}
               </>
             ) : (
               'no access at all'
@@ -405,17 +378,7 @@ function RepoAccess({ repo, held, login, self, teams, busy, onGrant, onRevoke })
 // One row of the table, and everything about that person underneath it when
 // opened. The row and the controls are the same thing on purpose: a separate
 // list per repository meant reading the same person four times over.
-function PersonRow({
-  person,
-  repositories,
-  actor,
-  teams,
-  busy,
-  open,
-  onToggle,
-  onGrant,
-  onRevoke,
-}) {
+function PersonRow({ person, repositories, actor, busy, open, onToggle, onGrant, onRevoke }) {
   const self = actor && person.login.toLowerCase() === actor.toLowerCase();
   const span = repositories.length + 2;
 
@@ -503,7 +466,6 @@ function PersonRow({
                 held={person.holds[repo.name]}
                 login={person.login}
                 self={self}
-                teams={teams}
                 busy={busy}
                 onGrant={onGrant}
                 onRevoke={onRevoke}
@@ -711,7 +673,6 @@ export default function People({ data, onRefresh }) {
   const people = peopleIn(data);
   const org = people.org ?? null;
   const members = Array.isArray(people.members) ? people.members : [];
-  const teams = Array.isArray(people.teams) ? people.teams : [];
   const actor = people.actor ?? null;
   const queued = Array.isArray(data?.queued) ? data.queued : [];
   const history = Array.isArray(people.actions) ? people.actions : [];
@@ -920,7 +881,6 @@ export default function People({ data, onRefresh }) {
                     person={person}
                     repositories={repositories}
                     actor={actor}
-                    teams={teams}
                     busy={busy}
                     open={open === person.login}
                     onToggle={() => setOpen(open === person.login ? null : person.login)}
