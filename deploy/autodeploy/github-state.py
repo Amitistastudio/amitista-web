@@ -68,9 +68,9 @@ MAX_PULLS = 20
 MAX_PULL_DETAIL = 10
 MAX_FILES = 40
 MAX_ISSUES = 30
-# Enough recent commits to see who has been working on what, across all three
-# repositories at once, without carrying a history nobody scrolls to.
-MAX_COMMITS = 15
+# Enough recent commits to draw a fortnight of activity and say who has been
+# doing it, across all three repositories at once. Still one request each.
+MAX_COMMITS = 40
 # Enough of the body to know what an issue is about without opening GitHub, and
 # little enough that thirty of them do not bloat the file the panel reads.
 MAX_BODY = 1200

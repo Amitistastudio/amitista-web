@@ -25,3 +25,92 @@ export function GithubLink({ href, children = 'OPEN', title }) {
     </a>
   );
 }
+
+// What is actually stopping this going in, in the order the answers matter. A
+// draft is nobody's problem yet; conflicts are the author's; a red run is the
+// author's too; everything else is the reviewer's. Each verdict says what to do
+// rather than naming the state, because "dirty" and "unstable" are GitHub's
+// words for things nobody would guess at.
+export function pullVerdict(pull) {
+  if (pull.looked === false) {
+    return {
+      tone: 'neutral',
+      label: 'not looked at',
+      detail:
+        'Too many open at once to look into them all this round. It is listed, and gets a verdict ' +
+        'once the ones above it are dealt with.',
+    };
+  }
+
+  if (pull.draft) {
+    return {
+      tone: 'neutral',
+      label: 'draft',
+      detail: 'Still a draft, so it is not asking for anything yet.',
+    };
+  }
+
+  if (pull.mergeable === false || pull.mergeState === 'dirty') {
+    return {
+      tone: 'rose',
+      label: 'conflicts',
+      detail: `It no longer applies cleanly to ${pull.base}. The author needs to merge ${pull.base} in or rebase on it before anyone can merge this.`,
+    };
+  }
+
+  const ci = pull.ci ?? 'unknown';
+  if (ci.startsWith('completed/') && ci !== 'completed/success') {
+    return {
+      tone: 'rose',
+      label: 'checks failed',
+      detail: `CI did not pass (${ci}). Nothing should go in on a red run — the deploy would refuse it anyway.`,
+    };
+  }
+  if (ci === 'none') {
+    return {
+      tone: 'amber',
+      label: 'no run',
+      detail: 'No workflow run has been recorded for the head of this branch.',
+    };
+  }
+  if (ci !== 'unknown' && !ci.startsWith('completed/')) {
+    return { tone: 'amber', label: 'checks running', detail: `CI is still going (${ci}). Wait for it.` };
+  }
+
+  if (pull.mergeState === 'unstable') {
+    return {
+      tone: 'amber',
+      label: 'a check is unhappy',
+      detail:
+        'Something GitHub does not treat as required is failing. It can still be merged, but it is ' +
+        'worth knowing why before doing so.',
+    };
+  }
+  if (pull.mergeState === 'behind') {
+    return {
+      tone: 'amber',
+      label: 'behind',
+      detail: `${pull.base} has moved on since this branched. Update it first so what is tested is what is merged.`,
+    };
+  }
+  if (pull.mergeState === 'blocked') {
+    return {
+      tone: 'amber',
+      label: 'blocked',
+      detail: 'GitHub is holding it — usually a required review that has not been given.',
+    };
+  }
+  if (pull.mergeable === null || pull.mergeState === 'unknown') {
+    return {
+      tone: 'neutral',
+      label: 'working it out',
+      detail: 'GitHub has not finished deciding whether this merges cleanly. It settles in a moment.',
+    };
+  }
+
+  return {
+    tone: 'green',
+    label: 'ready',
+    detail: 'It applies cleanly and its checks passed. Nothing is in the way but a decision.',
+  };
+}
