@@ -604,6 +604,71 @@ function Queued({ pull, review, wait, age, place, reviewer }) {
     </div>
   );
 }
+const TONE_TEXT = {
+  green: 'text-emerald-400',
+  rose: 'text-rose-400',
+  amber: 'text-amber-300',
+  purple: 'text-purple-300',
+  neutral: 'text-neutral-500',
+};
+
+const TONE_FILL = {
+  green: 'bg-emerald-400',
+  rose: 'bg-rose-400',
+  amber: 'bg-amber-300',
+  purple: 'bg-purple-400',
+  neutral: 'bg-neutral-700',
+};
+
+const shortRepo = (name) => String(name ?? '').replace(/^amitista-/, '');
+
+const briefDate = (value) => {
+  const parsed = Date.parse(value ?? '');
+  if (Number.isNaN(parsed)) return '—';
+  const then = new Date(parsed);
+  const sameYear = then.getFullYear() === new Date().getFullYear();
+  return then.toLocaleDateString(undefined, {
+    day: 'numeric',
+    month: 'short',
+    ...(sameYear ? {} : { year: '2-digit' }),
+  });
+};
+
+function reviewVerdict(row, review) {
+  if (!Array.isArray(row.reviews)) return { tone: 'neutral', text: 'not recorded' };
+  if (review.changes.length > 0) {
+    return {
+      tone: 'rose',
+      text: `changes requested by ${review.changes.map((one) => one.login).join(', ')}`,
+    };
+  }
+  if (review.approved.length > 0) {
+    return {
+      tone: 'green',
+      text: `approved by ${review.approved.map((one) => one.login).join(', ')}`,
+    };
+  }
+  if (review.pending.length > 0) {
+    return { tone: 'amber', text: `${review.pending.join(', ')} asked, no answer` };
+  }
+  if (review.rows.length > 0) {
+    return {
+      tone: 'neutral',
+      text: `${review.rows.map((one) => one.login).join(', ')} looked, no verdict`,
+    };
+  }
+  return { tone: 'neutral', text: 'nobody reviewed it' };
+}
+
+function Bead({ tone, title }) {
+  return (
+    <span
+      title={title}
+      className={`h-1.5 w-1.5 rounded-full shrink-0 ${TONE_FILL[tone] ?? TONE_FILL.neutral}`}
+    />
+  );
+}
+
 function Field({ label, tone, children }) {
   return (
     <div className="min-w-0">
@@ -615,132 +680,124 @@ function Field({ label, tone, children }) {
   );
 }
 
-function StatusStrip({ row, review }) {
-  const ci = ciOf(row.ci);
-  const merge = mergeOf(row);
-  const looked = Array.isArray(row.reviews);
-
-  const colour = {
-    green: 'text-emerald-400',
-    rose: 'text-rose-400',
-    amber: 'text-amber-300',
-    purple: 'text-purple-300',
-    neutral: 'text-neutral-500',
-  };
-
-  const verdict = () => {
-    if (!looked) return <span className="text-neutral-600">not recorded</span>;
-    if (review.changes.length > 0) {
-      return (
-        <span className="text-rose-400">
-          changes requested by {review.changes.map((one) => one.login).join(', ')}
-        </span>
-      );
-    }
-    if (review.approved.length > 0) {
-      return (
-        <span className="text-emerald-400">
-          approved by {review.approved.map((one) => one.login).join(', ')}
-        </span>
-      );
-    }
-    if (review.pending.length > 0) {
-      return (
-        <span className="text-amber-300">{review.pending.join(', ')} asked, no answer</span>
-      );
-    }
-    if (review.rows.length > 0) {
-      return (
-        <span className="text-neutral-400">
-          {review.rows.map((one) => one.login).join(', ')} looked, no verdict
-        </span>
-      );
-    }
-    return <span className="text-neutral-600">nobody reviewed it</span>;
-  };
-
-  return (
-    <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-3 mt-3 border-t border-[#17171d] pt-3">
-      <Field label="review" tone="text-neutral-400">
-        {verdict()}
-      </Field>
-      <Field label="checks" tone={colour[ci.tone]}>
-        {ci.label}
-      </Field>
-      <Field label="merge" tone={colour[merge.tone]}>
-        {merge.label}
-      </Field>
-    </div>
-  );
-}
-
+// One line by default, opened only when somebody wants the rest.
+//
+// Sixty of these is a list to scan rather than a set of cards to read, and the
+// three things worth scanning for — where the review got to, whether the checks
+// passed, whether it went in — are colour before they are words. The words are
+// still there on the dot and in the detail; what is gone is the space they were
+// taking to say the same thing sixty times.
 function Past({ row }) {
+  const [open, setOpen] = React.useState(false);
   const look = STATE_LOOK[row.state] ?? STATE_LOOK.closed;
   const Icon = look.icon;
   const lived = spanOf(row.created, row.merged ?? row.closed);
   const review = reviewsOf(row);
+  const ci = ciOf(row.ci);
+  const merge = mergeOf(row);
+  const verdict = reviewVerdict(row, review);
+  const when = row.merged ?? row.closed ?? row.updated ?? row.created;
 
   return (
-    <div className="px-4 sm:px-6 py-4 border-b border-[#17171d] last:border-b-0">
-      <div className="flex items-start gap-3">
-        <Icon className={`h-4 w-4 shrink-0 mt-0.5 ${look.colour}`} strokeWidth={2} />
+    <div className="border-b border-[#17171d] last:border-b-0">
+      <button
+        type="button"
+        onClick={() => setOpen((held) => !held)}
+        aria-expanded={open}
+        className={`w-full text-left px-4 sm:px-6 py-2 transition-colors ${
+          open ? 'bg-[#0d0d11]' : 'hover:bg-[#0d0d11]'
+        }`}
+      >
+        <div className="flex items-center gap-2.5">
+          <Icon className={`h-3.5 w-3.5 shrink-0 ${look.colour}`} strokeWidth={2} />
 
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-[11px] text-neutral-500 font-mono">
-              {row.repo} #{row.number}
-            </span>
-            <Pill tone={look.tone}>{look.label}</Pill>
-            {row.draft && row.state === 'open' && <Pill tone="neutral">draft</Pill>}
-          </div>
+          <span className="text-[10px] text-neutral-600 font-mono shrink-0 hidden sm:inline">
+            {shortRepo(row.repo)}
+          </span>
+          <span className="text-[10px] text-neutral-500 font-mono shrink-0 tabular-nums">
+            #{row.number}
+          </span>
 
-          <p className="text-[13px] text-white leading-snug break-words mt-1.5">{row.title}</p>
+          <span className="text-[12px] text-neutral-200 truncate flex-1 min-w-0">{row.title}</span>
 
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-2">
-            <span className="inline-flex items-center gap-1.5">
-              <Face login={row.author} size="h-4 w-4" />
-              <span className="text-[11px] text-neutral-400">{row.author ?? 'unknown'}</span>
-            </span>
-            <span className="text-[11px] text-neutral-500">
-              opened {dateOf(row.created) ?? '—'}
-              {row.state === 'merged' && (
-                <>
-                  {' · '}merged {dateOf(row.merged) ?? '—'}
-                  {lived ? ` after ${lived} open` : ''}
-                </>
-              )}
-              {row.state === 'closed' && (
-                <>
-                  {' · '}closed {dateOf(row.closed) ?? '—'}
-                  {lived ? ` after ${lived}` : ''}
-                </>
-              )}
-              {row.state === 'open' && <>{' · '}last touched {formatAgo(row.updated)}</>}
-            </span>
-          </div>
+          <span className="hidden sm:flex items-center gap-1 shrink-0">
+            <Bead tone={verdict.tone} title={`Review: ${verdict.text}`} />
+            <Bead tone={ci.tone} title={`Checks: ${ci.label}`} />
+            <Bead tone={merge.tone} title={`Merge: ${merge.label}`} />
+          </span>
 
-          <p className="text-[11px] text-neutral-600 mt-1.5 font-mono break-all">
-            {row.head} → {row.base}
-          </p>
+          <span className="text-[10px] text-neutral-600 shrink-0 tabular-nums w-12 text-right hidden sm:block">
+            {briefDate(when)}
+          </span>
 
-          {row.labels?.length > 0 && (
-            <div className="flex flex-wrap gap-1.5 mt-2">
-              {row.labels.map((label) => (
-                <span
-                  key={label.name}
-                  className="text-[10px] px-1.5 py-[2px] border border-[#282832] text-neutral-500"
-                >
-                  {label.name}
-                </span>
-              ))}
-            </div>
-          )}
-
-          <StatusStrip row={row} review={review} />
+          <span className="shrink-0" title={row.author ?? 'unknown'}>
+            <Face login={row.author} size="h-4 w-4" />
+          </span>
         </div>
+      </button>
 
-        <GithubLink href={row.url} title={`Open pull request #${row.number} on GitHub`} />
-      </div>
+      {open && (
+        <div className="px-4 sm:px-6 pb-4 pt-1">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <Pill tone={look.tone}>{look.label}</Pill>
+                {row.draft && row.state === 'open' && <Pill tone="neutral">draft</Pill>}
+                <span className="text-[11px] text-neutral-500 font-mono">{row.repo}</span>
+              </div>
+
+              <p className="text-[11px] text-neutral-500 mt-2 leading-relaxed">
+                {row.author ?? 'unknown'} opened it {dateOf(row.created) ?? '—'}
+                {row.state === 'merged' && (
+                  <>
+                    {' · '}merged{row.mergedBy ? ` by ${row.mergedBy}` : ''}{' '}
+                    {dateOf(row.merged) ?? '—'}
+                    {lived ? ` after ${lived} open` : ''}
+                  </>
+                )}
+                {row.state === 'closed' && (
+                  <>
+                    {' · '}closed without merging {dateOf(row.closed) ?? '—'}
+                    {lived ? ` after ${lived}` : ''}
+                  </>
+                )}
+                {row.state === 'open' && <>{' · '}last touched {formatAgo(row.updated)}</>}
+              </p>
+
+              <p className="text-[11px] text-neutral-600 mt-1 font-mono break-all">
+                {row.head} → {row.base}
+              </p>
+
+              {row.labels?.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 mt-2">
+                  {row.labels.map((label) => (
+                    <span
+                      key={label.name}
+                      className="text-[10px] px-1.5 py-[2px] border border-[#282832] text-neutral-500"
+                    >
+                      {label.name}
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-3 mt-3 border-t border-[#17171d] pt-3">
+                <Field label="review" tone={TONE_TEXT[verdict.tone]}>
+                  {verdict.text}
+                </Field>
+                <Field label="checks" tone={TONE_TEXT[ci.tone]}>
+                  {ci.label}
+                </Field>
+                <Field label="merge" tone={TONE_TEXT[merge.tone]}>
+                  {merge.label}
+                </Field>
+              </div>
+            </div>
+
+            <GithubLink href={row.url} title={`Open pull request #${row.number} on GitHub`} />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -859,7 +916,7 @@ function Ledger({ rows, gathered }) {
         </div>
       )}
 
-      <div className="px-4 sm:px-6 py-4 border-b border-[#17171d] space-y-3">
+      <div className="px-4 sm:px-6 py-3 border-b border-[#17171d] space-y-2.5">
         <SearchInput
           value={term}
           onChange={(event) => {
@@ -892,19 +949,18 @@ function Ledger({ rows, gathered }) {
           />
         )}
 
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid gap-2 sm:grid-cols-2">
           <label className="block">
-            <span className="block text-[10px] tracking-[0.14em] uppercase text-neutral-600 font-semibold mb-1.5">
-              Raised by
-            </span>
+            <span className="sr-only">Raised by</span>
             <Select
+              aria-label="Filter by who raised it"
               value={author}
               onChange={(event) => {
                 setAuthor(event.target.value);
                 reset();
               }}
             >
-              <option value={ANYONE}>Anybody</option>
+              <option value={ANYONE}>Raised by anybody</option>
               {authors.map((login) => (
                 <option key={login} value={login}>
                   {login}
@@ -914,10 +970,9 @@ function Ledger({ rows, gathered }) {
           </label>
 
           <label className="block">
-            <span className="block text-[10px] tracking-[0.14em] uppercase text-neutral-600 font-semibold mb-1.5">
-              Reviewed by or asked of
-            </span>
+            <span className="sr-only">Reviewed by or asked of</span>
             <Select
+              aria-label="Filter by reviewer"
               value={reviewer}
               onChange={(event) => {
                 setReviewer(event.target.value);
@@ -925,7 +980,7 @@ function Ledger({ rows, gathered }) {
               }}
               disabled={reviewers.length === 0}
             >
-              <option value={ANYONE}>Anybody</option>
+              <option value={ANYONE}>Reviewed by anybody</option>
               {reviewers.map((login) => (
                 <option key={login} value={login}>
                   {login}
