@@ -2,11 +2,15 @@
 Description=Check main for something to deploy
 
 [Timer]
-# Every five minutes. The jitter keeps the fetch off the exact minute boundary,
-# where the healthcheck, the snapshot timer and the perf monitor already sit.
-OnBootSec=5min
-OnUnitActiveSec=5min
-RandomizedDelaySec=60
+# Every minute. An idle tick is three SSH git fetches and a SHA comparison —
+# no GitHub API call is made unless a repository has actually moved — so polling
+# this often costs essentially nothing, and it takes the wait between a green CI
+# run and a live site down to under a minute and a half. The jitter still keeps
+# the fetch off the exact minute boundary, where the healthcheck, the snapshot
+# timer and the perf monitor already sit.
+OnBootSec=1min
+OnUnitActiveSec=1min
+RandomizedDelaySec=15
 AccuracySec=30s
 # A deploy missed because the box was down still happens on the next boot.
 Persistent=true
