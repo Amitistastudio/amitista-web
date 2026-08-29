@@ -239,6 +239,14 @@ deploy_api() {
 
   local snap="$STATE/$name-$STAMP.tar.gz"
   tar czf "$snap" -C "/opt/amitista/$name" --exclude=__pycache__ . 2>/dev/null || true
+
+  # Which process was serving before the installer ran. A long-lived Python
+  # service holds its code in memory, so installing a new file under it changes
+  # nothing until it restarts — and an installer that says `enable --now`
+  # rather than `restart` leaves a running unit exactly where it was while
+  # reporting success. Same process afterwards means the deploy did not land.
+  local before_pid; before_pid="$(systemctl show -p MainPID --value "$unit" 2>/dev/null || true)"
+
   if ! "$installer" >>"$STATE/$name-$STAMP.log" 2>&1; then
     warn "$name installer failed; see $STATE/$name-$STAMP.log"
     return 1
@@ -250,6 +258,14 @@ deploy_api() {
     systemctl restart "$unit" || true
     return 1
   fi
+  local after_pid; after_pid="$(systemctl show -p MainPID --value "$unit" 2>/dev/null || true)"
+  if [ -n "$before_pid" ] && [ "$before_pid" != "0" ] && [ "$before_pid" = "$after_pid" ]; then
+    warn "$unit is still process $before_pid — the installer never restarted it, so it is"
+    warn "$unit: running the code it had before this deploy. Check its install.sh for"
+    warn "$unit: 'systemctl enable --now', which does nothing to an already-running unit."
+    return 1
+  fi
+
   log "$unit running"
 }
 

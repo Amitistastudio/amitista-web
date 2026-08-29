@@ -65,7 +65,12 @@ say "Units"
 install -m 644 "$SRC/amitista-firewall.service" /etc/systemd/system/amitista-firewall.service
 install -m 644 "$SRC/amitista-firewall.path" /etc/systemd/system/amitista-firewall.path
 systemctl daemon-reload
-systemctl enable --now amitista-firewall.path
+# enable, then restart. `enable --now` starts a stopped unit but leaves a
+# running one exactly as it is, so a deploy would install new code into /opt
+# and the old process would keep serving it — reporting success the whole
+# time. restart starts a stopped unit too, so this covers a first install.
+systemctl enable amitista-firewall.path
+systemctl restart amitista-firewall.path
 
 say "Checking"
 nginx -t || die "nginx will not take the config — $LIVE is the new part"

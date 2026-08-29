@@ -11,7 +11,7 @@ const count = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 // this box, and if not, what is holding it up? Every branch below ends in a
 // plain sentence saying so, because "behind by 2" on its own does not tell you
 // whether to wait or to go and fix something.
-export function verdict(repo) {
+function verdict(repo) {
   if (!repo.present) {
     return {
       tone: 'rose',

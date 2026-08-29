@@ -89,9 +89,16 @@ if [ -d /etc/fail2ban/filter.d ]; then
 fi
 
 say "Starting"
-systemctl enable --now amitista-admin.service
-systemctl enable --now amitista-admin-snapshot.timer
-systemctl enable --now amitista-admin-geo.timer
+# enable, then restart. `enable --now` starts a stopped unit but leaves a
+# running one exactly as it is, so a deploy would install new code into /opt
+# and the old process would keep serving it — reporting success the whole
+# time. restart starts a stopped unit too, so this covers a first install.
+systemctl enable amitista-admin.service
+systemctl restart amitista-admin.service
+systemctl enable amitista-admin-snapshot.timer
+systemctl restart amitista-admin-snapshot.timer
+systemctl enable amitista-admin-geo.timer
+systemctl restart amitista-admin-geo.timer
 if [ ! -s "$STATE_DIR/ipcountry.json" ]; then
   say "Country table"
   python3 "$TARGET/build_ip_country.py" || printf '\033[33m  warning: no country table — the Activity places tab stays empty until build_ip_country.py runs\033[0m\n'
