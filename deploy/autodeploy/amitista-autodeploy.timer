@@ -11,7 +11,10 @@ Description=Check main for something to deploy
 OnBootSec=1min
 OnUnitActiveSec=1min
 RandomizedDelaySec=15
-AccuracySec=30s
+# systemd is free to slide a wakeup by up to AccuracySec to batch it with other
+# timers, which at the old 30s turned a one-minute period into 80-100s in
+# practice. There is nothing to batch with on this box worth 40 seconds of lag.
+AccuracySec=1s
 # A deploy missed because the box was down still happens on the next boot.
 Persistent=true
 
