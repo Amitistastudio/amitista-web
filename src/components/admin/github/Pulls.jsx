@@ -1,6 +1,7 @@
 import React from 'react';
-import { GitMerge, GitPullRequest, History, X } from 'lucide-react';
-import { formatAgo, githubAvatarUrl } from '../../../lib/admin';
+import { GitMerge, GitPullRequest, History, Layout, Sparkles, X } from 'lucide-react';
+import { fetchGithubReview, formatAgo, githubAvatarUrl } from '../../../lib/admin';
+import { pageImpact } from '../../../lib/pageImpact';
 import { Empty, Notice, Panel, Pill, SearchInput, Select } from '../ui';
 import { GithubLink, listOf, pullVerdict, repositoriesIn } from './shared';
 
@@ -349,7 +350,179 @@ const approvalOf = (review) => {
   return { tone: 'neutral', label: 'no reviews' };
 };
 
-function Queued({ pull, review, wait, age, place }) {
+const SEVERITY = {
+  high: { tone: 'text-rose-400', border: 'border-rose-500/40', label: 'high' },
+  medium: { tone: 'text-amber-300', border: 'border-amber-500/40', label: 'medium' },
+  low: { tone: 'text-neutral-400', border: 'border-[#282832]', label: 'low' },
+};
+
+function Impact({ files }) {
+  const impact = pageImpact(files);
+  if (!impact.frontend) return null;
+
+  return (
+    <div className="mt-3.5 border border-[#1c1c22] bg-[#0d0d11] px-3 py-3">
+      <p className="text-[10px] tracking-[0.14em] uppercase text-neutral-600 font-semibold flex items-center gap-1.5">
+        <Layout className="h-3 w-3" strokeWidth={2} />
+        what this changes on the site
+      </p>
+
+      {impact.pages.length > 0 && (
+        <div className="flex flex-wrap gap-2 mt-2.5">
+          {impact.pages.map((page) => (
+            <a
+              key={page.path}
+              href={page.path}
+              target="_blank"
+              rel="noreferrer"
+              title={`Open ${page.path} as it is now`}
+              className="inline-flex items-baseline gap-2 border border-[#282832] px-2.5 py-1.5 hover:border-neutral-600 transition-colors"
+            >
+              <span className="text-[11px] text-white">{page.label}</span>
+              <span className="text-[10px] text-neutral-600 font-mono">{page.path}</span>
+            </a>
+          ))}
+        </div>
+      )}
+
+      {impact.wide.length > 0 && (
+        <p className="text-[11px] text-amber-300/90 leading-relaxed mt-2.5">
+          Touches {impact.wide.join(', ')} — that lands on more than one page, so check a few.
+        </p>
+      )}
+
+      {impact.components.length > 0 && (
+        <p className="text-[11px] text-neutral-500 leading-relaxed mt-2">
+          {impact.components.length === 1 ? 'One shared component' : `${impact.components.length} shared components`}{' '}
+          ({impact.components.map((path) => path.split('/').pop()).join(', ')}). Which pages use{' '}
+          {impact.components.length === 1 ? 'it' : 'them'} is not something the file list can say.
+        </p>
+      )}
+
+      {impact.pages.length === 0 && impact.wide.length === 0 && impact.components.length === 0 && (
+        <p className="text-[11px] text-neutral-500 leading-relaxed mt-2">
+          Frontend files, but none of them a page or a shared component — nothing here names a route
+          to go and look at.
+        </p>
+      )}
+
+      {impact.backend > 0 && (
+        <p className="text-[11px] text-neutral-600 mt-2">
+          {impact.backend} file{impact.backend === 1 ? '' : 's'} outside the site itself.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function Reading({ pull, offered }) {
+  const [state, setState] = React.useState('idle');
+  const [answer, setAnswer] = React.useState(null);
+  const [failure, setFailure] = React.useState(null);
+
+  const ask = async () => {
+    setState('asking');
+    setFailure(null);
+    try {
+      const got = await fetchGithubReview(pull.repo, pull.number);
+      setAnswer(got.review);
+      setState('done');
+    } catch (error) {
+      setFailure(error.message);
+      setState('idle');
+    }
+  };
+
+  if (!offered) {
+    return (
+      <p className="text-[11px] text-neutral-600 leading-relaxed mt-3.5">
+        No model is configured, so nothing can read this diff for you. Set ADMIN_AI_KEY in
+        admin.env on the box and restart the admin service.
+      </p>
+    );
+  }
+
+  return (
+    <div className="mt-3.5">
+      {state !== 'done' && (
+        <button
+          type="button"
+          onClick={ask}
+          disabled={state === 'asking'}
+          className="inline-flex items-center gap-2 border border-[#282832] px-3 py-2 text-[11px] font-semibold tracking-[0.12em] uppercase text-neutral-400 hover:text-white hover:border-neutral-600 transition-colors disabled:opacity-50"
+        >
+          <Sparkles className="h-3.5 w-3.5" strokeWidth={2} />
+          {state === 'asking' ? 'Reading the diff…' : 'What does this do?'}
+        </button>
+      )}
+
+      {failure && (
+        <p className="text-[12px] text-rose-400 leading-relaxed mt-2">{failure}</p>
+      )}
+
+      {state === 'done' && answer && (
+        <div className="border border-[#1c1c22] bg-[#0d0d11] px-3 py-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-[10px] tracking-[0.14em] uppercase text-neutral-600 font-semibold flex items-center gap-1.5">
+              <Sparkles className="h-3 w-3" strokeWidth={2} />
+              read by a model, not a person
+            </p>
+            <span className="text-[10px] text-neutral-700 font-mono">{answer.model}</span>
+          </div>
+
+          <p className="text-[12px] text-neutral-300 leading-relaxed mt-2.5">{answer.summary}</p>
+
+          {answer.findings.length > 0 ? (
+            <ul className="mt-3 space-y-2">
+              {answer.findings.map((finding, index) => {
+                const look = SEVERITY[finding.severity] ?? SEVERITY.low;
+                return (
+                  <li
+                    key={`${finding.file ?? 'somewhere'}-${index}`}
+                    className={`border-l-2 ${look.border} pl-3`}
+                  >
+                    <p className="flex flex-wrap items-baseline gap-2">
+                      <span
+                        className={`text-[10px] font-semibold tracking-[0.12em] uppercase ${look.tone}`}
+                      >
+                        {look.label}
+                      </span>
+                      {finding.file ? (
+                        <span className="text-[11px] text-neutral-500 font-mono break-all">
+                          {finding.file}
+                          {finding.line ? `:${finding.line}` : ''}
+                        </span>
+                      ) : (
+                        <span className="text-[11px] text-neutral-600">no file named</span>
+                      )}
+                    </p>
+                    <p className="text-[12px] text-neutral-400 leading-relaxed mt-0.5">
+                      {finding.note}
+                    </p>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : (
+            <p className="text-[12px] text-neutral-500 leading-relaxed mt-2.5">
+              Nothing stood out in the diff. That is not an approval — it read a truncated diff
+              without being able to run anything.
+            </p>
+          )}
+
+          <p className="text-[11px] text-neutral-600 leading-relaxed mt-3 border-t border-[#17171d] pt-2.5">
+            Things to check, not defects that have been established.
+            {answer.partial && ' It saw part of the diff — the larger files were cut.'}{' '}
+            Read at {answer.sha ? `${answer.sha.slice(0, 7)}, ` : ''}so pushing to this branch asks
+            again.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Queued({ pull, review, wait, age, place, reviewer }) {
   const state = pullVerdict(pull);
   const approval = approvalOf(review);
   const old = days(age);
@@ -420,6 +593,10 @@ function Queued({ pull, review, wait, age, place }) {
           <p className="text-[12px] text-neutral-500 leading-relaxed mt-3.5">{state.detail}</p>
 
           <Changed files={listOf(pull, 'changed')} total={pull.files} />
+
+          <Impact files={listOf(pull, 'changed')} />
+
+          <Reading pull={pull} offered={reviewer} />
         </div>
 
         <GithubLink href={pull.url} title={`Open pull request #${pull.number} on GitHub`} />
@@ -810,6 +987,7 @@ function Ledger({ rows, gathered }) {
 
 export default function Pulls({ data }) {
   const repositories = repositoriesIn(data);
+  const reviewer = data?.reviewer === true;
   const past = everyPull(repositories);
   const gathered = repositories.some((repo) => Array.isArray(repo.history));
 
@@ -902,6 +1080,7 @@ export default function Pulls({ data }) {
                 wait={row.wait}
                 age={row.age}
                 place={index + 1}
+                reviewer={reviewer}
               />
             ))}
           </>

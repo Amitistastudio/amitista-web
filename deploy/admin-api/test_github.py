@@ -579,6 +579,66 @@ for method in ("POST", "DELETE", "PUT"):
     status, _, _ = request(method, "/github/avatar", {} if method != "DELETE" else None, cookie=insider)
     check("the avatar route offers no %s" % method.lower(), status in (400, 404, 405, 501))
 
+# ------------------------------------------------- the diff does not travel
+
+# The collector keeps a patch per changed file so a review has something to
+# read. The panel never displays one, so every reader of the snapshot would be
+# paying for tens of kilobytes none of them use — and a diff is the most
+# sensitive thing in the snapshot. It is stripped on the way out.
+
+write_snapshot([
+    repo(
+        pulls=[{
+            "number": 3,
+            "title": "a change",
+            "sha": "abc123",
+            "changed": [
+                {"path": "src/app.py", "added": 1, "removed": 0, "patch": "@@ secret diff", "clipped": True},
+            ],
+        }],
+    )
+])
+status, body = read(insider)
+only = body["repositories"][0]["pulls"][0]["changed"][0]
+check("the patch is stripped before the snapshot travels", "patch" not in only)
+check("but the file is still listed", only["path"] == "src/app.py")
+check("and whether it was clipped survives", only["clipped"] is True)
+check("the panel is told whether a reviewer is configured", body["reviewer"] is False)
+
+# ------------------------------------------------------ asking for a reading
+
+status, _, _ = request("GET", "/github/review?repo=amitista-web&number=3")
+check("a stranger cannot ask for a review", status == 401)
+
+status, _, _ = request("GET", "/github/review?repo=amitista-web&number=3", cookie=outsider)
+check("an admin who is not named cannot either", status == 403)
+
+status, _, _ = request("GET", "/github/review?repo=amitista-web&number=3", cookie=owner)
+check("nor can an owner, who holds every permission", status == 403)
+
+status, _, _ = request("GET", "/github/review?repo=amitista-web&number=99", cookie=insider)
+check("a pull request not in the snapshot is a 404", status == 404)
+
+status, _, _ = request("GET", "/github/review?repo=amitista-web", cookie=insider)
+check("and asking without a number is refused", status == 400)
+
+status, _, _ = request("GET", "/github/review?repo=amitista-web&number=abc", cookie=insider)
+check("as is a number that is not one", status == 400)
+
+# No key is configured in this test, and that has to come back as a plain
+# refusal rather than an error: the section is meant to say it is not set up.
+status, raw, _ = request("GET", "/github/review?repo=amitista-web&number=3", cookie=insider)
+check("with no model configured it refuses with a 503", status == 503)
+check("and says what to set", b"ADMIN_AI_KEY" in (raw or b""))
+
+for method in ("POST", "DELETE", "PUT"):
+    status, _, _ = request(
+        method, "/github/review?repo=amitista-web&number=3",
+        {} if method != "DELETE" else None, cookie=insider,
+    )
+    check("the review route offers no %s" % method.lower(), status in (400, 404, 405, 501))
+
+
 server.shutdown()
 
 if failures:

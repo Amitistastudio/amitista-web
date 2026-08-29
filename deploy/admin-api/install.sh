@@ -23,8 +23,8 @@ fi
 say "Files"
 install -d -m 755 "$TARGET"
 MODULES="admin_api.py admin_store.py admin_hooks.py admin_snapshot.py admin_store_firebase.py
-         admin_vault.py admin_google.py build_ip_country.py migrate_owner_to_store.py
-         migrate_json_to_firestore.py migrate_store_to_vault.py"
+         admin_vault.py admin_google.py admin_review.py build_ip_country.py
+         migrate_owner_to_store.py migrate_json_to_firestore.py migrate_store_to_vault.py"
 for module in $MODULES; do
   install -m 755 "$SRC/$module" "$TARGET/$module"
 done

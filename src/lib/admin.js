@@ -705,6 +705,17 @@ export async function fetchGithubRepositories() {
   return unwrap(await call('/github/repositories'), 'Could not read the repository snapshot.');
 }
 
+// What a model makes of one pull request: a paragraph on what it does, and the
+// things in the diff worth looking at. The answer is cached against the head
+// commit on the server, so asking twice about a pull request nobody has pushed
+// to costs nothing and everybody sees the same reading.
+export async function fetchGithubReview(repo, number) {
+  return unwrap(
+    await call(`/github/review?repo=${encodeURIComponent(repo)}&number=${encodeURIComponent(number)}`),
+    'Could not get a reading of that pull request.',
+  );
+}
+
 // Avatars come back through the panel rather than straight off
 // avatars.githubusercontent.com, which img-src 'self' data: will not load.
 export function githubAvatarUrl(login) {

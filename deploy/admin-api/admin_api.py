@@ -2,6 +2,7 @@
 
 import base64
 import bisect
+import calendar
 import getpass
 import hashlib
 import hmac
@@ -1071,11 +1072,8 @@ def build_overview(granted=None):
 
     generated = snapshot.get("generated")
     if isinstance(generated, str):
-        try:
-            age = time.time() - time.mktime(time.strptime(generated, "%Y-%m-%dT%H:%M:%SZ")) + time.timezone
-            payload["stale"] = age > 900
-        except ValueError:
-            payload["stale"] = True
+        age = age_of(generated)
+        payload["stale"] = True if age is None else age > 900
 
     return narrow_overview(payload, granted)
 
@@ -1108,14 +1106,25 @@ GITHUB_LOGIN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$"
 # cannot be used to fill the disk a request at a time.
 GITHUB_QUEUE_LIMIT = 50
 
-def github_age(generated):
+def age_of(generated):
+    """How long ago a collector wrote a snapshot, in seconds.
+
+    The stamp is UTC and says so with its Z, so it is converted with
+    calendar.timegm rather than time.mktime. mktime reads a struct as local
+    time, and the correction that used to follow it — time.timezone — is the
+    standard offset and takes no account of summer time. So for the half of the
+    year this box is on summer time every snapshot read an hour older than it
+    was, which is past every staleness ceiling here: the panel spent the summer
+    reporting a snapshot written seconds ago as stale, and telling the reader
+    the deploy timer had stopped when it had not.
+    """
     if not isinstance(generated, str):
         return None
     try:
-        moment = time.strptime(generated, "%Y-%m-%dT%H:%M:%SZ")
+        return time.time() - calendar.timegm(time.strptime(generated, "%Y-%m-%dT%H:%M:%SZ"))
     except ValueError:
         return None
-    return time.time() - time.mktime(moment) + time.timezone
+
 
 def build_github():
     snapshot = read_json_file(GITHUB_PATH)
@@ -1137,7 +1146,7 @@ def build_github():
     repositories = payload.get("repositories")
     payload["repositories"] = repositories if isinstance(repositories, list) else []
 
-    age = github_age(payload.get("generated"))
+    age = age_of(payload.get("generated"))
     payload["stale"] = True if age is None else age > GITHUB_STALE_AFTER
     payload["queued"] = github_queued()
     payload["reviewer"] = admin_review.configured()
@@ -1451,11 +1460,8 @@ def build_developer():
     stale = True
     generated = snapshot.get("generated")
     if isinstance(generated, str):
-        try:
-            age = time.time() - time.mktime(time.strptime(generated, "%Y-%m-%dT%H:%M:%SZ")) + time.timezone
-            stale = age > 900
-        except ValueError:
-            stale = True
+        age = age_of(generated)
+        stale = True if age is None else age > 900
 
     return {
         "generated": generated,
