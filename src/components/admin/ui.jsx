@@ -115,6 +115,9 @@ export function Notice({ tone = 'amber', icon: Icon = AlertTriangle, children })
     amber: 'border-amber-500/40 bg-amber-500/10 text-amber-200/80',
     rose: 'border-rose-500/40 bg-rose-500/10 text-rose-200/80',
     emerald: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200/80',
+    // For something worth reading that is not worth worrying about. Without it
+    // an explanation comes out amber and reads as a warning.
+    neutral: 'border-[#282832] bg-[#0d0d11] text-neutral-400',
   };
   return (
     <div className={`border px-4 sm:px-6 py-4 flex gap-3 ${tones[tone] ?? tones.amber}`}>

@@ -7,6 +7,7 @@ import Issues from './github/Issues';
 import Pulls from './github/Pulls';
 import Organization from './github/Organization';
 import People from './github/People';
+import Teams from './github/Teams';
 
 export const GITHUB_VIEWS = [
   'github',
@@ -14,6 +15,7 @@ export const GITHUB_VIEWS = [
   'github-pulls',
   'github-org',
   'github-people',
+  'github-teams',
 ];
 
 const VIEWS = {
@@ -22,6 +24,7 @@ const VIEWS = {
   'github-pulls': Pulls,
   'github-org': Organization,
   'github-people': People,
+  'github-teams': Teams,
 };
 
 // The group and its gate are real — only the accounts named in PRIVATE_GROUPS

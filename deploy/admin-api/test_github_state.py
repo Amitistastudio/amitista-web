@@ -351,6 +351,7 @@ api = FakeGitHub([
     ([account("helper")], "ok"),
     ([], "ok"),
     ([], "ok"),
+    ([], "ok"),
 ])
 org = state.org_people(api, None)
 check("the organisation's settings are kept", org["org"]["defaultPermission"] == "read")
@@ -359,7 +360,13 @@ check("including whether two-factor is required", org["org"]["twoFactorRequired"
 # — GitHub's own interface says "owner" — so it is translated once, here.
 check("GitHub's 'admin' role is reported as owner", org["members"][0]["role"] == "owner")
 check("and a member as a member", org["members"][1]["role"] == "member")
-check("members come from two requests, not one per person", len(api.asked) == 5)
+# Two requests however many people there are, rather than a list plus a
+# membership lookup each. Counted by what was asked, not by how many requests
+# there were in total — that number moves whenever anything else is added.
+check(
+    "members come from two requests, not one per person",
+    len([path for path in api.asked if "/members?role=" in path]) == 2,
+)
 
 api = FakeGitHub([
     (None, "unchanged"),
@@ -367,14 +374,16 @@ api = FakeGitHub([
     ([], "ok"),
     ([account("kostis4563")], "ok"),
     ([], "ok"),
+    ([], "ok"),
 ])
 out = state.org_people(api, org)
 check("a 304 on the organisation keeps its settings", out["org"] == org["org"])
 check("an account with no two-factor is named", out["withoutTwoFactor"] == ["kostis4563"])
 
-api = FakeGitHub([(None, "error"), (None, "error"), (None, "error"), (None, "error"), (None, "error")])
+api = FakeGitHub([(None, "error")] * 6)
 out = state.org_people(api, org)
 check("an unreachable GitHub keeps the members it knew", out["members"] == org["members"])
+check("and the teams it knew", out["teams"] == org["teams"])
 
 # ------------------------------------- everything asked of GitHub is carried
 
@@ -418,6 +427,71 @@ check(
 )
 
 
+# ------------------------------------------------------------------ teams
+
+# A team is the nearest thing to a role you name yourself that this plan has:
+# GitHub's own custom repository roles answer 404 for this organisation because
+# they need a paid one. A team cannot invent a sixth level, but it can hold a
+# different one of the five on each repository, which is the useful half.
+
+api = FakeGitHub([
+    ([{"slug": "designers", "name": "Designers", "description": "the visual side",
+       "privacy": "closed", "html_url": "https://github.com/orgs/o/teams/designers",
+       "parent": None}], "ok"),
+    ([account("helper")], "ok"),
+    ([{"name": "amitista-web", "role_name": "write"}, {"name": "amitista-bots", "role_name": "read"}], "ok"),
+])
+teams = state.org_teams(api, None)
+check("a team is projected", teams[0]["slug"] == "designers")
+check("with its name as written", teams[0]["name"] == "Designers")
+check("who is in it", [row["login"] for row in teams[0]["members"]] == ["helper"])
+# The useful half: one team, a different level on each repository.
+check("and a level per repository", teams[0]["repos"][0]["permission"] == "write")
+check("which can differ between them", teams[0]["repos"][1]["permission"] == "read")
+
+# The trap, and it shipped wrong once before this test existed: the list's ETag
+# settles whether a team was made, renamed or removed, and nothing else. Putting
+# a repository on a team does not touch the team's own record, so the list goes
+# on answering 304 — and a team given two repositories went on reading as
+# reaching nothing. Each team's own two questions have to be asked anyway; they
+# are conditional, so a team nobody has touched still costs nothing.
+api = FakeGitHub([
+    (None, "unchanged"),
+    ([account("helper")], "ok"),
+    ([{"name": "amitista-web", "role_name": "admin"}], "ok"),
+])
+out = state.org_teams(api, teams)
+check("a 304 on the team list does not settle what a team can reach", out[0]["repos"][0]["permission"] == "admin")
+check("and the team itself is kept from the list that did not move", out[0]["name"] == "Designers")
+check(
+    "its own questions are asked, and asked conditionally",
+    len([path for path in api.conditional if "/teams/designers/" in path]) == 2,
+)
+
+api = FakeGitHub([(None, "error"), (None, "error"), (None, "error")])
+check("an unreachable GitHub keeps the teams it knew", state.org_teams(api, teams) == teams)
+
+api = FakeGitHub([(None, "error")])
+check("and with nothing known it reports no teams rather than inventing one", state.org_teams(api, None) == [])
+
+api = FakeGitHub([([], "ok")])
+state.org_teams(api, [])
+check("having no teams is still an answer worth a conditional request", api.conditional == api.asked)
+
+# A team whose own two questions could not be answered keeps what it knew,
+# rather than reporting an empty team that can reach nothing.
+api = FakeGitHub([
+    ([{"slug": "designers", "name": "Designers"}], "ok"),
+    (None, "error"),
+    (None, "unchanged"),
+])
+out = state.org_teams(api, teams)
+check("a team that could not be re-read keeps its members", len(out[0]["members"]) == 1)
+check("and keeps what it can reach", len(out[0]["repos"]) == 2)
+
+api = FakeGitHub([([{"name": "no slug"}, "not an object"], "ok")])
+check("a team with no slug is dropped", state.org_teams(api, None) == [])
+
 # --------------------------------------------------- what root will act on
 
 # The queue is written by the admin service, which runs as a different and less
@@ -460,8 +534,55 @@ for intent, why in (
     ({"action": "uninvite", "repo": "amitista-web", "invite": "88"}, "an invitation id as text"),
     ({"action": "uninvite", "repo": "amitista-web", "invite": True}, "a boolean as an invitation id"),
     ({"action": "uninvite", "repo": "amitista-web"}, "no invitation id"),
+    # Teams. The slug goes into a URL path, so it is held to the shape GitHub
+    # slugifies a name into — anything else is a way out of that path.
+    ({"action": "team-delete", "team": "../../orgs/other"}, "a path pretending to be a team"),
+    ({"action": "team-delete", "team": "Designers"}, "a team name where a slug belongs"),
+    ({"action": "team-delete", "team": ""}, "an empty team"),
+    ({"action": "team-delete"}, "no team at all"),
+    ({"action": "team-delete", "team": 7}, "a team that is not text"),
+    ({"action": "team-create", "name": "   "}, "a team name that is only spaces"),
+    ({"action": "team-create"}, "a team with no name"),
+    ({"action": "team-create", "name": "x" * 200}, "a team name past GitHub's ceiling"),
+    ({"action": "team-create", "name": "two\nlines"}, "a team name spanning lines"),
+    ({"action": "team-repo", "team": "designers", "repo": "someone-elses", "permission": "push"},
+     "a team on a repository not on this box"),
+    ({"action": "team-repo", "team": "designers", "repo": "amitista-web", "permission": "owner"},
+     "a team at a permission GitHub does not have"),
+    ({"action": "team-member", "team": "designers", "login": "octocat", "role": "boss"},
+     "a team role that does not exist"),
+    ({"action": "team-member", "team": "designers", "login": "octo cat", "role": "member"},
+     "a team member who is not a login"),
+    ({"action": "team-member-remove", "team": "designers", "login": ACTOR},
+     "this box's own account out of a team"),
 ):
     check("%s is refused" % why, state.check_intent(intent, REPOS, ACTOR) is not None)
+
+for intent, what in (
+    ({"action": "team-create", "name": "Designers", "description": "the visual side"}, "creating a team"),
+    ({"action": "team-delete", "team": "designers"}, "deleting a team"),
+    ({"action": "team-repo", "team": "designers", "repo": "amitista-web", "permission": "push"},
+     "putting a team on a repository"),
+    ({"action": "team-repo-remove", "team": "designers", "repo": "amitista-web"},
+     "taking a team off a repository"),
+    ({"action": "team-member", "team": "designers", "login": "octocat", "role": "maintainer"},
+     "adding somebody to a team"),
+    ({"action": "team-member-remove", "team": "designers", "login": "octocat"},
+     "taking somebody out of a team"),
+):
+    check("%s is allowed" % what, state.check_intent(intent, REPOS, ACTOR) is None)
+
+# Every verb carry_out knows how to perform has to be one check_intent knows how
+# to refuse. Adding one to the first without the second is how a queue written
+# by a less privileged account gets to do something nobody checked.
+check(
+    "no action can be carried out that is not in the allowed list",
+    state.check_intent({"action": "team-nonsense", "team": "x"}, REPOS, ACTOR) is not None,
+)
+check("and the list is the one the checks are written against", set(state.ACTIONS) == {
+    "grant", "revoke", "uninvite", "team-create", "team-delete",
+    "team-repo", "team-repo-remove", "team-member", "team-member-remove",
+})
 
 # ------------------------------------------------------------- and then does it
 
@@ -489,6 +610,49 @@ check("with GitHub's own words for it", out["error"] == "Not Found")
 api = FakeGitHub([], sends=[(None, 204, None)])
 state.carry_out(api, {"action": "uninvite", "repo": "x", "invite": 88})
 check("cancelling an invitation deletes it by id", api.sent[0][1].endswith("/invitations/88"))
+
+# ---- teams
+
+api = FakeGitHub([], sends=[({"slug": "designers"}, 201, None)])
+out = state.carry_out(api, {"action": "team-create", "name": " Designers ", "description": "x"})
+check("creating a team is a POST to the org's teams", api.sent[0][:2] == ("POST", "/orgs/%s/teams" % state.ORG))
+check("the name is sent trimmed", api.sent[0][2]["name"] == "Designers")
+# A secret team cannot be seen by the people it does not contain, which would
+# make this panel's own picture of who can reach what quietly incomplete.
+check("and the team is visible to the organisation", api.sent[0][2]["privacy"] == "closed")
+check("the slug it was given comes back", "designers" in out["result"])
+
+api = FakeGitHub([], sends=[(None, 204, None)])
+state.carry_out(api, {"action": "team-repo", "team": "designers", "repo": "amitista-web", "permission": "push"})
+check(
+    "putting a team on a repository names both",
+    api.sent[0][1] == "/orgs/%s/teams/designers/repos/%s/amitista-web" % (state.ORG, state.ORG),
+)
+check("and carries the level", api.sent[0][2] == {"permission": "push"})
+
+api = FakeGitHub([], sends=[(None, 204, None)])
+state.carry_out(api, {"action": "team-repo-remove", "team": "designers", "repo": "amitista-web"})
+check("taking a team off a repository is a DELETE", api.sent[0][0] == "DELETE")
+
+# Somebody who is not in the organisation yet cannot simply be added to a team:
+# GitHub turns it into an invitation to join both, and nothing happens until
+# they accept. Reporting that as "added" would be a lie somebody acts on.
+api = FakeGitHub([], sends=[({"state": "pending", "role": "member"}, 200, None)])
+out = state.carry_out(api, {"action": "team-member", "team": "designers", "login": "octocat", "role": "member"})
+check("adding a stranger to a team is reported as an invitation", out["result"] == "invited")
+
+api = FakeGitHub([], sends=[({"state": "active", "role": "maintainer"}, 200, None)])
+out = state.carry_out(api, {"action": "team-member", "team": "designers", "login": "helper", "role": "maintainer"})
+check("adding somebody already in the organisation is immediate", out["result"] == "added")
+check("and the team role travels", api.sent[0][2] == {"role": "maintainer"})
+
+api = FakeGitHub([], sends=[(None, 204, None)])
+state.carry_out(api, {"action": "team-member-remove", "team": "designers", "login": "helper"})
+check("taking somebody out of a team deletes their membership", api.sent[0][1].endswith("/memberships/helper"))
+
+api = FakeGitHub([], sends=[(None, 403, "Must have admin rights to Repository.")])
+out = state.carry_out(api, {"action": "team-delete", "team": "designers"})
+check("a team GitHub will not delete is recorded, not raised", out["ok"] is False)
 
 # ---------------------------------------------------------------- the drain
 

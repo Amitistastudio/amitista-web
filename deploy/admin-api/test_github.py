@@ -462,6 +462,66 @@ for name in queued():
 status, body = read(insider)
 check("an empty queue is an empty list, not a missing key", body["queued"] == [])
 
+# ------------------------------------------------------------------ teams
+
+# The nearest thing to a role you name yourself that this organisation's plan
+# allows — GitHub's own custom repository roles answer 404 for it. Same queue,
+# same gate, same re-checking by root; only the verbs are new.
+
+TEAMS = (
+    ("/github/teams", {"name": "Designers", "description": "the visual side"}),
+    ("/github/teams/delete", {"team": "designers"}),
+    ("/github/teams/repo", {"team": "designers", "repo": "amitista-web", "permission": "push"}),
+    ("/github/teams/repo/remove", {"team": "designers", "repo": "amitista-web"}),
+    ("/github/teams/member", {"team": "designers", "login": "octocat", "role": "maintainer"}),
+    ("/github/teams/member/remove", {"team": "designers", "login": "octocat"}),
+)
+
+for path, body in TEAMS:
+    status, _ = ask(path, body, cookie=None)
+    check("%s turns a stranger away" % path, status == 401)
+    status, _ = ask(path, body, cookie=outsider)
+    check("%s turns away an admin who is not named" % path, status == 403)
+    status, _ = ask(path, body, cookie=owner)
+    check("%s turns away an owner too" % path, status == 403)
+check("no team request from anyone unnamed was written down", queued() == [])
+
+for path, body in TEAMS:
+    status, _ = ask(path, body)
+    check("%s is accepted from the named account" % path, status == 200)
+check("each one was written down", len(queued()) == len(TEAMS))
+
+made = intents()
+check("creating a team carries its name", made[0]["name"] == "Designers")
+check("and does not have to name a team that does not exist yet", "team" not in made[0])
+check("putting a team on a repository carries both and the level",
+      (made[2]["team"], made[2]["repo"], made[2]["permission"]) == ("designers", "amitista-web", "push"))
+check("adding somebody to a team carries their team role", made[4]["role"] == "maintainer")
+
+for name in queued():
+    os.unlink(os.path.join(QUEUE, name))
+
+for bad_path, bad, why in (
+    ("/github/teams", {"name": "   "}, "a team name that is only spaces"),
+    ("/github/teams", {}, "a team with no name"),
+    ("/github/teams", {"name": "x" * 200}, "a team name past GitHub's ceiling"),
+    ("/github/teams", {"name": "two\nlines"}, "a team name spanning lines"),
+    ("/github/teams/delete", {"team": "../../orgs/other"}, "a path pretending to be a team"),
+    ("/github/teams/delete", {"team": "Designers"}, "a team name where a slug belongs"),
+    ("/github/teams/delete", {}, "no team at all"),
+    ("/github/teams/repo", {"team": "designers", "repo": "not-a-repo", "permission": "push"},
+     "a team on a repository not on this box"),
+    ("/github/teams/repo", {"team": "designers", "repo": "amitista-web", "permission": "write"},
+     "GitHub's display name for a permission"),
+    ("/github/teams/member", {"team": "designers", "login": "octocat", "role": "boss"},
+     "a team role that does not exist"),
+    ("/github/teams/member", {"team": "designers", "login": "octo cat", "role": "member"},
+     "a team member who is not a login"),
+):
+    status, _ = ask(bad_path, bad)
+    check("%s is refused" % why, status == 400)
+check("nothing refused was written down", queued() == [])
+
 # ------------------------------------------------------------- read only
 
 # Everything but access. The repositories route in particular must stay a read:
@@ -471,7 +531,17 @@ for method in ("POST", "DELETE", "PUT"):
     status, _, _ = request(method, "/github/repositories", {} if method != "DELETE" else None, cookie=insider)
     check("the group offers no %s" % method.lower(), status in (400, 404, 405, 501))
 
-for path in ("/github/access", "/github/access/remove", "/github/access/invite/cancel"):
+for path in (
+    "/github/access",
+    "/github/access/remove",
+    "/github/access/invite/cancel",
+    "/github/teams",
+    "/github/teams/delete",
+    "/github/teams/repo",
+    "/github/teams/repo/remove",
+    "/github/teams/member",
+    "/github/teams/member/remove",
+):
     status, _, _ = request("GET", path, cookie=insider)
     check("%s cannot be reached with a GET" % path, status in (400, 404, 405, 501))
 

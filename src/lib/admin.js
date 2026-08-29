@@ -730,6 +730,49 @@ export async function queueGithubInviteCancel(repo, invite) {
   );
 }
 
+// Teams — the nearest thing to a role you name yourself that this plan allows.
+// GitHub's own custom repository roles need a paid plan and answer 404 for this
+// organisation, so these six are what "custom role" means here: a named group
+// holding a level of its own on each repository.
+export async function queueGithubTeamCreate(name, description) {
+  return unwrap(await send('/github/teams', { name, description }), 'Could not ask for that team.');
+}
+
+export async function queueGithubTeamDelete(team) {
+  return unwrap(
+    await send('/github/teams/delete', { team }),
+    'Could not ask for that team to be deleted.',
+  );
+}
+
+export async function queueGithubTeamRepo(team, repo, permission) {
+  return unwrap(
+    await send('/github/teams/repo', { team, repo, permission }),
+    'Could not ask for that change to the team.',
+  );
+}
+
+export async function queueGithubTeamRepoRemove(team, repo) {
+  return unwrap(
+    await send('/github/teams/repo/remove', { team, repo }),
+    'Could not ask for that repository to be taken off the team.',
+  );
+}
+
+export async function queueGithubTeamMember(team, login, role) {
+  return unwrap(
+    await send('/github/teams/member', { team, login, role }),
+    'Could not ask for that person to be added.',
+  );
+}
+
+export async function queueGithubTeamMemberRemove(team, login) {
+  return unwrap(
+    await send('/github/teams/member/remove', { team, login }),
+    'Could not ask for that person to be taken out.',
+  );
+}
+
 export async function fetchAccount() {
   return unwrap(await call('/account'), 'Could not read your account.');
 }

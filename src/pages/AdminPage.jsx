@@ -31,6 +31,7 @@ import {
   GitPullRequest,
   Building2,
   KeyRound,
+  UsersRound,
 } from 'lucide-react';
 import Header from '../components/web1/Header';
 import Footer from '../components/web1/Footer';
@@ -239,6 +240,14 @@ const SECTIONS = [
     needs: null,
     group: 'github',
     blurb: 'who can reach which repository, at what level, and how to change it',
+  },
+  {
+    id: 'github-teams',
+    label: 'Teams',
+    icon: UsersRound,
+    needs: null,
+    group: 'github',
+    blurb: 'named groups that hold access, so one change covers everybody in them',
   },
   {
     id: 'accounts',

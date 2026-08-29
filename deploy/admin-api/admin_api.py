@@ -1102,6 +1102,13 @@ GITHUB_ROLES = ("pull", "triage", "push", "maintain", "admin")
 # thirty-nine characters. Checked because the login ends up in a URL path.
 GITHUB_LOGIN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$")
 
+# Teams — the nearest thing to a role you name yourself that this plan has.
+# GitHub's own custom repository roles need a paid plan and answer 404 here.
+GITHUB_TEAM_SLUG = re.compile(r"^[a-z0-9][a-z0-9_-]{0,98}$")
+GITHUB_TEAM_NAME_MAX = 100
+GITHUB_TEAM_DESC_MAX = 255
+GITHUB_TEAM_ROLES = ("member", "maintainer")
+
 # Enough that nobody hits it by working, few enough that a stuck collector
 # cannot be used to fill the disk a request at a time.
 GITHUB_QUEUE_LIMIT = 50
@@ -1167,22 +1174,46 @@ def github_queue(session, intent):
     answer to the request that made it, instead of surfacing a minute later as
     a line in a log.
     """
-    if intent["action"] != "uninvite":
+    action = intent["action"]
+
+    if action in ("grant", "revoke", "team-member", "team-member-remove"):
         login = intent.get("login")
         if not isinstance(login, str) or not GITHUB_LOGIN.match(login):
             raise Rejected(400, "That is not a GitHub username.")
-    if intent["action"] == "grant" and intent.get("permission") not in GITHUB_ROLES:
+
+    if action in ("grant", "team-repo") and intent.get("permission") not in GITHUB_ROLES:
         raise Rejected(400, "That is not a permission GitHub takes.")
 
-    snapshot = read_json_file(GITHUB_PATH)
-    repositories = (snapshot or {}).get("repositories")
-    known = {
-        entry.get("name")
-        for entry in (repositories if isinstance(repositories, list) else [])
-        if isinstance(entry, dict)
-    }
-    if intent.get("repo") not in known:
-        raise Rejected(400, "There is no such repository on this box.")
+    # Creating one is the exception: there is no slug yet, GitHub makes it from
+    # the name.
+    if action.startswith("team-") and action != "team-create":
+        team = intent.get("team")
+        if not isinstance(team, str) or not GITHUB_TEAM_SLUG.match(team):
+            raise Rejected(400, "That is not a team.")
+
+    if action == "team-create":
+        name = (intent.get("name") or "").strip()
+        if not name:
+            raise Rejected(400, "A team needs a name.")
+        if len(name) > GITHUB_TEAM_NAME_MAX:
+            raise Rejected(400, "That name is longer than GitHub will take.")
+        if any(character in name for character in "\r\n\t"):
+            raise Rejected(400, "A team name cannot span lines.")
+        intent["name"] = name
+
+    if action == "team-member" and intent.get("role") not in GITHUB_TEAM_ROLES:
+        raise Rejected(400, "That is not a team role.")
+
+    if action in ("grant", "revoke", "uninvite", "team-repo", "team-repo-remove"):
+        snapshot = read_json_file(GITHUB_PATH)
+        repositories = (snapshot or {}).get("repositories")
+        known = {
+            entry.get("name")
+            for entry in (repositories if isinstance(repositories, list) else [])
+            if isinstance(entry, dict)
+        }
+        if intent.get("repo") not in known:
+            raise Rejected(400, "There is no such repository on this box.")
 
     if len(github_queued()) >= GITHUB_QUEUE_LIMIT:
         raise Rejected(
@@ -1225,7 +1256,10 @@ def github_queue(session, intent):
 
     log.info(
         "github access queued by %s: %s %s %s",
-        intent["by"], intent["action"], intent.get("repo"), intent.get("login") or intent.get("invite"),
+        intent["by"],
+        intent["action"],
+        intent.get("repo") or intent.get("team"),
+        intent.get("login") or intent.get("name") or intent.get("invite"),
     )
     return {"queued": intent, "waiting": len(github_queued())}
 
@@ -3967,6 +4001,89 @@ class Handler(BaseHTTPRequestHandler):
         )
         self.reply(200, answer)
 
+    # Teams. Six verbs, one shape: gate, read the body, queue it, write it down.
+    # Nothing here decides anything the collector does not decide again.
+
+    def queue_github(self, intent, event, detail):
+        session = self.require_private("github")
+        answer = github_queue(session, intent)
+        audit.record(session["record"]["name"], event, detail(answer["queued"]), self.client_ip())
+        self.reply(200, answer)
+
+    def handle_github_team_create(self):
+        data = self.read_body()
+        self.queue_github(
+            {
+                "action": "team-create",
+                "name": str(data.get("name") or "").strip(),
+                "description": str(data.get("description") or "").strip()[:GITHUB_TEAM_DESC_MAX],
+            },
+            "github.teamCreateQueued",
+            lambda queued: {"name": queued.get("name")},
+        )
+
+    def handle_github_team_delete(self):
+        data = self.read_body()
+        self.queue_github(
+            {"action": "team-delete", "team": data.get("team")},
+            "github.teamDeleteQueued",
+            lambda queued: {"team": queued.get("team")},
+        )
+
+    def handle_github_team_repo(self):
+        data = self.read_body()
+        self.queue_github(
+            {
+                "action": "team-repo",
+                "team": data.get("team"),
+                "repo": data.get("repo"),
+                "permission": data.get("permission"),
+            },
+            "github.teamRepoQueued",
+            lambda queued: {
+                "team": queued.get("team"),
+                "repo": queued.get("repo"),
+                "permission": queued.get("permission"),
+            },
+        )
+
+    def handle_github_team_repo_remove(self):
+        data = self.read_body()
+        self.queue_github(
+            {"action": "team-repo-remove", "team": data.get("team"), "repo": data.get("repo")},
+            "github.teamRepoRemoveQueued",
+            lambda queued: {"team": queued.get("team"), "repo": queued.get("repo")},
+        )
+
+    def handle_github_team_member(self):
+        data = self.read_body()
+        self.queue_github(
+            {
+                "action": "team-member",
+                "team": data.get("team"),
+                "login": str(data.get("login") or "").strip(),
+                "role": data.get("role") or "member",
+            },
+            "github.teamMemberQueued",
+            lambda queued: {
+                "team": queued.get("team"),
+                "login": queued.get("login"),
+                "role": queued.get("role"),
+            },
+        )
+
+    def handle_github_team_member_remove(self):
+        data = self.read_body()
+        self.queue_github(
+            {
+                "action": "team-member-remove",
+                "team": data.get("team"),
+                "login": str(data.get("login") or "").strip(),
+            },
+            "github.teamMemberRemoveQueued",
+            lambda queued: {"team": queued.get("team"), "login": queued.get("login")},
+        )
+
     def handle_transcripts(self):
         self.require("transcripts.read")
         wanted = []
@@ -4852,6 +4969,30 @@ class Handler(BaseHTTPRequestHandler):
 
         if route == "/github/access/invite/cancel":
             self.handle_github_uninvite()
+            return
+
+        if route == "/github/teams":
+            self.handle_github_team_create()
+            return
+
+        if route == "/github/teams/delete":
+            self.handle_github_team_delete()
+            return
+
+        if route == "/github/teams/repo":
+            self.handle_github_team_repo()
+            return
+
+        if route == "/github/teams/repo/remove":
+            self.handle_github_team_repo_remove()
+            return
+
+        if route == "/github/teams/member":
+            self.handle_github_team_member()
+            return
+
+        if route == "/github/teams/member/remove":
+            self.handle_github_team_member_remove()
             return
 
         if route == "/boards/art/focus":

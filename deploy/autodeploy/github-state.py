@@ -103,6 +103,33 @@ MAX_ACTION_LOG = 25
 # The permissions GitHub takes for a repository collaborator, weakest first.
 ROLES = ("pull", "triage", "push", "maintain", "admin")
 
+# Teams. The nearest thing to a role you name yourself that this plan has:
+# GitHub's own custom repository roles answer 404 here — "Feature not available
+# for the Amitistastudio organization" — because they need a paid plan. A team
+# cannot invent a sixth level, but it can hold a different one of the five on
+# each repository and be handed to somebody in one move, which is what the
+# question is usually really about.
+MAX_TEAMS = 20
+TEAM_NAME_MAX = 100
+# GitHub slugifies a team's name into this and then addresses the team by it.
+TEAM_SLUG = re.compile(r"^[a-z0-9][a-z0-9_-]{0,98}$")
+TEAM_DESC_MAX = 255
+TEAM_ROLES = ("member", "maintainer")
+
+# Everything the queue is allowed to ask for. Named in one place so that adding
+# a verb to carry_out without deciding how to check it is not possible.
+ACTIONS = (
+    "grant",
+    "revoke",
+    "uninvite",
+    "team-create",
+    "team-delete",
+    "team-repo",
+    "team-repo-remove",
+    "team-member",
+    "team-member-remove",
+)
+
 # GitHub's own rule for a login: alphanumerics and single inner hyphens, up to
 # thirty-nine characters. Checked because the login goes into a URL path.
 LOGIN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$")
@@ -882,6 +909,81 @@ def repo_invites(api, repo, cached):
     return out
 
 
+def org_teams(api, cached):
+    """Every team, who is in it, and what it can reach.
+
+    Two requests a team, both conditional, so a team nobody has touched costs
+    round trips and nothing off the allowance. Capped, because the cost is per
+    team and an organisation can have a great many.
+
+    A team's repositories carry `role_name`, the same display vocabulary a
+    collaborator's does — read and write, not pull and push.
+    """
+    held = cached if isinstance(cached, list) else None
+    known = {
+        entry.get("slug"): entry
+        for entry in (held or [])
+        if isinstance(entry, dict)
+    }
+    listing, state = api.get("/orgs/%s/teams?per_page=100" % ORG, held is not None)
+
+    if state == "ok" and isinstance(listing, list):
+        rows = [
+            {
+                "slug": entry["slug"],
+                "name": entry.get("name"),
+                "description": entry.get("description"),
+                "privacy": entry.get("privacy"),
+                "url": entry.get("html_url"),
+                "parent": (entry.get("parent") or {}).get("slug")
+                if isinstance(entry.get("parent"), dict)
+                else None,
+            }
+            for entry in listing[:MAX_TEAMS]
+            if isinstance(entry, dict) and entry.get("slug")
+        ]
+    elif held is not None:
+        # The list's ETag settles whether a team was made, renamed or removed.
+        # It says nothing about what a team can reach or who is in it: putting a
+        # repository on a team does not touch the team's own record, so the list
+        # goes on answering 304 and the reach would never update. Measured, not
+        # guessed — a team given two repositories went on reading as reaching
+        # nothing until this stopped returning early.
+        rows = [
+            {key: value for key, value in team.items() if key not in ("members", "repos")}
+            for team in held
+            if isinstance(team, dict) and team.get("slug")
+        ]
+    else:
+        return []
+
+    out = []
+    for row in rows:
+        slug = row["slug"]
+        was = known.get(slug) or {}
+
+        members, member_state = api.get(
+            "/orgs/%s/teams/%s/members?per_page=100" % (ORG, slug), "members" in was
+        )
+        listed = people_list(members) if member_state == "ok" else None
+        row["members"] = listed if listed is not None else (was.get("members") or [])
+
+        repos, repo_state = api.get(
+            "/orgs/%s/teams/%s/repos?per_page=100" % (ORG, slug), "repos" in was
+        )
+        if repo_state == "ok" and isinstance(repos, list):
+            row["repos"] = [
+                {"name": item.get("name"), "permission": item.get("role_name")}
+                for item in repos
+                if isinstance(item, dict) and item.get("name")
+            ]
+        else:
+            row["repos"] = was.get("repos") or []
+
+        out.append(row)
+    return out
+
+
 def org_people(api, cached):
     """The organisation itself: its members, its settings, its open invitations.
 
@@ -940,6 +1042,8 @@ def org_people(api, cached):
     if state == "ok" and isinstance(weak, list):
         out["withoutTwoFactor"] = [row["login"] for row in people_list(weak) or []]
 
+    out["teams"] = org_teams(api, held.get("teams"))
+
     invites, state = api.get("/orgs/%s/invitations?per_page=100" % ORG, "invites" in held)
     if state == "ok" and isinstance(invites, list):
         rows = []
@@ -985,35 +1089,65 @@ def check_intent(intent, repos, actor):
     service running as another account; if that account were ever taken, this
     function is the whole of what stands between it and handing somebody admin.
     """
-    if intent.get("action") not in ("grant", "revoke", "uninvite"):
+    action = intent.get("action")
+    if action not in ACTIONS:
         return "not something this knows how to do"
 
-    repo = intent.get("repo")
-    if repo not in repos:
-        return "%s is not a repository on this box" % (repo or "that")
+    # Anything naming a person. The rail that matters: taking this account's own
+    # access away locks the box out of the repository, and out of the deploy
+    # that would undo it.
+    if action in ("grant", "revoke", "team-member", "team-member-remove"):
+        login = intent.get("login")
+        if not isinstance(login, str) or not LOGIN.match(login):
+            return "%r is not a GitHub login" % (login,)
+        if actor and login.lower() == actor.lower() and action != "grant":
+            return "that is the account this box deploys with — change it on GitHub if you mean it"
 
-    if intent["action"] == "uninvite":
+    # Anything naming a repository. A team's repositories are the same set: this
+    # box will not put a team on a repository it does not itself deploy.
+    if action in ("grant", "revoke", "uninvite", "team-repo", "team-repo-remove"):
+        repo = intent.get("repo")
+        if repo not in repos:
+            return "%s is not a repository on this box" % (repo or "that")
+
+    # Anything naming an existing team. The slug goes into a URL path, so it is
+    # held to the shape GitHub slugifies a name into. Creating one is the
+    # exception: there is no slug yet, GitHub makes it from the name.
+    if action.startswith("team-") and action != "team-create":
+        team = intent.get("team")
+        if not isinstance(team, str) or not TEAM_SLUG.match(team):
+            return "%r is not a team" % (team,)
+
+    if action in ("grant", "team-repo") and intent.get("permission") not in ROLES:
+        return "%r is not a permission GitHub takes" % (intent.get("permission"),)
+
+    if action == "uninvite":
         invite = intent.get("invite")
         if not isinstance(invite, int) or isinstance(invite, bool):
             return "no invitation was named"
-        return None
 
-    login = intent.get("login")
-    if not isinstance(login, str) or not LOGIN.match(login):
-        return "%r is not a GitHub login" % (login,)
-    if actor and login.lower() == actor.lower():
-        # The rail that matters. Revoking this account's own admin locks the box
-        # out of the repository, and out of the deploy that would undo it.
-        return "that is the account this box deploys with — change it on GitHub if you mean it"
+    if action == "team-create":
+        name = intent.get("name")
+        if not isinstance(name, str) or not name.strip():
+            return "a team needs a name"
+        if len(name) > TEAM_NAME_MAX:
+            return "that name is longer than GitHub will take"
+        if any(character in name for character in "\r\n\t"):
+            return "a team name cannot span lines"
 
-    if intent["action"] == "grant" and intent.get("permission") not in ROLES:
-        return "%r is not a permission GitHub takes" % (intent.get("permission"),)
+    if action == "team-member" and intent.get("role") not in TEAM_ROLES:
+        return "%r is not a team role" % (intent.get("role"),)
+
     return None
 
 
 def carry_out(api, intent):
-    repo = intent["repo"]
     action = intent["action"]
+
+    if action.startswith("team-"):
+        return carry_out_team(api, intent)
+
+    repo = intent["repo"]
 
     if action == "grant":
         payload, status, error = api.send(
@@ -1043,6 +1177,69 @@ def carry_out(api, intent):
     return dict(
         intent, ok=error is None, done=now(), status=status, error=error, result="cancelled"
     )
+
+
+def carry_out_team(api, intent):
+    """The team half. Split out because it is six verbs against four endpoints.
+
+    Team membership is the one that does something you might not expect: on an
+    account that is not in the organisation yet, GitHub turns it into an
+    invitation to join both, so the answer is "invited" rather than "added" and
+    nothing happens until they accept.
+    """
+    action = intent["action"]
+    team = intent.get("team")
+    finish = lambda payload, status, error, result: dict(  # noqa: E731
+        intent, ok=error is None, done=now(), status=status, error=error, result=result
+    )
+
+    if action == "team-create":
+        payload, status, error = api.send(
+            "POST",
+            "/orgs/%s/teams" % ORG,
+            {
+                "name": intent["name"].strip(),
+                "description": (intent.get("description") or "")[:TEAM_DESC_MAX],
+                # Visible to everyone in the organisation. A secret team cannot
+                # be seen by the people it does not contain, which makes the
+                # panel's own picture of who can reach what quietly incomplete.
+                "privacy": "closed",
+            },
+        )
+        made = payload.get("slug") if isinstance(payload, dict) else None
+        return finish(payload, status, error, "created %s" % made if made else "created")
+
+    if action == "team-delete":
+        payload, status, error = api.send("DELETE", "/orgs/%s/teams/%s" % (ORG, team))
+        return finish(payload, status, error, "deleted")
+
+    if action == "team-repo":
+        payload, status, error = api.send(
+            "PUT",
+            "/orgs/%s/teams/%s/repos/%s/%s" % (ORG, team, ORG, intent["repo"]),
+            {"permission": intent["permission"]},
+        )
+        return finish(payload, status, error, "set")
+
+    if action == "team-repo-remove":
+        payload, status, error = api.send(
+            "DELETE", "/orgs/%s/teams/%s/repos/%s/%s" % (ORG, team, ORG, intent["repo"])
+        )
+        return finish(payload, status, error, "unset")
+
+    if action == "team-member":
+        payload, status, error = api.send(
+            "PUT",
+            "/orgs/%s/teams/%s/memberships/%s" % (ORG, team, intent["login"]),
+            {"role": intent["role"]},
+        )
+        pending = isinstance(payload, dict) and payload.get("state") == "pending"
+        return finish(payload, status, error, "invited" if pending else "added")
+
+    payload, status, error = api.send(
+        "DELETE", "/orgs/%s/teams/%s/memberships/%s" % (ORG, team, intent["login"])
+    )
+    return finish(payload, status, error, "removed")
 
 
 def drain_queue(api, repos, actor, previous):
