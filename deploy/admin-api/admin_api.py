@@ -1107,6 +1107,9 @@ def build_github():
 
     payload = dict(snapshot)
     payload["collected"] = True
+    # Conditional-request bookkeeping for the collector. Of no use to the panel,
+    # and it grows with every path ever asked for, so it does not travel.
+    payload.pop("etags", None)
     repositories = payload.get("repositories")
     payload["repositories"] = repositories if isinstance(repositories, list) else []
 
