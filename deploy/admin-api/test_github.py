@@ -313,6 +313,95 @@ status, body = read(insider)
 check("a carried-forward answer is still shown", body["repositories"][0]["pulls"][0]["number"] == 3)
 check("and the reason is passed on", "could not be reached" in body["note"])
 
+# ------------------------------------------------------------------ tasks
+#
+# The tasks section raises cards onto a board it creates on first use. What
+# matters is that it makes exactly one board however many times it is called,
+# that a task carries its repository and lands on whoever raised it (which is
+# what puts it under My Work), and that the gate is the same one as the rest of
+# the group.
+
+write_snapshot([repo(), repo(name="amitista-bots"), repo(name="amitista-shield")])
+
+
+def tasks(cookie):
+    status, raw, _ = request("GET", "/github/tasks", cookie=cookie)
+    return status, json.loads(raw or b"{}")
+
+
+def raise_task(cookie, **body):
+    status, raw, _ = request("POST", "/github/tasks/create", body, cookie=cookie)
+    return status, json.loads(raw or b"{}")
+
+
+status, body = tasks(insider)
+check("the section reads before any board exists", status == 200)
+check("and says there is no board yet", body["board"] is None)
+check("and lists no tasks", body["tasks"] == [])
+check("but still offers the repositories", body["repositories"] == ["amitista-web", "amitista-bots", "amitista-shield"])
+
+status, _ = request("GET", "/github/tasks", cookie=outsider)[0], None
+check("an account outside the group cannot read the tasks", status == 403)
+status, _, _ = request("POST", "/github/tasks/create", {"repo": "amitista-web", "title": "no"}, cookie=outsider)
+check("nor raise one", status == 403)
+
+status, body = raise_task(insider, repo="amitista-web", title="Move the build into CI", due="2026-12-31T17:00:00Z")
+check("a task can be raised", status == 200)
+check("a board is made on first use", body["board"] is not None)
+first_board = body["board"]["id"]
+check("the board is called GitHub", body["board"]["name"] == "GitHub")
+check("the task is listed", len(body["tasks"]) == 1)
+
+task = body["tasks"][0]
+check("the task keeps its title", task["title"] == "Move the build into CI")
+check("the task carries its repository", task["repo"] == "amitista-web")
+check("the task keeps its due date", (task["due"] or "").startswith("2026-12-31"))
+check("the task is not done", task["done"] is False)
+check("the task is assigned to whoever raised it", task["assignees"] == [INSIDER])
+
+status, body = raise_task(insider, repo="amitista-shield", title="Delete the spent branch")
+check("a second task can be raised", status == 200)
+check("it goes on the same board", body["board"]["id"] == first_board)
+check("both tasks are listed", len(body["tasks"]) == 2)
+check(
+    "each carries its own repository",
+    {row["repo"] for row in body["tasks"]} == {"amitista-web", "amitista-shield"},
+)
+check("a task with no due date is allowed", any(row["due"] is None for row in body["tasks"]))
+
+status, body = raise_task(insider, repo="not-a-repo", title="nope")
+check("a repository that does not exist is refused", status == 400)
+
+status, body = raise_task(insider, repo="amitista-web", title="   ")
+check("an empty title is refused", status == 400)
+
+# It appears under My Work because it is a board card assigned to them, with
+# nothing in My Work knowing GitHub exists.
+mine_status, raw, _ = request("GET", "/boards/mine", cookie=insider)
+mine = json.loads(raw)
+check("the task reaches My Work", mine_status == 200 and len(mine["work"]) == 2)
+check(
+    "and arrives there with its repository label",
+    any(
+        label.get("name") == "amitista-web"
+        for entry in mine["work"]
+        for label in entry["card"].get("labels") or []
+    ),
+)
+
+status, body = tasks(insider)
+open_task = next(row for row in body["tasks"] if not row["done"])
+status, raw, _ = request("POST", "/github/tasks/done", {"card": open_task["id"]}, cookie=insider)
+body = json.loads(raw)
+check("a task can be ticked off", status == 200)
+check("and comes back marked done", any(row["done"] for row in body["tasks"]))
+
+mine_status, raw, _ = request("GET", "/boards/mine", cookie=insider)
+check("a finished task leaves My Work", len(json.loads(raw)["work"]) == 1)
+
+status, body = tasks(insider)
+check("the board is not remade on the next read", body["board"]["id"] == first_board)
+
 # ------------------------------------------------------------- read only
 
 for method in ("POST", "DELETE", "PUT"):

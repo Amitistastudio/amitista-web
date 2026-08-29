@@ -416,6 +416,20 @@ brands = Brands(os.path.join(STATE_DIR, "brands.json"))
 findings = Findings(os.path.join(STATE_DIR, "findings.json"))
 maintenance = Maintenance(os.path.join(STATE_DIR, "maintenance.json"))
 boards = Boards(os.path.join(STATE_DIR, "boards.json"))
+
+# Which board the GitHub panel raises its tasks onto. One board for the whole
+# panel rather than one each: the group is a named-account group, and tasks
+# about a repository are not personal to whoever typed them.
+GITHUB_BOARD_STATE = os.path.join(STATE_DIR, "github-board.json")
+GITHUB_BOARD_NAME = "GitHub"
+GITHUB_BOARD_NOTE = (
+    "Raised from the GitHub panel. Every card is labelled with its repository and "
+    "assigned to whoever added it, so it also appears under My Work."
+)
+GITHUB_BOARD_COLOUR = "slate"
+# One per repository, cycled. Distinct from the board's own colour so a label
+# never disappears against it.
+GITHUB_LABEL_COLOURS = ("sky", "emerald", "amber", "rose", "purple")
 firewall = Firewall(os.path.join(STATE_DIR, "firewall.json"))
 project_files = ProjectFiles(
     os.path.join(STATE_DIR, "project-files.json"),
@@ -1116,6 +1130,151 @@ def build_github():
     age = github_age(payload.get("generated"))
     payload["stale"] = True if age is None else age > GITHUB_STALE_AFTER
     return payload
+
+def write_state_json(path, payload):
+    """Small durable writes inside the session directory, which this service owns."""
+    folder = os.path.dirname(path) or "."
+    handle = tempfile.NamedTemporaryFile(
+        mode="w", encoding="utf-8", dir=folder, prefix=".github-board-", suffix=".tmp", delete=False
+    )
+    try:
+        json.dump(payload, handle, separators=(",", ":"))
+        handle.flush()
+        os.fsync(handle.fileno())
+        handle.close()
+        os.chmod(handle.name, 0o600)
+        os.replace(handle.name, path)
+    except BaseException:
+        try:
+            os.unlink(handle.name)
+        except OSError:
+            pass
+        raise
+
+
+def github_board_id():
+    payload = read_json_file(GITHUB_BOARD_STATE) or {}
+    wanted = payload.get("board")
+    return wanted if isinstance(wanted, str) and wanted else None
+
+
+def github_repo_names():
+    """The repositories the deploy last saw, in the order it reported them."""
+    return [
+        entry.get("name")
+        for entry in build_github().get("repositories") or []
+        if isinstance(entry, dict) and entry.get("name")
+    ]
+
+
+def github_label_map(board):
+    return {
+        label.get("name"): label.get("id")
+        for label in board.get("labels") or []
+        if isinstance(label, dict) and label.get("name")
+    }
+
+
+def github_fit_labels(board, actor, repos):
+    """One label per repository, added as repositories appear.
+
+    Labels are never removed. A repository that goes away still has cards
+    referring to it, and stripping the label would leave those cards saying
+    nothing about what they were for.
+    """
+    known = github_label_map(board)
+    for index, name in enumerate(repos):
+        if name in known:
+            continue
+        colour = GITHUB_LABEL_COLOURS[index % len(GITHUB_LABEL_COLOURS)]
+        try:
+            board = boards.set_label(board.get("id"), None, name[:24], colour, actor)
+        except StoreError:
+            # Out of label slots, or a name the store will not take. Tasks still
+            # work; they just carry no repository label.
+            break
+    return board
+
+
+def github_open_board(actor, make=False):
+    """The tasks board, made on first use.
+
+    Returns None when there is none yet and `make` is false, so reading the
+    section before anything has been raised is not an error.
+    """
+    wanted = github_board_id()
+    if wanted:
+        try:
+            return boards.board(wanted, actor)
+        except StoreError:
+            # The store answers 404 both for a board that is gone and for one
+            # the caller has no seat on, so ask whether it exists at all before
+            # deciding to make another. Making a second board because somebody
+            # lacks a seat would quietly split the tasks across two boards.
+            if boards.notice(wanted) is not None:
+                raise Rejected(
+                    403,
+                    "The GitHub board exists but you are not on it — ask one of its owners "
+                    "to add you.",
+                )
+
+    if not make:
+        return None
+
+    made = boards.create(
+        GITHUB_BOARD_NAME, GITHUB_BOARD_NOTE, GITHUB_BOARD_COLOUR, "private", actor
+    )
+    write_state_json(GITHUB_BOARD_STATE, {"board": made.get("id"), "made": stamp()})
+    return made
+
+
+def github_tasks_of(board):
+    if not board:
+        return []
+    labels = {
+        label.get("id"): label
+        for label in board.get("labels") or []
+        if isinstance(label, dict)
+    }
+    columns = {
+        entry.get("id"): entry.get("name")
+        for entry in board.get("lists") or []
+        if isinstance(entry, dict)
+    }
+    out = []
+    for card in (board.get("cards") or {}).values():
+        if not isinstance(card, dict) or card.get("archived"):
+            continue
+        repo = next(
+            (labels[entry].get("name") for entry in card.get("labels") or [] if entry in labels),
+            None,
+        )
+        out.append(
+            {
+                "id": card.get("id"),
+                "seq": card.get("seq"),
+                "title": card.get("title"),
+                "repo": repo,
+                "due": card.get("due"),
+                "done": bool(card.get("done")),
+                "column": columns.get(card.get("list")),
+                "assignees": list(card.get("assignees") or []),
+                "notes": card.get("notes") or "",
+            }
+        )
+    # Undone first, then by due date, with undated last. The same order the
+    # question "what is outstanding" is usually asked in.
+    out.sort(key=lambda task: (task["done"], task["due"] or "~", (task["title"] or "").lower()))
+    return out
+
+
+def github_tasks_payload(board):
+    return {
+        "board": None if not board else {"id": board.get("id"), "name": board.get("name")},
+        "repositories": github_repo_names(),
+        "tasks": github_tasks_of(board),
+    }
+
 
 # The developer group of the panel. Everything below is a projection of the
 # snapshot the admin-snapshot timer already writes — nothing here collects
@@ -3850,6 +4009,58 @@ class Handler(BaseHTTPRequestHandler):
         audit.record(name, "transcript.deleted", {"code": answer.get("code")}, self.client_ip())
         self.reply(200, answer)
 
+    def handle_github_tasks(self):
+        session = self.require_private("github")
+        board = github_open_board(session["record"]["name"])
+        self.reply(200, github_tasks_payload(board))
+
+    def handle_github_task_create(self):
+        session = self.require_private("github")
+        actor = session["record"]["name"]
+        data = self.read_body()
+
+        repo = str(data.get("repo") or "").strip()
+        known = github_repo_names()
+        if known and repo not in known:
+            raise Rejected(400, "That is not one of the repositories.")
+
+        board = github_open_board(actor, make=True)
+        board = github_fit_labels(board, actor, known)
+
+        columns = board.get("lists") or []
+        if not columns:
+            raise Rejected(409, "The GitHub board has no columns to put this in.")
+
+        made = boards.add_card(board["id"], columns[0]["id"], data.get("title"), actor)
+        card = made["card"]
+
+        # The label and the due date are a second write because add_card only
+        # takes a title. Assigning it to whoever raised it is the point of the
+        # exercise — that is what puts it under My Work.
+        changes = {"assignees": [actor]}
+        label = github_label_map(board).get(repo)
+        if label:
+            changes["labels"] = [label]
+        if data.get("due"):
+            changes["due"] = data.get("due")
+        card = boards.update_card(board["id"], card["id"], changes, actor)
+
+        audit.record(actor, "github.task", {"repo": repo, "card": card.get("seq")}, self.client_ip())
+        self.reply(200, github_tasks_payload(boards.board(board["id"], actor)))
+
+    def handle_github_task_done(self):
+        session = self.require_private("github")
+        actor = session["record"]["name"]
+        data = self.read_body()
+
+        board = github_open_board(actor)
+        if board is None:
+            raise Rejected(404, "There is no GitHub board yet.")
+        boards.update_card(
+            board["id"], data.get("card"), {"done": bool(data.get("done", True))}, actor
+        )
+        self.reply(200, github_tasks_payload(boards.board(board["id"], actor)))
+
     def handle_c2c_summary(self):
         since = self.query("since", 20)
         path = "/logs/summary"
@@ -3927,6 +4138,10 @@ class Handler(BaseHTTPRequestHandler):
         if route == "/github/repositories":
             self.require_private("github")
             self.reply(200, build_github())
+            return
+
+        if route == "/github/tasks":
+            self.handle_github_tasks()
             return
 
         if route == "/transcripts":
@@ -4770,6 +4985,14 @@ class Handler(BaseHTTPRequestHandler):
 
         if route == "/boards/cards/link/delete":
             self.handle_board_link_delete()
+            return
+
+        if route == "/github/tasks/create":
+            self.handle_github_task_create()
+            return
+
+        if route == "/github/tasks/done":
+            self.handle_github_task_done()
             return
 
         if route == "/boards/labels":
