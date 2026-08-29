@@ -1586,6 +1586,48 @@ check("creating a board is audited", "board.created" in actions)
 check("adding a member is audited", "board.member" in actions)
 check("card churn is not audited", not any(name.startswith("card.") for name in actions))
 
+# ---------------------------------------------------------------- /boards/mine
+# The My Work section is a view over this route and nothing else. The store's
+# assigned() is exercised above; what is checked here is that the route hands it
+# out under the right name, refuses an account with no board access at all, and
+# never lets one person see another's work.
+
+status, _, raw, _ = request("GET", "/boards/mine", cookie=owner_session)
+mine = json.loads(raw)
+check("my work can be read over the api", status == 200)
+check("it says whose work it is", mine["you"] == OWNER)
+check("it is a list", isinstance(mine["work"], list))
+check(
+    "every entry carries the board, the column and the card",
+    all({"board", "column", "card"} <= set(entry) for entry in mine["work"]),
+)
+check(
+    "every entry is actually assigned to me",
+    all(OWNER in (entry["card"].get("assignees") or []) for entry in mine["work"]),
+)
+check(
+    "nothing already done is listed",
+    not any(entry["card"].get("done") for entry in mine["work"]),
+)
+check(
+    "the board id is there to link to",
+    all(entry["board"].get("id") for entry in mine["work"]),
+)
+
+status, _, raw, _ = request("GET", "/boards/mine", cookie=helper_session)
+theirs = json.loads(raw)
+check("someone else reads their own work, not mine", status == 200 and theirs["you"] == HELPER)
+check(
+    "and none of my cards are in it",
+    not ({entry["card"]["id"] for entry in theirs["work"]} & {entry["card"]["id"] for entry in mine["work"]}),
+)
+
+status, _, _, _ = request("GET", "/boards/mine", cookie=quiet_session)
+check("an account with no board access cannot read it", status == 403)
+
+status, _, _, _ = request("GET", "/boards/mine")
+check("a stranger cannot read it", status == 401)
+
 status, _, raw, _ = request("POST", "/boards/delete", {"id": made["id"]}, cookie=owner_session)
 check("the owner can delete the board", status == 200)
 
