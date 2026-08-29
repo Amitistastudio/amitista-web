@@ -10,8 +10,8 @@ import {
   UserPlus,
   X,
 } from 'lucide-react';
-import { formatAgo } from '../../../lib/admin';
 import {
+  formatAgo,
   queueGithubAccess,
   queueGithubInviteCancel,
   queueGithubRevoke,
@@ -36,9 +36,15 @@ const peopleIn = (data) => (data?.people && typeof data.people === 'object' ? da
 function everyone(repositories, members) {
   const rows = new Map();
   const take = (login, extra) => {
-    const held = rows.get(login) ?? { login, holds: {}, member: null, ...extra };
-    rows.set(login, Object.assign(held, extra, { holds: held.holds }));
-    return rows.get(login);
+    const held = rows.get(login) ?? { login, holds: {}, member: null };
+    // Only what is actually there. Object.assign happily writes an undefined
+    // over a value, and the same person arrives from two lists — one of which
+    // may not carry their avatar.
+    Object.entries(extra).forEach(([key, value]) => {
+      if (value !== undefined && value !== null) held[key] = value;
+    });
+    rows.set(login, held);
+    return held;
   };
 
   members.forEach((member) => {
@@ -196,19 +202,23 @@ function AccessRow({ repo, entry, actor, busy, onGrant, onRevoke }) {
 
         {entry.direct && !self ? (
           <>
-            <Select
-              value={wanted}
-              disabled={busy}
-              aria-label={`Permission for ${entry.login} on ${repo}`}
-              onChange={(event) => setWanted(event.target.value)}
-              className="w-auto"
-            >
-              {REPO_ROLES.map((level) => (
-                <option key={level.api} value={level.api}>
-                  {level.label}
-                </option>
-              ))}
-            </Select>
+            {/* Select paints its own class list and spreads props after it, so
+                passing className would replace the styling rather than add to
+                it. The width belongs on a wrapper. */}
+            <span className="w-28 inline-block">
+              <Select
+                value={wanted}
+                disabled={busy}
+                aria-label={`Permission for ${entry.login} on ${repo}`}
+                onChange={(event) => setWanted(event.target.value)}
+              >
+                {REPO_ROLES.map((level) => (
+                  <option key={level.api} value={level.api}>
+                    {level.label}
+                  </option>
+                ))}
+              </Select>
+            </span>
             <Button
               type="button"
               disabled={busy || wanted === current}
@@ -597,7 +607,16 @@ export default function People({ data }) {
             ))}
           </div>
           <div className="px-4 sm:px-6 pb-4">
-            <GithubLink href={org.url ? `${org.url}/settings/member_privileges` : null}>
+            {/* Organisation settings do not live under the organisation's own
+                page — GitHub keeps them under /organizations/<name>/. */}
+            <GithubLink
+              href={
+                org.login
+                  ? `https://github.com/organizations/${org.login}/settings/member_privileges`
+                  : null
+              }
+              title="Change these on GitHub"
+            >
               SETTINGS
             </GithubLink>
           </div>
