@@ -13,7 +13,7 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 import { Button, Notice, Pill, SubNav, SearchInput, TextInput, Select, Field } from './ui';
-import ArtField from './boards/Art';
+import ArtField from './boards/Art.jsx';
 import People from './boards/People';
 import Columns from './boards/Columns';
 import CardDialog from './boards/CardDialog';

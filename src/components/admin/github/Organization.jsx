@@ -44,7 +44,11 @@ function everything(repositories) {
 // saying what would clear it. An empty list is the answer worth having.
 function attention(repositories, all) {
   const out = [];
-  const add = (rank, tone, title, detail, url) => out.push({ rank, tone, title, detail, url });
+  // id, not title, is what React keys on below: two findings can legitimately
+  // describe the same repository in the same words once a new rule is added,
+  // and a duplicate key silently drops a row instead of failing loudly.
+  const add = (rank, tone, title, detail, url) =>
+    out.push({ id: out.length, rank, tone, title, detail, url });
 
   repositories.forEach((repo) => {
     if (!repo.present) {
@@ -226,7 +230,7 @@ export default function Organization({ data }) {
         ) : (
           todo.map((item) => (
             <div
-              key={item.title}
+              key={item.id}
               className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2 px-4 sm:px-6 py-3 border-b border-[#17171d] last:border-b-0"
             >
               <div className="min-w-0 flex-1">

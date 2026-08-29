@@ -46,7 +46,7 @@ import {
   plural,
   shade,
 } from './shared';
-import { Picker as WhenPicker } from './When';
+import { Picker as WhenPicker } from './When.jsx';
 import MoveDialog from './Move';
 
 function indexFromPoint(node, clientY, dragged) {

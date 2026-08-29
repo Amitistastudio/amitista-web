@@ -48,7 +48,7 @@ import { UNITS, clock, sortSteps, stepSeconds, stepWords } from './when';
 import { FactSheet, PurposeMark, PurposePicker } from './Purpose';
 import { factFields, purposeOf, strayFacts } from './facts';
 import { sizeWords } from './files';
-import ArtField from './Art';
+import ArtField from './Art.jsx';
 import People from './People';
 import { deleteBoard, testBoardReminder, updateBoard } from '../../../lib/admin';
 

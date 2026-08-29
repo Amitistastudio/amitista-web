@@ -35,7 +35,7 @@ import { useDraft } from './draft';
 import MoveDialog from './Move';
 import Viewer from './Viewer';
 import { NOTES_MAX, NoteEditor } from './Notes';
-import WhenField from './When';
+import WhenField from './When.jsx';
 import { dayWords, gapWords, timeWords } from './when';
 import {
   Avatar,
