@@ -67,10 +67,11 @@ export default function GithubPanel({ view }) {
     );
   }
 
-  // Two ages, because they answer different questions. The checkout comparison
-  // is redone every deploy tick; the things only GitHub can answer are asked
-  // every few minutes, and saying so is cheaper than someone wondering why
-  // something they just pushed is not reflected yet.
+  // Two ages, because they answer different questions and can drift apart: the
+  // checkout comparison is local and always current, while the GitHub half is
+  // whatever the last conditional request came back with. Both are shown so
+  // that "I just opened an issue and it is not here" has an answer on the page
+  // rather than needing one from me.
   const rate = data.rate ?? {};
   const View = VIEWS[view] ?? Repositories;
 
