@@ -306,7 +306,8 @@ export default function Header() {
             className="hidden lg:inline-flex items-center gap-2 border border-[#282832] hover:border-neutral-500 bg-transparent px-3 py-2.5 text-neutral-400 hover:text-white cursor-pointer group/search search-press"
           >
             <Search size={13} strokeWidth={2} className="shrink-0" />
-            <span className="shrink-0 text-[10px] font-semibold tracking-[0.15em] text-muted group-hover/search:text-neutral-300 transition-colors">
+            <span className="shrink-0 text-[10px] font-semibold tracking-[0.15em]">SEARCH</span>
+            <span className="shrink-0 text-[10px] font-normal tracking-[0.1em] text-muted group-hover/search:text-neutral-300 transition-colors">
               {shortcutLabel}
             </span>
           </button>
