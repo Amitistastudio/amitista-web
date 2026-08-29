@@ -33,25 +33,48 @@ export function GithubLink({ href, children = 'OPEN', title }) {
 // 'read' and 'write'; the other three are spelled the same either way. So every
 // level is looked up by either name and shown under one — the one GitHub's own
 // settings page uses, since that is where somebody goes to check.
+// `writes` and `controls` are the two lines that actually matter and neither is
+// obvious from the name: "triage" sounds like it might change something and
+// does not, "maintain" sounds like the top one and is not.
 export const REPO_ROLES = [
-  { api: 'pull', label: 'read', blurb: 'Can clone and read it. Cannot push.' },
+  {
+    api: 'pull',
+    label: 'read',
+    writes: false,
+    blurb: 'Can see the code and clone it. Cannot change anything at all.',
+  },
   {
     api: 'triage',
     label: 'triage',
-    blurb: 'Read, plus managing issues and pull requests. Still cannot push.',
+    writes: false,
+    blurb: 'Read, plus closing, labelling and assigning issues and pull requests. Still cannot change the code.',
   },
-  { api: 'push', label: 'write', blurb: 'Can push to any branch that is not protected.' },
+  {
+    api: 'push',
+    label: 'write',
+    writes: true,
+    blurb: 'Can push code to any branch that is not protected. This is the normal level for somebody working on it.',
+  },
   {
     api: 'maintain',
     label: 'maintain',
-    blurb: 'Write, plus most settings. Cannot delete it or change who can reach it.',
+    writes: true,
+    blurb: 'Write, plus most of the repository settings. Cannot delete it and cannot change who else can reach it.',
   },
   {
     api: 'admin',
     label: 'admin',
-    blurb: 'Everything, including deleting it and changing who else can reach it.',
+    writes: true,
+    controls: true,
+    blurb: 'Everything: the settings, deleting the repository, and adding or removing anybody else.',
   },
 ];
+
+// The one thing to know about a level, in three words.
+export const roleGist = (level) =>
+  level.controls ? 'controls access' : level.writes ? 'can change code' : 'read only';
+
+export const roleTone = (level) => (level.controls ? 'rose' : level.writes ? 'amber' : 'neutral');
 
 const BY_NAME = new Map();
 REPO_ROLES.forEach((role, index) => {
@@ -63,6 +86,7 @@ export const role = (value) => BY_NAME.get(value) ?? null;
 export const roleLabel = (value) => role(value)?.label ?? '—';
 export const roleApi = (value) => role(value)?.api ?? null;
 export const roleRank = (value) => role(value)?.rank ?? -1;
+export const roleBlurb = (value) => role(value)?.blurb ?? '';
 
 // What is actually stopping this going in, in the order the answers matter. A
 // draft is nobody's problem yet; conflicts are the author's; a red run is the

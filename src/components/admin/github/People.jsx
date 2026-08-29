@@ -1,5 +1,6 @@
 import React from 'react';
 import {
+  BookOpen,
   Building2,
   Check,
   ChevronDown,
@@ -19,7 +20,18 @@ import {
   queueGithubRevoke,
 } from '../../../lib/admin';
 import { Button, Empty, Figure, Notice, Panel, Pill, Select, TextInput } from '../ui';
-import { GithubLink, listOf, REPO_ROLES, roleApi, roleLabel, roleRank } from './shared';
+import {
+  GithubLink,
+  listOf,
+  REPO_ROLES,
+  role,
+  roleApi,
+  roleBlurb,
+  roleGist,
+  roleLabel,
+  roleRank,
+  roleTone,
+} from './shared';
 
 const DAY = 86400000;
 const INVITE_STALE_DAYS = 7;
@@ -220,6 +232,54 @@ function LevelPicker({ id, value, disabled, onChange, label }) {
   );
 }
 
+// The five levels and what each one actually allows.
+//
+// One component doing two jobs on purpose: with onPick it is how you choose a
+// level, and without it, it is the reference for what the words in the table
+// mean. Those had better not drift apart — the whole complaint about the names
+// is that "triage" and "maintain" give no clue where the line is.
+function Levels({ value, onPick, name, disabled }) {
+  const choosing = typeof onPick === 'function';
+
+  return (
+    <div className="border border-[#1c1c22] divide-y divide-[#17171d]">
+      {REPO_ROLES.map((level) => {
+        const on = value === level.api;
+        const Line = choosing ? 'label' : 'div';
+        return (
+          <Line
+            key={level.api}
+            className={`flex flex-wrap items-baseline gap-x-3 gap-y-1 px-3 py-2.5 ${
+              choosing ? 'cursor-pointer' : ''
+            } ${on && choosing ? 'bg-purple-500/10' : choosing ? 'hover:bg-[#101014]' : ''}`}
+          >
+            {choosing && (
+              <input
+                type="radio"
+                name={name}
+                value={level.api}
+                checked={on}
+                disabled={disabled}
+                onChange={() => onPick(level.api)}
+                className="h-3.5 w-3.5 accent-purple-500 shrink-0 self-center"
+              />
+            )}
+            <span
+              className={`w-20 shrink-0 text-[12px] font-semibold ${on && choosing ? 'text-white' : 'text-neutral-200'}`}
+            >
+              {level.label}
+            </span>
+            <Pill tone={roleTone(level)}>{roleGist(level)}</Pill>
+            <span className="text-[12px] text-neutral-500 leading-relaxed flex-1 min-w-[14rem]">
+              {level.blurb}
+            </span>
+          </Line>
+        );
+      })}
+    </div>
+  );
+}
+
 // One person's access to one repository, with whatever can actually be done
 // about it. Controls only appear where they would work: access that comes from
 // being an owner cannot be taken away here, and saying so is more use than a
@@ -239,50 +299,77 @@ function RepoAccess({ repo, held, login, self, busy, onGrant, onRevoke }) {
       : null;
 
   return (
-    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 py-2.5 border-b border-[#17171d] last:border-b-0">
-      <div className="min-w-0">
-        <p className="text-[12px] text-neutral-200 font-mono break-all">{repo}</p>
-        <p className="text-[11px] text-neutral-500 mt-0.5">
-          {held
-            ? `${roleLabel(held.role)} · ${held.direct ? 'added to this repository' : 'through the organisation'}`
-            : 'no access'}
-        </p>
-      </div>
-
-      {note ? (
-        <p className="text-[11px] text-neutral-600 max-w-[24rem]">{note}</p>
-      ) : (
-        <div className="flex flex-wrap items-center gap-2">
-          <LevelPicker
-            value={wanted}
-            disabled={busy}
-            label={`Permission for ${login} on ${repo}`}
-            onChange={(event) => setWanted(event.target.value)}
-          />
-          <Button
-            type="button"
-            disabled={busy || (held && wanted === current)}
-            onClick={() => onGrant(repo, login, wanted)}
-          >
+    <div className="py-3 border-b border-[#17171d] last:border-b-0">
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+        <div className="min-w-0">
+          <p className="text-[12px] text-neutral-200 font-mono break-all">{repo}</p>
+          <p className="text-[11px] text-neutral-500 mt-0.5">
             {held ? (
               <>
-                <Check className="h-3.5 w-3.5" strokeWidth={2} />
-                Change
+                <span className="text-neutral-300">{roleLabel(held.role)}</span>
+                {/* Guarded rather than defaulted: roleGist of nothing would
+                    read "read only", which is the reassuring answer to give
+                    about a level we do not recognise. */}
+                {role(held.role) ? ` — ${roleGist(role(held.role))}` : ''}
+                {` · ${held.direct ? 'added to this repository' : 'through the organisation'}`}
               </>
             ) : (
-              <>
-                <Plus className="h-3.5 w-3.5" strokeWidth={2} />
-                Give access
-              </>
+              'no access at all'
             )}
-          </Button>
-          {held && (
-            <Button type="button" tone="danger" disabled={busy} onClick={() => onRevoke(repo, login)}>
-              <X className="h-3.5 w-3.5" strokeWidth={2} />
-              Remove
-            </Button>
-          )}
+          </p>
         </div>
+
+        {note ? (
+          <p className="text-[11px] text-neutral-600 max-w-[24rem]">{note}</p>
+        ) : (
+          <div className="flex flex-wrap items-center gap-2">
+            <LevelPicker
+              value={wanted}
+              disabled={busy}
+              label={`Permission for ${login} on ${repo}`}
+              onChange={(event) => setWanted(event.target.value)}
+            />
+            <Button
+              type="button"
+              disabled={busy || (held && wanted === current)}
+              onClick={() => onGrant(repo, login, wanted)}
+            >
+              {held ? (
+                <>
+                  <Check className="h-3.5 w-3.5" strokeWidth={2} />
+                  Change
+                </>
+              ) : (
+                <>
+                  <Plus className="h-3.5 w-3.5" strokeWidth={2} />
+                  Give access
+                </>
+              )}
+            </Button>
+            {held && (
+              <Button
+                type="button"
+                tone="danger"
+                disabled={busy}
+                onClick={() => onRevoke(repo, login)}
+              >
+                <X className="h-3.5 w-3.5" strokeWidth={2} />
+                Remove
+              </Button>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* What the dropdown currently says, in words. Whether it describes what
+          they hold or what they are about to be given depends on whether it has
+          been moved, which is exactly the question somebody is asking as they
+          move it. */}
+      {!note && (
+        <p className="text-[11px] text-neutral-600 leading-relaxed mt-2">
+          {held && wanted === current ? 'Holds now: ' : 'Would give: '}
+          {roleBlurb(wanted)}
+        </p>
       )}
     </div>
   );
@@ -334,22 +421,31 @@ function PersonRow({ person, repositories, actor, busy, open, onToggle, onGrant,
         </td>
         {repositories.map((repo) => {
           const held = person.holds[repo.name];
+          const level = held ? role(held.role) : null;
           return (
             <td key={repo.name} className="px-3 py-3 whitespace-nowrap">
               {held ? (
-                <span className="inline-flex items-center gap-1.5">
-                  <span
-                    className={`text-[12px] ${held.role === 'admin' ? 'text-rose-300' : 'text-neutral-300'}`}
-                  >
-                    {roleLabel(held.role)}
-                  </span>
-                  {!held.direct && (
+                <span
+                  className="inline-flex flex-col gap-0.5"
+                  title={level ? `${level.label} — ${level.blurb}` : undefined}
+                >
+                  <span className="inline-flex items-center gap-1.5">
                     <span
-                      title="through the organisation, not added to this repository"
-                      className="text-[10px] text-neutral-600"
+                      className={`text-[12px] ${level?.controls ? 'text-rose-300' : level?.writes ? 'text-amber-200' : 'text-neutral-300'}`}
                     >
-                      org
+                      {roleLabel(held.role)}
                     </span>
+                    {!held.direct && (
+                      <span
+                        title="through the organisation, not added to this repository"
+                        className="text-[10px] text-neutral-600"
+                      >
+                        org
+                      </span>
+                    )}
+                  </span>
+                  {level && (
+                    <span className="text-[10px] text-neutral-600">{roleGist(level)}</span>
                   )}
                 </span>
               ) : (
@@ -402,92 +498,122 @@ function AddSomeone({ repositories, busy, onGrant }) {
     setWanted([]);
   };
 
+  const ready = Boolean(login.trim()) && wanted.length > 0;
+
   return (
-    <form onSubmit={submit} className="px-4 sm:px-6 py-4 border-b border-[#17171d]">
-      <div className="flex flex-wrap items-end gap-3">
-        <div className="flex-1 min-w-[12rem]">
-          <label
-            className="block text-[11px] font-semibold text-neutral-400 tracking-[0.15em] uppercase mb-2"
-            htmlFor="github-add-login"
-          >
-            GitHub username
-          </label>
-          <TextInput
-            id="github-add-login"
-            value={login}
-            autoComplete="off"
-            spellCheck={false}
-            placeholder="octocat"
-            disabled={busy}
-            onChange={(event) => setLogin(event.target.value)}
-          />
+    <form onSubmit={submit} className="px-4 sm:px-6 py-5 space-y-6">
+      <div>
+        <Step number={1}>Who</Step>
+        <TextInput
+          id="github-add-login"
+          value={login}
+          autoComplete="off"
+          spellCheck={false}
+          placeholder="octocat"
+          disabled={busy}
+          onChange={(event) => setLogin(event.target.value)}
+          className="max-w-sm"
+        />
+        <p className="text-[11px] text-neutral-600 mt-2">
+          Their GitHub username — the name in their profile address, not their email.
+        </p>
+      </div>
+
+      <div>
+        <Step number={2}>
+          Which repositories
+          {repositories.length > 1 && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() =>
+                setWanted(
+                  wanted.length === repositories.length
+                    ? []
+                    : repositories.map((repo) => repo.name),
+                )
+              }
+              className="ml-3 text-[11px] font-semibold tracking-[0.12em] uppercase text-neutral-600 hover:text-white transition-colors disabled:opacity-40"
+            >
+              {wanted.length === repositories.length ? 'clear' : 'all of them'}
+            </button>
+          )}
+        </Step>
+        <div className="border border-[#1c1c22] divide-y divide-[#17171d]">
+          {repositories.map((repo) => {
+            const on = wanted.includes(repo.name);
+            return (
+              <label
+                key={repo.name}
+                className={`flex items-center gap-3 px-3 py-2.5 cursor-pointer ${
+                  on ? 'bg-purple-500/10' : 'hover:bg-[#101014]'
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  checked={on}
+                  disabled={busy}
+                  onChange={() => toggle(repo.name)}
+                  className="h-3.5 w-3.5 accent-purple-500 shrink-0"
+                />
+                <span className="min-w-0">
+                  <span className="text-[12px] text-neutral-200 font-mono break-all">
+                    {repo.name}
+                  </span>
+                  {repo.facts?.description && (
+                    <span className="block text-[11px] text-neutral-600 leading-relaxed mt-0.5">
+                      {repo.facts.description}
+                    </span>
+                  )}
+                </span>
+              </label>
+            );
+          })}
         </div>
-        <div>
-          <label
-            className="block text-[11px] font-semibold text-neutral-400 tracking-[0.15em] uppercase mb-2"
-            htmlFor="github-add-level"
-          >
-            Can
-          </label>
-          <LevelPicker
-            id="github-add-level"
-            value={permission}
-            disabled={busy}
-            label="Permission to give"
-            onChange={(event) => setPermission(event.target.value)}
-          />
-        </div>
-        <Button type="submit" tone="solid" disabled={busy || !login.trim() || wanted.length === 0}>
+      </div>
+
+      <div>
+        <Step number={3}>What they can do</Step>
+        <Levels
+          value={permission}
+          onPick={setPermission}
+          name="github-add-level"
+          disabled={busy}
+        />
+      </div>
+
+      <div className="flex flex-wrap items-center gap-3">
+        <Button type="submit" tone="solid" disabled={busy || !ready}>
           <UserPlus className="h-3.5 w-3.5" strokeWidth={2} />
           Invite
         </Button>
+        <p className="text-[11px] text-neutral-600 leading-relaxed flex-1 min-w-[14rem]">
+          {ready ? (
+            <>
+              {login.trim()} gets an invitation for{' '}
+              {wanted.length === repositories.length && repositories.length > 1
+                ? `all ${repositories.length} repositories`
+                : listSentence(wanted)}{' '}
+              at <span className="text-neutral-400">{roleLabel(permission)}</span>. The access
+              begins when they accept it.
+            </>
+          ) : (
+            'Fill in all three and the invitation goes out on the next deploy tick.'
+          )}
+        </p>
       </div>
-
-      <div className="flex flex-wrap items-center gap-2 mt-3">
-        <span className="text-[11px] font-semibold text-neutral-400 tracking-[0.15em] uppercase">
-          To
-        </span>
-        {repositories.map((repo) => {
-          const on = wanted.includes(repo.name);
-          return (
-            <button
-              key={repo.name}
-              type="button"
-              disabled={busy}
-              aria-pressed={on}
-              onClick={() => toggle(repo.name)}
-              className={`tap border px-3 py-1.5 text-[11px] font-mono transition-colors disabled:opacity-40 ${
-                on
-                  ? 'border-purple-500/60 bg-purple-500/10 text-purple-200'
-                  : 'border-[#282832] bg-[#0a0a0d] text-neutral-500 hover:text-neutral-300'
-              }`}
-            >
-              {repo.name}
-            </button>
-          );
-        })}
-        {repositories.length > 1 && (
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() =>
-              setWanted(
-                wanted.length === repositories.length ? [] : repositories.map((repo) => repo.name),
-              )
-            }
-            className="text-[11px] font-semibold tracking-[0.12em] uppercase text-neutral-600 hover:text-white transition-colors disabled:opacity-40"
-          >
-            {wanted.length === repositories.length ? 'none' : 'all'}
-          </button>
-        )}
-      </div>
-
-      <p className="text-[11px] text-neutral-600 leading-relaxed mt-3">
-        {REPO_ROLES.find((level) => level.api === permission)?.blurb} They get an invitation per
-        repository, and the access begins when they accept it.
-        {wanted.length === 0 ? ' Pick at least one repository.' : ''}
-      </p>
     </form>
+  );
+}
+
+function Step({ number, children }) {
+  return (
+    <p className="flex items-center gap-2 text-[11px] font-semibold text-neutral-400 tracking-[0.15em] uppercase mb-2">
+      <span className="inline-flex h-4 w-4 items-center justify-center border border-[#282832] text-[10px] text-neutral-500 shrink-0">
+        {number}
+      </span>
+      {children}
+    </p>
   );
 }
 
@@ -685,7 +811,6 @@ export default function People({ data, onRefresh }) {
           </span>
         }
       >
-        <AddSomeone repositories={repositories} busy={busy} onGrant={grant} />
         {team.length === 0 ? (
           <Empty>Nobody has access to any of these repositories, which cannot be right.</Empty>
         ) : (
@@ -727,6 +852,24 @@ export default function People({ data, onRefresh }) {
             </table>
           </div>
         )}
+      </Panel>
+
+      <Panel title="Give someone access" icon={UserPlus}>
+        <AddSomeone repositories={repositories} busy={busy} onGrant={grant} />
+      </Panel>
+
+      {/* The reference for every level name that appears above. It is a panel
+          rather than a tooltip because "what does maintain actually mean" is a
+          question somebody asks once and then wants to be able to find again. */}
+      <Panel title="What the levels mean" icon={BookOpen}>
+        <div className="px-4 sm:px-6 py-4">
+          <Levels />
+          <p className="text-[11px] text-neutral-600 leading-relaxed mt-3">
+            Weakest first. The line that matters most is between triage and write: everything above
+            it can change the code. Admin is the only one that can remove other people, or the
+            repository.
+          </p>
+        </div>
       </Panel>
 
       {invites.length > 0 && (
