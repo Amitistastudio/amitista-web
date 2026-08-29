@@ -376,6 +376,44 @@ api = FakeGitHub([(None, "error"), (None, "error"), (None, "error"), (None, "err
 out = state.org_people(api, org)
 check("an unreachable GitHub keeps the members it knew", out["members"] == org["members"])
 
+# ------------------------------------------------ commits and lines per person
+
+# The tracking board's only source of "lines edited". Two things are pinned:
+# GitHub answers 202 with an empty object while it is still computing the
+# statistics, which must not read as "nobody has committed"; and every week
+# since the repository was made comes back, most of them zeroes, so only the
+# recent tail travels to the browser.
+
+weeks = [
+    {"w": 1735257600 + index * 604800, "c": index, "a": index * 10, "d": index}
+    for index in range(40)
+]
+api = FakeGitHub(
+    [([{"author": {"login": "kostis", "avatar_url": "a", "html_url": "u"}, "total": 780, "weeks": weeks}], "ok")]
+)
+rows = state.contributions(api, "r", None)
+check("a contributor comes back with their totals", rows[0]["commits"] == 780)
+check("lines added are summed over every week, not the kept ones", rows[0]["added"] == sum(w["a"] for w in weeks))
+check("and only the recent weeks travel", len(rows[0]["weeks"]) == state.MAX_STAT_WEEKS)
+check("oldest kept first, newest last", rows[0]["weeks"][-1]["commits"] == 39)
+check("with a week start a browser can parse", rows[0]["weeks"][0]["week"][:2] == "20")
+
+held = [{"login": "kostis", "commits": 780, "weeks": []}]
+api = FakeGitHub([({}, "ok")])
+check(
+    "GitHub still computing the figures keeps the ones already known",
+    state.contributions(api, "r", held) == held,
+)
+api = FakeGitHub([(None, "error")])
+check(
+    "and so does a GitHub that cannot be reached",
+    state.contributions(api, "r", held) == held,
+)
+check("a person with no GitHub account is left out", state.contributions(
+    FakeGitHub([([{"author": None, "total": 5, "weeks": []}], "ok")]), "r", None
+) == [])
+
+
 # ------------------------------------- everything asked of GitHub is carried
 
 # The quiet bug this replaced: two new keys were added to what detail_for
@@ -397,6 +435,7 @@ detail_keys = {
     "runs": [{"status": "completed"}],
     "access": [{"login": "someone"}],
     "invites": [{"id": 7}],
+    "stats": [{"login": "someone", "commits": 3}],
 }
 kept = state.inspect("x", "/nowhere-at-all", FakeGitHub([]), dict(detail_keys), False)
 missing = [key for key in detail_keys if key not in kept]

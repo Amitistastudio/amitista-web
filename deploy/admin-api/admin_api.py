@@ -1177,7 +1177,10 @@ def github_avatar_for(login):
     for repo in snapshot.get("repositories") or []:
         if not isinstance(repo, dict):
             continue
-        for key in ("access", "invites"):
+        # "stats" as well as the access lists: somebody who has committed to a
+        # repository has an avatar worth showing on the tracking board whether
+        # or not they are still on its collaborator list.
+        for key in ("access", "invites", "stats"):
             held = found_in(repo.get(key))
             if held:
                 return held

@@ -84,6 +84,11 @@ MAX_BRANCHES = 30
 MAX_COMPARES = 8
 MAX_RUNS = 10
 MAX_PEOPLE = 100
+# Half a year of the weekly contributor statistics, per person. GitHub hands
+# back every week since the repository was made, most of them zeroes, and the
+# panel only ever draws a window of the recent ones — so the rest is weight in
+# a file the browser downloads for nothing.
+MAX_STAT_WEEKS = 26
 
 # Where the admin panel leaves a permission change it would like carried out.
 #
@@ -722,6 +727,69 @@ def recent_runs(api, repo, cached):
     ]
 
 
+def contributions(api, repo, cached):
+    """Commits and lines, per person, per week, for as far back as it goes.
+
+    The one thing the rest of this file cannot work out. A commit listing says
+    who committed and when; it does not say how much was changed, and asking
+    per commit would be a request each. This endpoint is a single request for
+    the lot, and it is what makes lines edited a number rather than a guess.
+
+    GitHub computes it in the background. While it is doing so it answers 202
+    with an empty object rather than a list, which lands here as "not a list"
+    and keeps whatever was known last — the same path an outage takes. So the
+    first tick after a cold cache can come back with nothing, and the one after
+    it has the data.
+    """
+    payload, state = api.get(
+        "/repos/%s/%s/stats/contributors" % (ORG, repo),
+        isinstance(cached, list),
+    )
+    if state != "ok" or not isinstance(payload, list) or not payload:
+        return cached if isinstance(cached, list) else []
+
+    out = []
+    for entry in payload:
+        if not isinstance(entry, dict):
+            continue
+        account = entry.get("author") or {}
+        login = account.get("login") if isinstance(account, dict) else None
+        if not login:
+            continue
+        weeks = [week for week in entry.get("weeks") or [] if isinstance(week, dict)]
+        # Oldest first is how GitHub sends them and how the panel draws them, so
+        # the tail is taken rather than the head.
+        recent = weeks[-MAX_STAT_WEEKS:]
+        out.append(
+            {
+                "login": login,
+                "avatar": account.get("avatar_url"),
+                "url": account.get("html_url"),
+                "commits": entry.get("total"),
+                "added": sum(int(week.get("a") or 0) for week in weeks),
+                "removed": sum(int(week.get("d") or 0) for week in weeks),
+                "weeks": [
+                    {
+                        "week": week_start(week.get("w")),
+                        "commits": int(week.get("c") or 0),
+                        "added": int(week.get("a") or 0),
+                        "removed": int(week.get("d") or 0),
+                    }
+                    for week in recent
+                ],
+            }
+        )
+    return sorted(out, key=lambda row: row.get("commits") or 0, reverse=True)
+
+
+def week_start(stamp):
+    """The Sunday a statistics week began, as a date the panel can parse."""
+    try:
+        return datetime.fromtimestamp(int(stamp), timezone.utc).strftime("%Y-%m-%d")
+    except (TypeError, ValueError, OSError, OverflowError):
+        return None
+
+
 def detail_for(api, repo, cached):
     facts = repo_facts(api, repo, cached.get("facts") or {})
     pulls = open_pulls(api, repo, cached.get("pulls"))
@@ -731,6 +799,7 @@ def detail_for(api, repo, cached):
     runs = recent_runs(api, repo, cached.get("runs"))
     access = repo_access(api, repo, cached.get("access"))
     invites = repo_invites(api, repo, cached.get("invites"))
+    stats = contributions(api, repo, cached.get("stats"))
     return {
         "facts": facts,
         "pulls": pulls,
@@ -740,6 +809,7 @@ def detail_for(api, repo, cached):
         "runs": runs,
         "access": access,
         "invites": invites,
+        "stats": stats,
     }
 
 
@@ -1150,7 +1220,17 @@ def inspect(name, path, api, known, want_detail):
     # here.
     carried = {
         key: known[key]
-        for key in ("facts", "pulls", "issues", "commits", "branches", "runs", "access", "invites")
+        for key in (
+            "facts",
+            "pulls",
+            "issues",
+            "commits",
+            "branches",
+            "runs",
+            "access",
+            "invites",
+            "stats",
+        )
         if key in known
     }
     if want_detail:

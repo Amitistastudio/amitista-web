@@ -31,6 +31,7 @@ import {
   GitPullRequest,
   Building2,
   KeyRound,
+  Radar,
 } from 'lucide-react';
 import Header from '../components/web1/Header';
 import Footer from '../components/web1/Footer';
@@ -231,6 +232,14 @@ const SECTIONS = [
     needs: null,
     group: 'github',
     blurb: 'what CI says across the three, and what the review queue is costing',
+  },
+  {
+    id: 'github-tracking',
+    label: 'Performance tracking',
+    icon: Radar,
+    needs: null,
+    group: 'github',
+    blurb: 'who has committed what, how many lines it was, and when they were doing it',
   },
   {
     id: 'github-org',
