@@ -301,6 +301,19 @@ sync_repo() {
   after="$(git -C "$dir" rev-parse origin/main)"
   [ "$before" = "$after" ] && return 1          # nothing new
 
+  # Commits sitting in the checkout that are not on main yet. Fast-forwarding to
+  # origin/main is a no-op when the checkout is ahead of it, so the deploy would
+  # go on to build whatever is in the working tree while having asked CI about a
+  # different, older commit — the gate answering for code that is not the code
+  # being deployed. It also renders backwards in the log, "newer -> older",
+  # which is the tell. Wait for the push instead; CI has not seen this yet.
+  local ahead; ahead="$(git -C "$dir" rev-list --count "$after..$before" 2>/dev/null || echo 0)"
+  if [ "${ahead:-0}" -gt 0 ]; then
+    warn "$repo: $ahead local commit(s) are not on origin/main, so nothing is deployed."
+    warn "$repo: Push them and CI will gate them like anything else."
+    return 1
+  fi
+
   local verdict; verdict="$(ci_is_green "$repo" "$after")"
   local green=$?
   if [ $green -ne 0 ] && [ -z "$FORCE" ]; then
