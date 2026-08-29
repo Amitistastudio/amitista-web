@@ -5,6 +5,9 @@ export const short = (sha) => (typeof sha === 'string' ? sha.slice(0, 7) : '—'
 
 export const count = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 
+export const repositoriesIn = (data) =>
+  Array.isArray(data?.repositories) ? data.repositories : [];
+
 export const listOf = (repo, key) => (Array.isArray(repo?.[key]) ? repo[key] : []);
 
 export function GithubLink({ href, children = 'OPEN', title }) {

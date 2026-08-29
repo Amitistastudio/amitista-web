@@ -47,6 +47,10 @@ DETAIL_SECONDS = int(os.environ.get("AUTODEPLOY_GITHUB_DETAIL_SECONDS", "300"))
 # Ceilings, so one runaway repository cannot bloat the file the panel reads or
 # the number of requests one refresh makes.
 MAX_PULLS = 20
+MAX_ISSUES = 30
+# Enough of the body to know what an issue is about without opening GitHub, and
+# little enough that thirty of them do not bloat the file the panel reads.
+MAX_BODY = 1200
 MAX_BRANCHES = 30
 MAX_COMPARES = 8
 MAX_RUNS = 10
@@ -301,6 +305,56 @@ def open_pulls(api, repo, cached):
     ]
 
 
+def open_issues(api, repo, cached):
+    """Open issues, and only issues.
+
+    GitHub treats a pull request as an issue, so /issues returns both and every
+    pull request would otherwise show up here a second time wearing a different
+    hat. The ones carrying a pull_request key are dropped.
+    """
+    payload, state = api.get(
+        "/repos/%s/%s/issues?state=open&sort=updated&direction=desc&per_page=%d"
+        % (ORG, repo, MAX_ISSUES),
+        isinstance(cached, list),
+    )
+    if state != "ok" or not isinstance(payload, list):
+        return cached if isinstance(cached, list) else []
+
+    out = []
+    for entry in payload:
+        # The key's presence is the marker, not its contents. Testing the value
+        # lets an entry through whenever GitHub sends an empty object.
+        if not isinstance(entry, dict) or "pull_request" in entry:
+            continue
+        body = entry.get("body")
+        text = body.strip() if isinstance(body, str) else ""
+        out.append(
+            {
+                "number": entry.get("number"),
+                "title": entry.get("title"),
+                "author": ((entry.get("user") or {}).get("login")),
+                "labels": [
+                    {"name": label.get("name"), "colour": label.get("color")}
+                    for label in entry.get("labels") or []
+                    if isinstance(label, dict) and label.get("name")
+                ],
+                "assignees": [
+                    person.get("login")
+                    for person in entry.get("assignees") or []
+                    if isinstance(person, dict) and person.get("login")
+                ],
+                "milestone": ((entry.get("milestone") or {}).get("title")),
+                "comments": entry.get("comments"),
+                "created": entry.get("created_at"),
+                "updated": entry.get("updated_at"),
+                "url": entry.get("html_url"),
+                "body": text[:MAX_BODY],
+                "clipped": len(text) > MAX_BODY,
+            }
+        )
+    return out
+
+
 def branch_drift(api, repo, default_branch, cached):
     """Every branch, and how far it has drifted from the default one.
 
@@ -397,9 +451,10 @@ def recent_runs(api, repo, cached):
 def detail_for(api, repo, cached):
     facts = repo_facts(api, repo, cached.get("facts") or {})
     pulls = open_pulls(api, repo, cached.get("pulls"))
+    issues = open_issues(api, repo, cached.get("issues"))
     branches = branch_drift(api, repo, facts.get("defaultBranch"), cached.get("branches"))
     runs = recent_runs(api, repo, cached.get("runs"))
-    return {"facts": facts, "pulls": pulls, "branches": branches, "runs": runs}
+    return {"facts": facts, "pulls": pulls, "issues": issues, "branches": branches, "runs": runs}
 
 
 # ---------------------------------------------------------------- assembling
@@ -465,7 +520,11 @@ def inspect(name, path, api, known, want_detail):
         if remote and remote != head:
             entry["tip"] = commit_facts(path, "origin/%s" % BRANCH)
 
-    carried = {key: known[key] for key in ("facts", "pulls", "branches", "runs") if key in known}
+    carried = {
+        key: known[key]
+        for key in ("facts", "pulls", "issues", "branches", "runs")
+        if key in known
+    }
     if want_detail:
         entry.update(detail_for(api, name, carried))
         entry["detail"] = now()
@@ -559,9 +618,10 @@ def main():
 
     clean = sum(1 for entry in repositories if entry.get("synced") and not entry.get("dirty"))
     pulls = sum(len(entry.get("pulls") or []) for entry in repositories)
+    issues = sum(len(entry.get("issues") or []) for entry in repositories)
     print(
-        "github state: %d/%d in sync and clean, %d open pull request(s); %d request(s), %d charged%s"
-        % (clean, len(repositories), pulls, api.calls, api.spent,
+        "github state: %d/%d in sync and clean, %d open PR(s), %d open issue(s); %d request(s), %d charged%s"
+        % (clean, len(repositories), pulls, issues, api.calls, api.spent,
            "" if api.remaining is None else ", %d left this hour" % api.remaining)
     )
     return 0
