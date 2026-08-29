@@ -408,6 +408,25 @@ check("a person with no GitHub account is left out", state.contributions(
 ) == [])
 
 
+# ---------------------------------------------------- when commits were made
+
+api = FakeGitHub([([[0, 0, 0], [1, 9, 4], [3, 14, 7]], "ok")])
+card = state.punch_card(api, "r", None)
+check("a punch card keeps only the hours that carry commits", card == [
+    {"day": 1, "hour": 9, "commits": 4},
+    {"day": 3, "hour": 14, "commits": 7},
+])
+check(
+    "a malformed bucket is dropped rather than drawn",
+    state.punch_card(FakeGitHub([([[9, 99, 3], "nonsense", [1, 2]], "ok")]), "r", None) == [],
+)
+held = [{"day": 0, "hour": 0, "commits": 1}]
+check(
+    "and a GitHub still computing it keeps what was known",
+    state.punch_card(FakeGitHub([({}, "ok")]), "r", held) == held,
+)
+
+
 # ------------------------------------- everything asked of GitHub is carried
 
 # The quiet bug this replaced: two new keys were added to what detail_for
@@ -430,6 +449,7 @@ detail_keys = {
     "access": [{"login": "someone"}],
     "invites": [{"id": 7}],
     "stats": [{"login": "someone", "commits": 3}],
+    "punch": [{"day": 1, "hour": 9, "commits": 4}],
 }
 kept = state.inspect("x", "/nowhere-at-all", FakeGitHub([]), dict(detail_keys), False)
 missing = [key for key in detail_keys if key not in kept]

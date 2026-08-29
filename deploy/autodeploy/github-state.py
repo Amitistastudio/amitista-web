@@ -770,6 +770,29 @@ def week_start(stamp):
         return None
 
 
+def punch_card(api, repo, cached):
+    payload, state = api.get(
+        "/repos/%s/%s/stats/punch_card" % (ORG, repo),
+        isinstance(cached, list),
+    )
+    if state != "ok" or not isinstance(payload, list) or not payload:
+        return cached if isinstance(cached, list) else []
+
+    out = []
+    for entry in payload:
+        if not isinstance(entry, list) or len(entry) != 3:
+            continue
+        day, hour, commits = entry
+        if not isinstance(day, int) or not isinstance(hour, int):
+            continue
+        if not isinstance(commits, int) or commits <= 0:
+            continue
+        if not 0 <= day <= 6 or not 0 <= hour <= 23:
+            continue
+        out.append({"day": day, "hour": hour, "commits": commits})
+    return out
+
+
 def detail_for(api, repo, cached):
     facts = repo_facts(api, repo, cached.get("facts") or {})
     pulls = open_pulls(api, repo, cached.get("pulls"))
@@ -780,6 +803,7 @@ def detail_for(api, repo, cached):
     access = repo_access(api, repo, cached.get("access"))
     invites = repo_invites(api, repo, cached.get("invites"))
     stats = contributions(api, repo, cached.get("stats"))
+    punch = punch_card(api, repo, cached.get("punch"))
     return {
         "facts": facts,
         "pulls": pulls,
@@ -790,6 +814,7 @@ def detail_for(api, repo, cached):
         "access": access,
         "invites": invites,
         "stats": stats,
+        "punch": punch,
     }
 
 
@@ -1210,6 +1235,7 @@ def inspect(name, path, api, known, want_detail):
             "access",
             "invites",
             "stats",
+            "punch",
         )
         if key in known
     }
