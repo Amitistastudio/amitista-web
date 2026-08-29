@@ -8,6 +8,7 @@ import Pulls from './github/Pulls';
 import Performance from './github/Performance';
 import Vitals from './github/Vitals';
 import Tracking from './github/Tracking';
+import Security from './github/Security';
 import Organization from './github/Organization';
 import People from './github/People';
 
@@ -18,6 +19,7 @@ export const GITHUB_VIEWS = [
   'github-performance',
   'github-vitals',
   'github-tracking',
+  'github-security',
   'github-org',
   'github-people',
 ];
@@ -29,6 +31,7 @@ const VIEWS = {
   'github-performance': Performance,
   'github-vitals': Vitals,
   'github-tracking': Tracking,
+  'github-security': Security,
   'github-org': Organization,
   'github-people': People,
 };

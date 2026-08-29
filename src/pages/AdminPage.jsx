@@ -33,6 +33,7 @@ import {
   KeyRound,
   Radar,
   Timer,
+  ShieldCheck,
 } from 'lucide-react';
 import Header from '../components/web1/Header';
 import Footer from '../components/web1/Footer';
@@ -249,6 +250,14 @@ const SECTIONS = [
     needs: null,
     group: 'github',
     blurb: 'who has committed what, how many lines it was, and when they were doing it',
+  },
+  {
+    id: 'github-security',
+    label: 'Security',
+    icon: ShieldCheck,
+    needs: null,
+    group: 'github',
+    blurb: 'what is key-shaped in the code, what GitHub is warning about, and what the deploy refuses',
   },
   {
     id: 'github-org',
