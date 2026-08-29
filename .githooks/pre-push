@@ -16,7 +16,14 @@
 #     SKIP_TESTS=1 git push        # skip the suites
 #     git push --no-verify         # skip this hook entirely
 #
+# The credential scan takes an override too, but it has to say what it is for,
+# and what it is for is written to the local scan history:
+#
+#     ALLOW_SECRETS="a fixture, not a real key" git push
+#
 set -uo pipefail
+
+ROOT_DIR="$(git rev-parse --show-toplevel)"
 
 RED=$'\033[31m'; YEL=$'\033[33m'; DIM=$'\033[2m'; OFF=$'\033[0m'
 fail() { printf '%spre-push: %s%s\n' "$RED" "$*" "$OFF" >&2; }
@@ -70,44 +77,21 @@ if [ "$REMOTE_REF_MAIN" = "1" ] && [ "${ALLOW_MAIN:-}" != "1" ] \
 fi
 
 # ------------------------------------------------------------ secret scan
-# Deliberately narrow. A pattern that matches a real provider format almost
-# never fires falsely; a generic "secret = ..." rule fires constantly and gets
-# the whole hook disabled, which is worse than not having it.
+# Handed to scripts/scan-secrets.mjs, which walks the diff hunk by hunk so that
+# a finding comes back with the file and the line it is on rather than just the
+# string it matched, keeps a local record of every scan in .git/secret-scan.log,
+# and takes an override that has to say what it is for. The rules, the
+# allowlist and the reasoning behind both are at the top of that file.
 if [ -n "$RANGE" ]; then
-  ADDED="$(git diff --unified=0 "$RANGE" 2>/dev/null | grep '^+' | grep -v '^+++')"
-  HITS=""
-  add_hit() { HITS="${HITS}  $1\n"; }
-
-  scan() {
-    local label="$1" re="$2"
-    local found
-    found="$(printf '%s' "$ADDED" | grep -aEo -e "$re" | sort -u | head -3)"
-    [ -n "$found" ] && add_hit "$label: $(printf '%s' "$found" | tr '\n' ' ')"
-  }
-
-  scan "AWS access key id"     '\bAKIA[0-9A-Z]{16}\b'
-  scan "GitHub token"          '\bgh[pousr]_[A-Za-z0-9]{36,}\b'
-  scan "Slack token"           '\bxox[baprs]-[A-Za-z0-9-]{10,}'
-  scan "Google API key"        '\bAIza[0-9A-Za-z_-]{35}\b'
-  scan "private key block"     '-----BEGIN [A-Z ]*PRIVATE KEY-----'
-  scan "extended private key"  '\bxprv[A-Za-z0-9]{50,}\b'
-  scan "database URL with a password" '\b(postgres|postgresql|mysql|mongodb(\+srv)?|redis|amqp)://[^[:space:]:@]+:[^[:space:]@]{3,}@'
-
-  # Stripe live keys, minus the one in shield's own test fixture, which is
-  # Stripe's published documentation key and exists to be detected.
-  STRIPE="$(printf '%s' "$ADDED" | grep -aEo '\bsk_live_[A-Za-z0-9]{16,}\b' \
-            | grep -v '^sk_live_4eC39HqLyjWDarjtT1zdp7dc$' | sort -u | head -3)"
-  [ -n "$STRIPE" ] && add_hit "Stripe live secret key: $(printf '%s' "$STRIPE" | tr '\n' ' ')"
-
-  if [ -n "$HITS" ]; then
-    fail "these commits look like they carry credentials:"
-    printf "$HITS" >&2
+  if ! command -v node >/dev/null 2>&1; then
+    fail "node is not on PATH, so the credential scan cannot run."
+    note "This fails closed on purpose. A scan that quietly skips itself is"
+    note "worse than no scan, because it is trusted and does nothing."
     note ""
-    note "Nothing was pushed. If a real secret is in a commit, rewriting the"
-    note "branch is not enough on its own — rotate the credential too."
-    note "If this is a test fixture, push once with: git push --no-verify"
+    note "Bypass this one push if you must:  git push --no-verify"
     exit 1
   fi
+  node "$ROOT_DIR/scripts/scan-secrets.mjs" "$RANGE" || exit 1
 fi
 
 # ------------------------------------------------------------------ tests
@@ -116,8 +100,7 @@ if [ "${SKIP_TESTS:-}" = "1" ]; then
   exit 0
 fi
 
-ROOT="$(git rev-parse --show-toplevel)"
-cd "$ROOT" || exit 1
+cd "$ROOT_DIR" || exit 1
 FAILED=()
 
 for f in deploy/admin-api/test_*.py deploy/api-gateway/test_*.py deploy/contact-relay/test_*.py; do
