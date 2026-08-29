@@ -28,6 +28,7 @@ from datetime import datetime, timedelta, timezone
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import admin_hooks
+import admin_review
 
 from admin_vault import Sealer, Secrets, VaultError, build_vault
 
@@ -1139,7 +1140,28 @@ def build_github():
     age = github_age(payload.get("generated"))
     payload["stale"] = True if age is None else age > GITHUB_STALE_AFTER
     payload["queued"] = github_queued()
+    payload["reviewer"] = admin_review.configured()
+    for repo in payload["repositories"]:
+        if isinstance(repo, dict):
+            github_strip_patches(repo)
     return payload
+
+
+def github_strip_patches(repo):
+    """Take the diffs back out before the snapshot travels.
+
+    The collector keeps a patch per changed file so that a review has something
+    to read. The panel does not display one, and there can be tens of kilobytes
+    of them, so every reader of the snapshot would be paying for something none
+    of them use. Whether it was clipped stays, because that is the one thing the
+    panel does say out loud.
+    """
+    for pull in repo.get("pulls") or []:
+        if not isinstance(pull, dict):
+            continue
+        for entry in pull.get("changed") or []:
+            if isinstance(entry, dict):
+                entry.pop("patch", None)
 
 def github_avatar_for(login):
     """The avatar the collector last saw for a login.
@@ -1181,6 +1203,24 @@ def github_avatar_for(login):
             held = found_in(repo.get(key))
             if held:
                 return held
+    return None
+
+
+def github_pull_for(repo, number):
+    """One open pull request out of the snapshot, diff and all.
+
+    Read from the file rather than from build_github, which strips the patches
+    that are the only reason to look it up here.
+    """
+    snapshot = read_json_file(GITHUB_PATH)
+    if not isinstance(snapshot, dict):
+        return None
+    for entry in snapshot.get("repositories") or []:
+        if not isinstance(entry, dict) or entry.get("name") != repo:
+            continue
+        for pull in entry.get("pulls") or []:
+            if isinstance(pull, dict) and pull.get("number") == number:
+                return pull
     return None
 
 
@@ -3984,6 +4024,48 @@ class Handler(BaseHTTPRequestHandler):
 
         self.send_blob(fetched[0], fetched[1])
 
+    def handle_github_review(self):
+        """What a model makes of one pull request.
+
+        A GET rather than a POST, and deliberately: asking costs a model call
+        the first time and nothing afterwards, and nothing about the pull
+        request changes either way. Nothing here writes to GitHub.
+
+        The diff is read out of the snapshot the deploy writes, because this
+        service holds no GitHub token and could not fetch one. So a pull request
+        the collector has not looked into deeply cannot be reviewed, and says so
+        rather than being reviewed on its file names alone.
+        """
+        session = self.require_private("github")
+        repo = self.query("repo", 100)
+        raw = self.query("number", 12)
+        if not raw.isdigit():
+            raise Rejected(400, "No pull request was named.")
+        number = int(raw)
+
+        pull = github_pull_for(repo, number)
+        if pull is None:
+            raise Rejected(404, "That pull request is not in the snapshot.")
+
+        held = admin_review.cached(repo, number, pull.get("sha"))
+        if held is not None:
+            self.reply(200, {"review": held, "fresh": False})
+            return
+
+        try:
+            answer = admin_review.review(pull, repo)
+        except admin_review.ReviewError as refusal:
+            raise Rejected(refusal.status, refusal.message)
+
+        admin_review.remember(repo, number, answer)
+        audit.record(
+            session["record"]["name"],
+            "github.reviewed",
+            {"repo": repo, "number": number, "findings": len(answer["findings"])},
+            self.client_ip(),
+        )
+        self.reply(200, {"review": answer, "fresh": True})
+
     def handle_github_grant(self):
         session = self.require_private("github")
         data = self.read_body()
@@ -4187,6 +4269,10 @@ class Handler(BaseHTTPRequestHandler):
 
         if route == "/github/avatar":
             self.handle_github_avatar()
+            return
+
+        if route == "/github/review":
+            self.handle_github_review()
             return
 
         if route == "/transcripts":

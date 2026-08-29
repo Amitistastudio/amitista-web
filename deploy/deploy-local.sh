@@ -5,10 +5,15 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WEBROOT=/var/www/amitista.com
 RELEASES="$WEBROOT/releases"
 CURRENT="$WEBROOT/current"
+LEDGER="$WEBROOT/releases.jsonl"
 HASH_SNIPPET=/etc/nginx/snippets/amitista-csp-style-hash.conf
 LINK_SNIPPET=/etc/nginx/snippets/amitista-preload-links.conf
 FONT_LINK='</fonts/dm-sans-latin-normal.woff2>; rel=preload; as=font; type=font/woff2; crossorigin'
 KEEP=5
+# The ledger outlives the releases it names. Five directories is all the disk
+# will hold, but the point of writing a commit down is being able to ask months
+# later which one moved LCP, and a line is about 300 bytes.
+KEEP_LEDGER=400
 
 export PATH=/opt/node/bin:$PATH
 
@@ -108,6 +113,22 @@ fi
 say "Publishing the release"
 PREVIOUS="$(readlink -f "$CURRENT" || true)"
 REL="$RELEASES/$(date -u +%Y%m%d-%H%M%S)"
+
+# Which commit this release is, read now rather than later: by the time anyone
+# asks, the checkout has moved on and a release directory is a timestamp with
+# nothing in it that says where it came from. Without this, a measurement taken
+# against the live site can be dated but not blamed.
+#
+# A dirty checkout is recorded as such rather than quietly attributed to HEAD.
+# What was built is then not what that commit says, and blaming the commit for a
+# regression somebody had in their working tree is worse than saying nothing.
+REL_SHA="$(git -C "$REPO" rev-parse HEAD 2>/dev/null || true)"
+REL_SUBJECT="$(git -C "$REPO" --no-pager log -1 --format=%s 2>/dev/null || true)"
+REL_AUTHOR="$(git -C "$REPO" --no-pager log -1 --format=%an 2>/dev/null || true)"
+REL_COMMITTED="$(git -C "$REPO" --no-pager log -1 --format=%cI 2>/dev/null || true)"
+REL_DIRTY=""
+[ -n "$(git -C "$REPO" status --porcelain --untracked-files=no 2>/dev/null)" ] && REL_DIRTY=1
+
 mkdir -p "$REL"
 cp -a "$DIST/." "$REL"/
 rm -f "$REL/csp-style-hash.txt"
@@ -180,5 +201,78 @@ then
 fi
 
 ( cd "$RELEASES" && ls -1t | tail -n +$((KEEP + 1)) | xargs -r rm -rf )
+
+# Written only now, and only if everything above passed. A release that failed
+# verification was rolled back and never served anybody, so recording it would
+# put a commit in the ledger that no measurement can ever belong to.
+#
+# The ledger sits beside the releases rather than inside one: the prune above
+# deletes everything in $RELEASES past the newest five and would take the record
+# of what was deployed with it. It is also outside what nginx serves, which is
+# why the full sha can be written down at all.
+if [ -n "$REL_SHA" ]; then
+  REL_ID="$(basename "$REL")" \
+  REL_PREVIOUS="$([ -n "$PREVIOUS" ] && basename "$PREVIOUS" || true)" \
+  REL_SHA="$REL_SHA" REL_SUBJECT="$REL_SUBJECT" REL_AUTHOR="$REL_AUTHOR" \
+  REL_COMMITTED="$REL_COMMITTED" REL_DIRTY="$REL_DIRTY" \
+  LEDGER="$LEDGER" KEEP_LEDGER="$KEEP_LEDGER" \
+  python3 - <<'LEDGER_PY' || printf 'could not record the release in the ledger\n' >&2
+import json, os, tempfile
+
+path = os.environ["LEDGER"]
+keep = int(os.environ["KEEP_LEDGER"])
+entry = {
+    "release": os.environ["REL_ID"],
+    "sha": os.environ["REL_SHA"],
+    "subject": os.environ.get("REL_SUBJECT") or None,
+    "author": os.environ.get("REL_AUTHOR") or None,
+    "committed": os.environ.get("REL_COMMITTED") or None,
+    "previous": os.environ.get("REL_PREVIOUS") or None,
+    "dirty": bool(os.environ.get("REL_DIRTY")),
+    "repo": "amitista-web",
+}
+
+lines = []
+try:
+    with open(path, "r", encoding="utf-8") as handle:
+        lines = [line for line in handle.read().splitlines() if line.strip()]
+except OSError:
+    pass
+lines.append(json.dumps(entry, separators=(",", ":")))
+lines = lines[-keep:]
+
+# Rewritten whole rather than appended, because the cap has to be applied
+# somewhere and a half-written append is the one failure that would corrupt the
+# file. Replaced atomically, so a reader sees either the old ledger or the new
+# one and never a torn line.
+handle = tempfile.NamedTemporaryFile(
+    mode="w", encoding="utf-8", dir=os.path.dirname(path) or ".",
+    prefix=".releases-", suffix=".tmp", delete=False,
+)
+try:
+    handle.write("".join(line + "\n" for line in lines))
+    handle.flush()
+    os.fsync(handle.fileno())
+    handle.close()
+    os.chmod(handle.name, 0o644)
+    os.replace(handle.name, path)
+except BaseException:
+    try:
+        os.unlink(handle.name)
+    except OSError:
+        pass
+    raise
+LEDGER_PY
+  say "Recorded $(basename "$REL") as ${REL_SHA:0:7}${REL_DIRTY:+ , built from a dirty checkout}"
+fi
+
+# Every release deserves a measurement of its own. Left to the six-hourly timer,
+# a busy morning of deploys comes out as one reading that four commits have an
+# equal claim on, which is the same as having no reading at all. Detached,
+# because measuring takes about a minute and nothing here should wait for it.
+if [ -n "$REL_SHA" ] && systemctl list-unit-files amitista-perf.service >/dev/null 2>&1; then
+  systemctl start --no-block amitista-perf.service 2>/dev/null \
+    && say "Measuring this release in the background" || true
+fi
 
 say "Deployed $REL"

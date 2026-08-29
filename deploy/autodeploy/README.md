@@ -69,6 +69,35 @@ Components: `website`, `studio-bot`, `enchange`, `admin-api`, `api-gateway`,
 `shield`. It deploys from the current checkout and takes the same snapshot and
 rollback path as an automatic run.
 
+## Which commit made the site slower
+
+A release directory is a timestamp and nothing in it says where it came from, so
+a measurement of the live site could be dated but never blamed. Publishing a
+release now writes a line naming the commit it was built from:
+
+```
+/var/www/amitista.com/releases.jsonl
+```
+
+Beside the releases rather than inside one, because the prune keeps only the
+newest five directories and would take the record with it — and outside what
+nginx serves, which is why the full sha can be written down at all. Only a
+release that passed verification is recorded: one that was rolled back never
+served anybody, and a commit in the ledger that no measurement can belong to is
+worse than a gap.
+
+Publishing also kicks off `amitista-perf.service` detached, so every release is
+measured rather than whichever ones the six-hourly timer happens to land on.
+`github-state.py` then joins the three sides — the monitor's readings, this
+ledger, and the commits and pull requests it already collects — into the
+snapshot the panel reads, under **GitHub → Site speed**. Nothing extra is asked
+of GitHub for any of it.
+
+The join declines to guess. A release measured while the checkout was dirty is
+flagged and nobody is named for it; a reading taken before the ledger existed is
+counted but not attributed; a change smaller than both an absolute floor and a
+tenth of what it was is not called a regression at all.
+
 ## Watching it
 
 ```sh

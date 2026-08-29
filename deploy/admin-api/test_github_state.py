@@ -491,7 +491,7 @@ api = FakeGitHub([([
     raised(1, merged_at="2026-01-02T00:00:00Z", closed_at="2026-01-02T00:00:00Z"),
     raised(2, closed_at="2026-01-03T00:00:00Z"),
     raised(3),
-], "ok")])
+], "ok"), ([], "ok"), ([], "ok"), ([], "ok")])
 rows = state.pull_history(api, "r", None)
 check("a merged pull request is recorded as merged", rows[0]["state"] == "merged")
 check("one closed without merging is not", rows[1]["state"] == "closed")
@@ -502,7 +502,42 @@ check(
 )
 check("who merged it is kept", state.pull_history(FakeGitHub([([
     raised(4, merged_at="2026-01-02T00:00:00Z", merged_by={"login": "kostis4563"}),
-], "ok")]), "r", None)[0]["mergedBy"] == "kostis4563")
+], "ok"), ([], "ok")]), "r", None)[0]["mergedBy"] == "kostis4563")
+
+# The history keeps its own review and check verdicts, and that is only
+# affordable because a pull request nobody has touched is not asked after at
+# all. Not a conditional request — no request.
+settled = [{
+    "number": 1,
+    "updated": "2026-01-05T00:00:00Z",
+    "sha": "abc",
+    "ci": "completed/success",
+    "reviews": [{"login": "a", "state": "APPROVED", "at": None}],
+}]
+api = FakeGitHub([([raised(1, updated_at="2026-01-05T00:00:00Z", head={"ref": "b", "sha": "abc"})], "ok")])
+rows = state.pull_history(api, "r", settled)
+check("a pull request nobody has touched is not asked after again", len(api.asked) == 1)
+check("and it keeps the reviews it already had", rows[0]["reviews"] == settled[0]["reviews"])
+check("and the check verdict it already had", rows[0]["ci"] == "completed/success")
+
+api = FakeGitHub([
+    ([raised(1, updated_at="2026-01-09T00:00:00Z", head={"ref": "b", "sha": "abc"})], "ok"),
+    ([review("a", "CHANGES_REQUESTED", "2026-01-09T00:00:00Z")], "ok"),
+])
+rows = state.pull_history(api, "r", settled)
+check(
+    "one that has been touched since is asked after again",
+    rows[0]["reviews"] == [{"login": "a", "state": "CHANGES_REQUESTED", "at": "2026-01-09T00:00:00Z"}],
+)
+
+many = [raised(n, head={"ref": "b"}) for n in range(state.MAX_HISTORY_DETAIL + 4)]
+api = FakeGitHub([(many, "ok")] + [([], "ok")] * state.MAX_HISTORY_DETAIL)
+rows = state.pull_history(api, "r", None)
+check("every pull request raised is listed", len(rows) == state.MAX_HISTORY_DETAIL + 4)
+check(
+    "but only the newest few are looked into",
+    len([row for row in rows if "reviews" in row]) == state.MAX_HISTORY_DETAIL,
+)
 check(
     "an entry with no number is dropped rather than drawn",
     state.pull_history(FakeGitHub([([{"title": "nameless"}], "ok")]), "r", None) == [],
@@ -561,6 +596,7 @@ detail_keys = {
     "invites": [{"id": 7}],
     "stats": [{"login": "someone", "commits": 3}],
     "punch": [{"day": 1, "hour": 9, "commits": 4}],
+    "alerts": {"dependabot": {"available": True, "items": [], "open": 0}},
 }
 kept = state.inspect("x", "/nowhere-at-all", FakeGitHub([]), dict(detail_keys), False)
 missing = [key for key in detail_keys if key not in kept]
@@ -708,6 +744,319 @@ check("an empty queue leaves the log exactly as it was", state.drain_queue(api, 
 
 state.QUEUE_DIR = os.path.join(state.QUEUE_DIR, "gone")
 check("a queue directory that does not exist is not an error", state.drain_queue(api, REPOS, ACTOR, log) is log)
+
+# ------------------------------------------------ which commit made it slower
+#
+# Three files that never see each other: the monitor writes what it measured and
+# which release was serving, the deploy writes which commit each release is, and
+# this joins them to the pull requests it already holds. What has to keep being
+# true is that it refuses to guess. A release with no measurement, a reading
+# with no release, a release built from a dirty checkout — each of those is a
+# reason to say less, not a gap to fill in with the neighbouring commit's name.
+
+print("\n-- performance, joined to the commit that caused it")
+
+perf_dir = tempfile.mkdtemp(prefix="perf-state-test-")
+state.PERF_HISTORY = os.path.join(perf_dir, "history.jsonl")
+state.RELEASE_LEDGER = os.path.join(perf_dir, "releases.jsonl")
+
+
+def write_lines(path, entries):
+    with open(path, "w", encoding="utf-8") as handle:
+        for entry in entries:
+            handle.write(json.dumps(entry) + "\n")
+
+
+def run(at, release, lcp, path="/", profile="broadband", **extra):
+    page = {"path": path, "lcp": lcp, "fcp": 400, "ttfb": 200, "cls": 0.01,
+            "tbt": 0, "longTaskMs": 0, "bytes": 100000}
+    page.update(extra)
+    entry = {"at": at, "profile": profile, "pages": [page], "problems": []}
+    if release is not None:
+        entry["release"] = {"release": release}
+    return entry
+
+
+def released(name, sha, subject, **extra):
+    entry = {"release": name, "sha": sha, "subject": subject, "author": "Kostis",
+             "committed": "2026-08-20T09:00:00Z", "dirty": False}
+    entry.update(extra)
+    return entry
+
+
+SITE = [
+    {
+        "name": "amitista-web",
+        "commits": [{"sha": "bbbbbbb", "subject": "Lazy-load the hero (#184)",
+                     "login": "kostis4563", "url": "https://github.com/o/r/commit/bbbbbbb"}],
+        "history": [{"number": 184, "title": "Lazy-load the hero", "author": "kostis4563",
+                     "merged": "2026-08-20T09:05:00Z", "url": "https://github.com/o/r/pull/184"}],
+    },
+    {"name": "amitista-bots", "commits": [], "history": []},
+]
+
+write_lines(state.RELEASE_LEDGER, [
+    released("20260820-080000", "a" * 40, "Tidy the footer (#183)"),
+    released("20260820-090000", "b" * 40, "Lazy-load the hero (#184)"),
+])
+write_lines(state.PERF_HISTORY, [
+    run("2026-08-20T08:10:00Z", "20260820-080000", 860),
+    run("2026-08-20T08:40:00Z", "20260820-080000", 900),
+    run("2026-08-20T08:50:00Z", "20260820-080000", 860),
+    run("2026-08-20T09:10:00Z", "20260820-090000", 1200),
+])
+
+report = state.site_performance(SITE)
+newest = report["releases"][0]
+
+check("the newest measured release is first", newest["release"] == "20260820-090000")
+check("its metrics are the middle of its own readings", newest["pages"][0]["lcp"] == 1200)
+# 860, 900, 860 — the mean would be 873 and the median is 860. Either would do
+# here; what matters is that one slow reading cannot redraw a release.
+check("and the release before it is the median of three", report["releases"][1]["pages"][0]["lcp"] == 860)
+check("it is compared against the release measured before it",
+      newest["against"]["release"] == "20260820-080000")
+check("the regression is found", [(m["metric"], m["delta"]) for m in newest["moves"]] == [("lcp", 340)])
+check("the commit it came from is named", newest["short"] == "b" * 7)
+check("and so is the pull request the subject carries", newest["pull"]["number"] == 184)
+check("with the title, so the panel need not ask GitHub for it",
+      newest["pull"]["title"] == "Lazy-load the hero")
+check("the commit's URL comes from what was already collected",
+      newest["commitUrl"] == "https://github.com/o/r/commit/bbbbbbb")
+check("the oldest release has nothing behind it to compare against",
+      "against" not in report["releases"][-1])
+
+# ------------------------------------------------- what it declines to report
+
+write_lines(state.PERF_HISTORY, [
+    run("2026-08-20T08:10:00Z", "20260820-080000", 860),
+    run("2026-08-20T09:10:00Z", "20260820-090000", 900),
+])
+moves = state.site_performance(SITE)["releases"][0]["moves"]
+# 40ms on 860 is under both the absolute floor and a tenth of what it was. The
+# box is shared with a deploy, three bots and nginx; a page that renders 40ms
+# later is the box having been busy, not a commit.
+check("a change smaller than the noise floor is not a regression", moves == [])
+
+write_lines(state.PERF_HISTORY, [
+    run("2026-08-20T08:10:00Z", "20260820-080000", 0),
+    run("2026-08-20T09:10:00Z", "20260820-090000", 1200),
+])
+moves = state.site_performance(SITE)["releases"][0]["moves"]
+check("a paint metric that did not measure is not an infinite regression",
+      [m["metric"] for m in moves] == [])
+
+# Blocking time is the opposite case: zero is a real reading, and moving off it
+# is the single most useful thing this can catch.
+write_lines(state.PERF_HISTORY, [
+    run("2026-08-20T08:10:00Z", "20260820-080000", 860, tbt=0),
+    run("2026-08-20T09:10:00Z", "20260820-090000", 860, tbt=310),
+])
+moves = state.site_performance(SITE)["releases"][0]["moves"]
+check("but blocking time going from nothing to something is",
+      [(m["metric"], m["delta"]) for m in moves] == [("tbt", 310)])
+
+write_lines(state.PERF_HISTORY, [
+    run("2026-08-20T08:10:00Z", "20260820-080000", 860),
+    run("2026-08-20T09:10:00Z", "20260820-090000", 1200, profile="slow-4g-4x-cpu"),
+])
+report = state.site_performance(SITE)
+check("a throttled run is not compared against an unthrottled one",
+      [entry["release"] for entry in report["releases"]] == ["20260820-090000"])
+check("the profile being reported on is said out loud", report["profile"] == "slow-4g-4x-cpu")
+
+# ------------------------------------------------------ rollbacks and gaps
+
+write_lines(state.PERF_HISTORY, [
+    run("2026-08-20T08:10:00Z", "20260820-080000", 860),
+    run("2026-08-20T09:10:00Z", "20260820-090000", 1200),
+    run("2026-08-20T09:40:00Z", "20260820-080000", 870),
+])
+report = state.site_performance(SITE)
+# The symlink went back to the older release, so the newest reading belongs to
+# the older commit. Ordering by release name would put the rolled-back one on
+# top and report the site as slow when it is not.
+check("a rollback puts what is serving now at the top",
+      report["releases"][0]["release"] == "20260820-080000")
+check("and it is compared against what it replaced",
+      report["releases"][0]["against"]["release"] == "20260820-090000")
+# 860 and 870 either side of the release that was rolled back, so the median of
+# what the older release measures is 865 against the newer one's 1200.
+check("so the rollback reads as the improvement it was",
+      report["releases"][0]["moves"][0]["delta"] == -335)
+
+write_lines(state.PERF_HISTORY, [
+    run("2026-08-20T07:10:00Z", None, 860),
+    run("2026-08-20T08:10:00Z", "20260820-080000", 860),
+])
+report = state.site_performance(SITE)
+check("a reading taken before any of this existed is not attributed to anybody",
+      [entry["release"] for entry in report["releases"]] == ["20260820-080000"])
+check("but it is counted, so the panel can say why its history is short",
+      report["unattributed"] == 1)
+
+write_lines(state.PERF_HISTORY, [run("2026-08-20T08:10:00Z", "20260820-070000", 860)])
+report = state.site_performance(SITE)
+check("a release the ledger never heard of is still reported",
+      report["releases"][0]["release"] == "20260820-070000")
+check("with nothing invented about the commit", report["releases"][0]["sha"] is None)
+check("and nobody named for it", report["releases"][0]["author"] is None)
+
+write_lines(state.RELEASE_LEDGER, [
+    released("20260820-080000", "a" * 40, "Tidy the footer (#183)"),
+    released("20260820-090000", "b" * 40, "Half-finished hero work", dirty=True),
+])
+write_lines(state.PERF_HISTORY, [
+    run("2026-08-20T08:10:00Z", "20260820-080000", 860),
+    run("2026-08-20T09:10:00Z", "20260820-090000", 1200),
+])
+newest = state.site_performance(SITE)["releases"][0]
+# Built from a checkout with uncommitted changes in it. What was measured is
+# not what that commit says, so the panel is told to stop short of blaming it.
+check("a release built from a dirty checkout says so", newest["dirty"] is True)
+check("and carries no pull request, because the subject is not a merge",
+      "pull" not in newest)
+
+# ------------------------------------------------------------ nothing there
+
+state.PERF_HISTORY = os.path.join(perf_dir, "no-such-history.jsonl")
+report = state.site_performance(SITE)
+check("no monitor on the box is not an error", report["releases"] == [])
+check("and it says so rather than showing an empty chart", bool(report["note"]))
+
+state.PERF_HISTORY = os.path.join(perf_dir, "torn.jsonl")
+with open(state.PERF_HISTORY, "w", encoding="utf-8") as handle:
+    handle.write(json.dumps(run("2026-08-20T08:10:00Z", "20260820-080000", 860)) + "\n")
+    handle.write('{"at": "2026-08-20T09:10:00Z", "prof\n')
+report = state.site_performance(SITE)
+check("a half-written line loses that reading and nothing else",
+      report["releases"][0]["pages"][0]["lcp"] == 860)
+
+
+# ------------------------------------------------ what GitHub says about risk
+#
+# The one that matters here is the difference between "nothing is wrong" and
+# "GitHub will not tell you". Both come back as an empty list, and reading the
+# second as the first is the most dangerous mistake this panel could make.
+
+
+class CodedGitHub(FakeGitHub):
+    """A FakeGitHub that also remembers the status each path answered with."""
+
+    def __init__(self, answers, codes=None, sends=None):
+        FakeGitHub.__init__(self, answers, sends)
+        self.codes = dict(codes or {})
+
+    def code_for(self, path):
+        for fragment, code in self.codes.items():
+            if fragment in path:
+                return code
+        return 200
+
+
+def advisory(number, severity, summary, package):
+    return {
+        "number": number,
+        "state": "open",
+        "html_url": "https://github.com/x/y/security/dependabot/%d" % number,
+        "created_at": "2026-08-20T10:00:00Z",
+        "security_advisory": {"severity": severity, "summary": summary},
+        "dependency": {"package": {"name": package}},
+    }
+
+
+api = CodedGitHub(
+    [
+        ([advisory(1, "critical", "Prototype pollution", "lodash")], "ok"),
+        (None, "error"),
+        (None, "error"),
+    ],
+    codes={"secret-scanning": 404, "code-scanning": 404},
+)
+alerts = state.security_alerts(api, "amitista-web", {})
+
+check("an open dependabot alert is carried", alerts["dependabot"]["open"] == 1)
+check("with the severity it came with", alerts["dependabot"]["items"][0]["severity"] == "critical")
+check("and the package it is about", alerts["dependabot"]["items"][0]["subject"] == "lodash")
+check("a feed this plan does not offer is not available",
+      alerts["secretScanning"]["available"] is False)
+check("and says why, rather than showing zero",
+      "paid plans" in alerts["secretScanning"]["why"])
+check("an available feed with nothing in it is available and empty",
+      alerts["dependabot"]["available"] is True)
+
+# A feed that was readable a minute ago and is unreachable now keeps what it
+# had. Anything else would empty the panel every time GitHub hiccups.
+was = {"dependabot": {"available": True, "what": "x", "items": [advisory(1, "high", "a", "b")], "open": 1}}
+api = CodedGitHub([(None, "error"), (None, "error"), (None, "error")], codes={})
+api.codes = {}
+
+
+class Unreachable(CodedGitHub):
+    def code_for(self, path):
+        return None
+
+
+api = Unreachable([(None, "error"), (None, "error"), (None, "error")])
+alerts = state.security_alerts(api, "amitista-web", was)
+check("a feed GitHub could not be reached for keeps its last answer",
+      alerts["dependabot"]["open"] == 1)
+
+api = CodedGitHub([(None, "unchanged"), (None, "unchanged"), (None, "unchanged")])
+alerts = state.security_alerts(api, "amitista-web", was)
+check("and an unchanged feed keeps it too", alerts["dependabot"]["open"] == 1)
+
+# 403 is a different problem from 404 and is worth different words: one is the
+# plan, the other is the token.
+api = CodedGitHub([(None, "error"), (None, "error"), (None, "error")],
+                  codes={"dependabot": 403})
+alerts = state.security_alerts(api, "amitista-web", {})
+check("a feed the token may not read says so", "token" in alerts["dependabot"]["why"])
+
+# ------------------------------------------------- what stands in the way here
+
+scan_repo = tempfile.mkdtemp(prefix="guards-test-")
+os.makedirs(os.path.join(scan_repo, ".githooks"))
+os.makedirs(os.path.join(scan_repo, "scripts"))
+
+held = state.guards(scan_repo, "abc1234", {})
+check("a repository carrying no hook is reported as not carrying one",
+      held["prePush"]["shipped"] is False)
+check("and its scanner is missing too", held["scanner"]["shipped"] is False)
+check("a repository with no scanner is not reported as clean",
+      held["scan"]["ran"] is False)
+check("it says why instead", "does not carry" in held["scan"]["why"])
+
+with open(os.path.join(scan_repo, ".githooks", "pre-push"), "w", encoding="utf-8") as handle:
+    handle.write("#!/usr/bin/env bash\n")
+with open(os.path.join(scan_repo, ".githooks", "allowed-secrets"), "w", encoding="utf-8") as handle:
+    handle.write("# a comment, which is not an entry\n\nabc123abc123  a fixture\n")
+with open(os.path.join(scan_repo, "scripts", "check-dist-secrets.mjs"), "w", encoding="utf-8") as handle:
+    handle.write("// stub\n")
+
+held = state.guards(scan_repo, "abc1234", {})
+check("a shipped hook is seen", held["prePush"]["shipped"] is True)
+check("one that is not executable is not reported as executable",
+      held["prePush"]["executable"] is False)
+check("the allowlist is counted without its comments", held["scanner"]["allowlisted"] == 1)
+check("the build's own check is seen", held["build"]["distCheck"] is True)
+check("a checkout that has not enabled the hook says so",
+      held["prePush"]["enabledHere"] is False)
+
+# The scan is skipped when the tip has not moved, because it runs every tick
+# and the answer cannot have changed. The file only has to exist for this — the
+# point is that it is never run.
+with open(os.path.join(scan_repo, "scripts", "scan-secrets.mjs"), "w", encoding="utf-8") as handle:
+    handle.write("// stub: running this would fail, which is the test\n")
+
+was = {"scan": {"ran": True, "head": "abc1234", "clean": True, "findings": [], "at": "earlier"}}
+held = state.guards(scan_repo, "abc1234", was)
+check("an unmoved tip reuses the scan it already has", held["scan"]["at"] == "earlier")
+held = state.guards(scan_repo, "def5678", was)
+check("and a moved tip does not", held["scan"].get("at") != "earlier")
+check("a scanner that will not run is reported, not assumed clean",
+      held["scan"]["ran"] is False and held["scan"].get("clean") is None)
+
 
 if failures:
     print("\n%d of %d checks FAILED: %s" % (len(failures), total, ", ".join(failures)))

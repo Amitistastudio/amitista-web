@@ -76,10 +76,26 @@ MAX_PULL_DETAIL = 10
 # this been done before" without anybody leaving it. Shallow rows and one
 # conditional request per repository, which is what makes the depth affordable.
 MAX_PULL_HISTORY = 60
+# How many of the history rows are looked into for their reviews and their
+# workflow verdict. Both are asked once and then never again: a closed pull
+# request cannot gain a review, and a finished run does not change its mind, so
+# after the first tick these cost nothing at all.
+MAX_HISTORY_DETAIL = 15
 # Every review on one pull request. A hundred is GitHub's page ceiling and far
 # past anything three people will produce, so this never has to page.
 MAX_REVIEWS = 100
 MAX_FILES = 40
+# How much of each file's diff is kept, and how much across the whole pull
+# request. Enough for a review to be about the code rather than the file names,
+# and little enough that forty files cannot make the snapshot unreadable.
+#
+# These never reach the panel. The admin API strips them before the snapshot
+# travels, because the browser has no use for a diff it does not display and
+# every reader would pay for it. They are kept so that the one thing that does
+# want them — an on-demand review — has something to read without this process
+# needing to be asked again.
+MAX_PATCH_CHARS = 4000
+MAX_PATCH_TOTAL = 48000
 MAX_ISSUES = 30
 # Enough recent commits to draw a fortnight of activity and say who has been
 # doing it, across all three repositories at once. Still one request each.
@@ -104,6 +120,40 @@ MAX_STAT_WEEKS = 26
 # running as a different, less privileged account; if that account were ever
 # taken, the queue is the first thing that would be used, so every field is
 # checked here again from scratch rather than believed.
+# What the performance monitor measured, and what the deploy was serving when it
+# did. Two files written by two things that never speak to each other: the
+# monitor knows the numbers and which release was live, the deploy knows which
+# commit that release is. Joined here because this is the one process that also
+# holds the commits and pull requests to join them to.
+PERF_HISTORY = os.environ.get("AUTODEPLOY_PERF_HISTORY", "/var/lib/amitista/perf/history.jsonl")
+RELEASE_LEDGER = os.environ.get("AUTODEPLOY_RELEASE_LEDGER", "/var/www/amitista.com/releases.jsonl")
+# Only one of the three repositories is the site, so only one of them can have
+# made it slower.
+PERF_REPO = os.environ.get("AUTODEPLOY_PERF_REPO", "amitista-web")
+# Enough releases to see a fortnight of deploys, and enough runs behind them to
+# have several measurements of each. Both are read every tick, so both are
+# ceilings on work as much as on size.
+MAX_PERF_RELEASES = 20
+MAX_PERF_RUNS = 400
+# Core Web Vitals as a headless browser can honestly produce them, plus the ones
+# that explain a change in them. LCP first because it is the one that moves.
+#
+# INP is not here and cannot be: it measures how long the page took to respond
+# to a real interaction, and nobody interacts with this one. TBT is the lab
+# stand-in the field agrees on — the blocking time an interaction would have had
+# to queue behind — and the panel labels it as that rather than passing it off
+# as the third vital.
+PERF_METRICS = ("lcp", "cls", "tbt", "fcp", "ttfb", "longTaskMs", "bytes")
+# What a metric has to move by before the panel calls it a change rather than
+# the box having been busy. Mirrors the monitor's own floors deliberately: it
+# alerts on one run against one run, this compares medians of several, and the
+# two agreeing about what counts as a shift is what stops the panel and the
+# alert telling different stories about the same deploy.
+PERF_FLOOR = {"lcp": 120, "fcp": 120, "ttfb": 120, "tbt": 50, "cls": 0.02, "longTaskMs": 150, "bytes": 20480}
+PERF_FRACTION = 0.1
+# Squash and merge both leave the pull request number at the end of the subject.
+PULL_IN_SUBJECT = re.compile(r"\(#(\d+)\)\s*$")
+
 QUEUE_DIR = os.environ.get("ADMIN_GITHUB_QUEUE", "/var/lib/amitista/admin/github-queue")
 MAX_QUEUE_PER_TICK = 20
 MAX_ACTION_LOG = 25
@@ -221,6 +271,11 @@ class GitHub:
         self.calls = 0
         self.spent = 0
         self.failed = False
+        # The status each path last came back with. An error is not one thing:
+        # a 404 on the secret scanning feed means this plan does not offer it
+        # and never will, and a 502 means ask again in a minute. The panel has
+        # to say which, so the code is kept rather than flattened into "error".
+        self.codes = {}
 
     def get(self, path, have_cached=False):
         """Returns (payload, state) where state is ok, unchanged or error.
@@ -259,9 +314,11 @@ class GitHub:
                 else:
                     self.etags.pop(path, None)
                 self.spent += 1
+                self.codes[path] = 200
                 return payload, "ok"
         except urllib.error.HTTPError as failure:
             self._note(failure.headers)
+            self.codes[path] = failure.code
             if failure.code == 304:
                 return None, "unchanged"
             # A 404 (renamed, or no longer visible to this token) and a 500 are
@@ -271,7 +328,11 @@ class GitHub:
             return None, "error"
         except (urllib.error.URLError, OSError, ValueError):
             self.failed = True
+            self.codes[path] = None
             return None, "error"
+
+    def code_for(self, path):
+        return self.codes.get(path)
 
     def send(self, method, path, body=None):
         """The only thing in this file that changes anything at GitHub.
@@ -443,16 +504,32 @@ def pull_files(api, repo, number, cached):
     )
     if state != "ok" or not isinstance(payload, list):
         return cached if isinstance(cached, list) else []
-    return [
-        {
+
+    out = []
+    budget = MAX_PATCH_TOTAL
+    for entry in payload:
+        if not isinstance(entry, dict) or not entry.get("filename"):
+            continue
+        row = {
             "path": entry.get("filename"),
             "status": entry.get("status"),
             "added": entry.get("additions"),
             "removed": entry.get("deletions"),
         }
-        for entry in payload
-        if isinstance(entry, dict) and entry.get("filename")
-    ]
+        # A file with no patch is normal rather than a failure: GitHub leaves it
+        # out for anything it treats as binary, and for a diff too large to
+        # inline. Recorded as clipped either way, so whatever reads this can say
+        # it is working from part of the change rather than all of it.
+        patch = entry.get("patch")
+        if isinstance(patch, str) and patch and budget > 0:
+            room = min(MAX_PATCH_CHARS, budget)
+            row["patch"] = patch[:room]
+            row["clipped"] = len(patch) > room
+            budget -= len(row["patch"])
+        elif isinstance(patch, str) and patch:
+            row["clipped"] = True
+        out.append(row)
+    return out
 
 
 def pull_ci(api, repo, sha, known):
@@ -538,6 +615,8 @@ def pull_history(api, repo, cached):
     if state != "ok" or not isinstance(payload, list):
         return cached if isinstance(cached, list) else []
 
+    known = {entry.get("number"): entry for entry in (cached or []) if isinstance(entry, dict)}
+
     out = []
     for entry in payload:
         if not isinstance(entry, dict):
@@ -550,6 +629,7 @@ def pull_history(api, repo, cached):
         out.append(
             {
                 "number": number,
+                "sha": ((entry.get("head") or {}).get("sha")),
                 "title": entry.get("title"),
                 "author": ((entry.get("user") or {}).get("login")),
                 "state": "merged" if merged else ("closed" if closed else "open"),
@@ -574,7 +654,32 @@ def pull_history(api, repo, cached):
                 "url": entry.get("html_url"),
             }
         )
+
+    for index, row in enumerate(out):
+        if index >= MAX_HISTORY_DETAIL:
+            break
+        was = known.get(row["number"]) or {}
+        row["reviews"] = history_reviews(api, repo, row, was)
+        row["ci"] = pull_ci(api, repo, row.get("sha"), was)
     return out
+
+
+def history_reviews(api, repo, row, was):
+    """The reviews on a pull request in the history, asked once per change.
+
+    GitHub moves updated_at when a review is submitted, so a pull request that
+    has not been touched since the last look cannot have gained one and the
+    cached answer stands without a request being made at all. That is what makes
+    it affordable to keep the review history of closed pull requests: they stop
+    being touched, so they are asked after once and then never again.
+
+    Not the same as a conditional request, which would still cost a round trip
+    per pull request per tick. This costs nothing.
+    """
+    held = was.get("reviews")
+    if isinstance(held, list) and was.get("updated") == row.get("updated"):
+        return held
+    return pull_reviews(api, repo, row["number"], held)
 
 
 def open_pulls(api, repo, cached):
@@ -903,6 +1008,246 @@ def punch_card(api, repo, cached):
     return out
 
 
+# ------------------------------------------------------------------ security
+
+# How many of each kind of alert to carry. The panel wants the worst few and a
+# count, not a tracker.
+MAX_ALERTS = 20
+
+# How far back the local scan reads. Far enough to cover anything recent that
+# went in without the hook running, short enough to stay cheap at a tick a
+# minute.
+SCAN_COMMITS = 50
+
+# What GitHub itself has to say, and — where it says nothing — whether that is
+# because there is nothing to say or because this plan does not offer the
+# feature at all.
+#
+# The distinction is the whole point of this block. A private repository on the
+# Free plan gets no secret scanning and no code scanning: the endpoints answer
+# 404, and an empty list drawn from a 404 is not a clean bill of health. Showing
+# it as one would be the most dangerous thing this panel could do, so an
+# unavailable feed says so in as many words and never counts as zero.
+ALERT_FEEDS = (
+    ("dependabot", "dependabot/alerts", "dependencies with a known vulnerability"),
+    ("secretScanning", "secret-scanning/alerts", "credentials committed to the repository"),
+    ("codeScanning", "code-scanning/alerts", "findings from code analysis"),
+)
+
+# GitHub answers an unavailable feed in more than one way, and the wording it
+# deserves differs. 404 is "not on this plan, or not switched on"; 403 is "this
+# token may not ask", which is a different thing to go and fix.
+ALERT_WHY = {
+    404: "not available on this repository — GitHub offers it on paid plans, or it is switched off",
+    403: "the deploy's token is not allowed to read this feed",
+    401: "the deploy's token was refused",
+}
+
+
+def alert_row(feed, entry):
+    """One alert, flattened to what a panel row needs."""
+    if not isinstance(entry, dict):
+        return None
+    row = {
+        "number": entry.get("number"),
+        "url": entry.get("html_url"),
+        "at": entry.get("created_at"),
+        "state": entry.get("state"),
+    }
+    if feed == "dependabot":
+        advisory = entry.get("security_advisory") or {}
+        package = ((entry.get("dependency") or {}).get("package") or {})
+        row["severity"] = advisory.get("severity")
+        row["title"] = advisory.get("summary")
+        row["subject"] = package.get("name")
+    elif feed == "secretScanning":
+        row["severity"] = "critical"
+        row["title"] = entry.get("secret_type_display_name") or entry.get("secret_type")
+        row["subject"] = entry.get("push_protection_bypassed") and "push protection bypassed" or None
+    else:
+        rule = entry.get("rule") or {}
+        row["severity"] = rule.get("security_severity_level") or rule.get("severity")
+        row["title"] = rule.get("description") or rule.get("name")
+        row["subject"] = ((entry.get("most_recent_instance") or {}).get("location") or {}).get("path")
+    return row
+
+
+def security_alerts(api, repo, cached):
+    """Every alert feed GitHub offers, each saying whether it is offered."""
+    held = cached if isinstance(cached, dict) else {}
+    out = {}
+    for feed, tail, what in ALERT_FEEDS:
+        path = "/repos/%s/%s/%s?state=open&per_page=%d" % (ORG, repo, tail, MAX_ALERTS)
+        was = held.get(feed) or {}
+        payload, condition = api.get(path, isinstance(was.get("items"), list))
+
+        if condition == "unchanged" or (condition == "error" and api.code_for(path) is None):
+            # Nothing new, or GitHub was unreachable. Either way the last answer
+            # is still the best one available and is kept as it was.
+            out[feed] = was or {"available": None, "what": what, "items": [], "open": 0}
+            continue
+
+        if condition == "error":
+            code = api.code_for(path)
+            out[feed] = {
+                "available": False,
+                "what": what,
+                "why": ALERT_WHY.get(code, "GitHub answered %s" % code),
+                "items": [],
+                "open": 0,
+            }
+            continue
+
+        rows = [row for row in (alert_row(feed, entry) for entry in payload or []) if row]
+        out[feed] = {"available": True, "what": what, "items": rows, "open": len(rows)}
+    return out
+
+
+def scan_range(path):
+    """The range the local scan reads: the last SCAN_COMMITS, or all of them."""
+    depth = git(path, "rev-list", "--count", "HEAD")
+    if depth and depth.isdigit() and int(depth) > SCAN_COMMITS:
+        return "HEAD~%d..HEAD" % SCAN_COMMITS
+    root = git(path, "rev-list", "--max-parents=0", "HEAD")
+    first = (root or "").splitlines()[0] if root else ""
+    return "%s..HEAD" % first if first else None
+
+
+def local_scan(path, head, was):
+    """Run the repository's own credential scanner over its recent history.
+
+    This is the half that does not depend on anybody's clone being set up
+    properly. The pre-push hook only ever runs on the machine doing the pushing
+    and only if that machine enabled it; this runs on the box, every time the
+    tip moves, over what actually landed. If the two ever disagree, this one is
+    the one that is true.
+
+    A repository that does not carry the scanner is reported as not carrying it
+    rather than as clean, for the same reason an unavailable alert feed is.
+    """
+    scanner = os.path.join(path, "scripts", "scan-secrets.mjs")
+    if not os.path.exists(scanner):
+        return {"ran": False, "why": "this repository does not carry scripts/scan-secrets.mjs"}
+
+    # The tip has not moved, so neither has the answer. The scan is cheap but it
+    # is not free, and this runs once a minute for as long as the box is up.
+    # Checked before node is looked for on purpose: whether node happens to be
+    # installed this minute has no bearing on what a scan of this exact commit
+    # already found.
+    if isinstance(was, dict) and was.get("head") == head and was.get("ran"):
+        return was
+
+    node = shutil.which("node")
+    if not node:
+        return {"ran": False, "why": "no node on this box, so the scanner could not be run"}
+
+    span = scan_range(path)
+    if span is None:
+        return {"ran": False, "why": "no commits to read"}
+
+    try:
+        done = subprocess.run(
+            (node, scanner, "--json", span),
+            cwd=path,
+            capture_output=True,
+            text=True,
+            timeout=TIMEOUT,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return {"ran": False, "why": "the scanner could not be started"}
+
+    try:
+        answer = json.loads(done.stdout or "{}")
+    except ValueError:
+        return {"ran": False, "why": "the scanner did not answer in JSON"}
+    if not isinstance(answer, dict) or answer.get("error"):
+        return {"ran": False, "why": answer.get("error") if isinstance(answer, dict) else "unreadable"}
+
+    findings = [row for row in answer.get("findings") or [] if isinstance(row, dict)]
+    return {
+        "ran": True,
+        "head": head,
+        "at": now(),
+        "range": answer.get("range"),
+        "files": answer.get("files"),
+        "lines": answer.get("lines"),
+        "allowlisted": answer.get("allowlistedCount") or 0,
+        "clean": len(findings) == 0,
+        # The findings carry a fingerprint and a place, never the value. This
+        # file is world-readable by the admin group; a list of real credentials
+        # in it would be a worse leak than the one it is reporting.
+        "findings": findings[:MAX_ALERTS],
+    }
+
+
+def scanner_rules(path, was):
+    """What the scanner in this checkout knows how to spot.
+
+    Asked of the scanner rather than listed here, so the panel names what
+    actually shipped. A list kept in two places is a list that disagrees with
+    itself the first time somebody adds a rule.
+    """
+    scanner = os.path.join(path, "scripts", "scan-secrets.mjs")
+    node = shutil.which("node")
+    if not os.path.exists(scanner) or not node:
+        return was if isinstance(was, list) else []
+    try:
+        done = subprocess.run(
+            (node, scanner, "--rules"), cwd=path, capture_output=True, text=True, timeout=TIMEOUT
+        )
+        rules = json.loads(done.stdout or "[]")
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return was if isinstance(was, list) else []
+    return [row for row in rules if isinstance(row, dict)] if isinstance(rules, list) else []
+
+
+def count_allowlist(path):
+    try:
+        with open(os.path.join(path, ".githooks", "allowed-secrets"), "r", encoding="utf-8") as handle:
+            return sum(
+                1 for line in handle if line.strip() and not line.strip().startswith("#")
+            )
+    except OSError:
+        return None
+
+
+def guards(path, head, known):
+    """What is actually standing between a credential and this box.
+
+    Every line here is checked rather than assumed, because the interesting
+    failure is a guard that is present and switched off. The one thing this
+    cannot see is whether the people who push have enabled the hook in their own
+    clones — the hook runs there, not here — so it reports what the repository
+    ships and says plainly that enabling it is per-clone.
+    """
+    hook = os.path.join(path, ".githooks", "pre-push")
+    scanner = os.path.join(path, "scripts", "scan-secrets.mjs")
+    dist = os.path.join(path, "scripts", "check-dist-secrets.mjs")
+    hooks_path = git(path, "config", "core.hooksPath")
+
+    return {
+        "prePush": {
+            "shipped": os.path.exists(hook),
+            "executable": os.path.exists(hook) and os.access(hook, os.X_OK),
+            # True only of this box's own checkout, which never pushes. It is
+            # reported because it is checkable and because a developer reading
+            # the panel can compare it against their own clone.
+            "hooksPath": hooks_path or None,
+            "enabledHere": hooks_path == ".githooks",
+        },
+        "scanner": {
+            "shipped": os.path.exists(scanner),
+            "allowlisted": count_allowlist(path),
+            "rules": scanner_rules(path, ((known or {}).get("guards") or {}).get("scanner", {}).get("rules")),
+        },
+        "build": {
+            # Runs at postbuild, so nothing reaches the web root without it.
+            "distCheck": os.path.exists(dist),
+        },
+        "scan": local_scan(path, head, (known or {}).get("scan")),
+    }
+
+
 def detail_for(api, repo, cached):
     facts = repo_facts(api, repo, cached.get("facts") or {})
     pulls = open_pulls(api, repo, cached.get("pulls"))
@@ -915,6 +1260,7 @@ def detail_for(api, repo, cached):
     invites = repo_invites(api, repo, cached.get("invites"))
     stats = contributions(api, repo, cached.get("stats"))
     punch = punch_card(api, repo, cached.get("punch"))
+    alerts = security_alerts(api, repo, cached.get("alerts"))
     return {
         "facts": facts,
         "pulls": pulls,
@@ -927,6 +1273,7 @@ def detail_for(api, repo, cached):
         "invites": invites,
         "stats": stats,
         "punch": punch,
+        "alerts": alerts,
     }
 
 
@@ -1269,6 +1616,286 @@ def drain_queue(api, repos, actor, previous):
 
 # ---------------------------------------------------------------- assembling
 
+# ------------------------------------------------------- which commit did it
+
+def read_jsonl(path, limit):
+    """The last `limit` records of a JSON-lines file, oldest first.
+
+    Read whole and sliced rather than seeked from the end: both files are
+    written by replacing them atomically, so what is open here is a consistent
+    snapshot for as long as it is held, and neither is large enough for the
+    difference to matter. An unreadable line is dropped rather than fatal —
+    losing one measurement is not a reason to leave the panel with none.
+    """
+    out = []
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            lines = handle.read().splitlines()
+    except OSError:
+        return out
+    for line in lines[-limit:]:
+        if not line.strip():
+            continue
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(entry, dict):
+            out.append(entry)
+    return out
+
+
+def middle(values):
+    """The median, because one slow run should not redraw a release.
+
+    A measurement taken while the box was doing something else is not a wrong
+    reading — the page really did take that long — but it is not the release's
+    doing either, and a mean lets one of them speak for all of them.
+    """
+    ordered = sorted(values)
+    if not ordered:
+        return None
+    half = len(ordered) // 2
+    if len(ordered) % 2:
+        return ordered[half]
+    return (ordered[half - 1] + ordered[half]) / 2
+
+
+def round_metric(name, value):
+    if value is None:
+        return None
+    if name == "cls":
+        return round(value, 4)
+    return int(round(value))
+
+
+def pull_from_subject(subject):
+    hit = PULL_IN_SUBJECT.search(subject or "")
+    return int(hit.group(1)) if hit else None
+
+
+def measured_pages(runs):
+    """Every route these runs touched, each metric the middle of what was seen.
+
+    Kept per route rather than averaged into one number for the site. "The site
+    got slower" is not something anybody can act on; "/ got slower and /work did
+    not" points at what changed.
+    """
+    by_path = {}
+    for run in runs:
+        for page in run.get("pages") or []:
+            if not isinstance(page, dict):
+                continue
+            path = page.get("path")
+            if not isinstance(path, str) or not path:
+                continue
+            held = by_path.setdefault(path, {name: [] for name in PERF_METRICS})
+            for name in PERF_METRICS:
+                value = page.get(name)
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    held[name].append(value)
+
+    out = []
+    for path in sorted(by_path):
+        entry = {"path": path}
+        for name in PERF_METRICS:
+            entry[name] = round_metric(name, middle(by_path[path][name]))
+        out.append(entry)
+    return out
+
+
+def metric_moves(now, before):
+    """What moved between two releases, per route and metric, both directions.
+
+    Improvements are kept alongside regressions. The question the panel exists
+    to answer cuts both ways — a release that was supposed to make the site
+    faster and did nothing is worth seeing, and so is the fix that worked.
+    """
+    was = {page["path"]: page for page in before}
+    out = []
+    for page in now:
+        previous = was.get(page["path"])
+        if previous is None:
+            continue
+        for name in PERF_METRICS:
+            start, end = previous.get(name), page.get(name)
+            if not isinstance(start, (int, float)) or not isinstance(end, (int, float)):
+                continue
+            # A zero is a real reading for the metrics that count something the
+            # page may simply not have done — blocking time, bytes past a
+            # budget. For a paint timing it means the measurement did not
+            # happen, and reporting that as an infinite improvement would be a
+            # lie in the flattering direction.
+            if name in ("lcp", "fcp", "ttfb") and (not start or not end):
+                continue
+            change = end - start
+            if abs(change) < PERF_FLOOR.get(name, 0):
+                continue
+            if abs(change) < abs(start) * PERF_FRACTION:
+                continue
+            out.append(
+                {
+                    "path": page["path"],
+                    "metric": name,
+                    "from": round_metric(name, start),
+                    "to": round_metric(name, end),
+                    "delta": round_metric(name, change),
+                    # How bad it is, in noise floors, so that 340 of
+                    # milliseconds and 0.05 of layout shift can be compared at
+                    # all — sorting on the raw number would put every
+                    # millisecond metric above every CLS one for ever.
+                    #
+                    # Worked out here and carried rather than left for the panel
+                    # to derive, so that the order of a release's own list and
+                    # the headline picked out across all of them cannot end up
+                    # disagreeing about which was the worst thing that happened.
+                    "weight": round(change / (PERF_FLOOR.get(name) or 1), 2),
+                }
+            )
+    # Regressions first, worst of them at the front, then the improvements with
+    # the biggest of those at the front. Sorting on the signed weight alone put
+    # the *smallest* improvement first on a release that only made things
+    # better, which reads as the least interesting thing it did.
+    out.sort(key=lambda move: (move["weight"] <= 0, -abs(move["weight"])))
+    return out
+
+
+def site_performance(repositories):
+    """Join what was measured to the commit that was live when it was measured.
+
+    Three files and none of them alone can answer the question. The monitor
+    records numbers and the release that was serving. The deploy records which
+    commit each release is. This process is already holding the commits and the
+    pull requests they arrived in. Nothing new is asked of GitHub for any of it.
+
+    What comes out is a release at a time, newest measurement first, each with
+    the middle of every reading taken while it was live and what that moved
+    against the release measured before it. A release with no measurement is not
+    listed: it was deployed and replaced inside a measurement's reach, and
+    inventing a reading for it would put a commit's name against numbers that
+    belong to its neighbour.
+    """
+    runs = read_jsonl(PERF_HISTORY, MAX_PERF_RUNS)
+    if not runs:
+        return {
+            "measured": None,
+            "releases": [],
+            "note": "no measurement has been taken on this box yet",
+        }
+
+    # One profile at a time. A throttled run against an unthrottled one compares
+    # the emulation rather than the code, and the difference between them is far
+    # larger than any regression worth finding. The newest run's profile wins,
+    # because that is the one the timer is set to.
+    profile = runs[-1].get("profile")
+    runs = [run for run in runs if run.get("profile") == profile]
+
+    ledger = {
+        entry["release"]: entry
+        for entry in read_jsonl(RELEASE_LEDGER, MAX_PERF_RELEASES * 4)
+        if isinstance(entry.get("release"), str)
+    }
+
+    by_release = {}
+    dateless = 0
+    for run in runs:
+        release = run.get("release")
+        name = release.get("release") if isinstance(release, dict) else None
+        if not isinstance(name, str) or not name:
+            # Measured before any of this existed, or while the symlink could
+            # not be read. Counted so the panel can say why its history is
+            # shorter than the monitor's.
+            dateless += 1
+            continue
+        by_release.setdefault(name, []).append(run)
+
+    # Newest last measurement first. Not by release name, which is the time it
+    # was built: a rollback re-points the symlink at an older release, and it is
+    # what is serving now that belongs at the top.
+    order = sorted(
+        by_release,
+        key=lambda name: max(str(run.get("at") or "") for run in by_release[name]),
+        reverse=True,
+    )[:MAX_PERF_RELEASES]
+
+    site = next((repo for repo in repositories if repo.get("name") == PERF_REPO), {})
+    commits = {
+        str(commit.get("sha") or "")[:7]: commit
+        for commit in (site.get("commits") or [])
+        if isinstance(commit, dict) and commit.get("sha")
+    }
+    pulls = {
+        pull["number"]: pull
+        for pull in (site.get("history") or [])
+        if isinstance(pull, dict) and isinstance(pull.get("number"), int)
+    }
+
+    entries = []
+    for name in order:
+        group = sorted(by_release[name], key=lambda run: str(run.get("at") or ""))
+        recorded = ledger.get(name) or {}
+        sha = recorded.get("sha")
+        short = sha[:7] if isinstance(sha, str) else None
+        commit = commits.get(short) if short else None
+        subject = recorded.get("subject") or (commit or {}).get("subject")
+        number = pull_from_subject(subject)
+        pull = pulls.get(number) if number is not None else None
+
+        entry = {
+            "release": name,
+            "sha": sha,
+            "short": short,
+            "subject": subject,
+            "author": recorded.get("author") or (commit or {}).get("author"),
+            "login": (commit or {}).get("login"),
+            "committed": recorded.get("committed"),
+            "commitUrl": (commit or {}).get("url"),
+            # A release built from a checkout with uncommitted changes in it is
+            # not the commit it names. Carried through so the panel can decline
+            # to blame anybody for it rather than blaming the wrong person.
+            "dirty": bool(recorded.get("dirty")),
+            "runs": len(group),
+            "first": group[0].get("at"),
+            "last": group[-1].get("at"),
+            "pages": measured_pages(group),
+            # The newest run's verdict, not every run's: the older ones were
+            # answering about a site that has since been redeployed.
+            "problems": [p for p in (group[-1].get("problems") or []) if isinstance(p, str)],
+        }
+        if pull is not None:
+            entry["pull"] = {
+                "number": pull.get("number"),
+                "title": pull.get("title"),
+                "author": pull.get("author"),
+                "merged": pull.get("merged"),
+                "url": pull.get("url"),
+            }
+        elif number is not None:
+            # The subject names a pull request the collector's window no longer
+            # reaches back to. The number is still the useful half.
+            entry["pull"] = {"number": number}
+        entries.append(entry)
+
+    # The chain, walked after the fact: each release against the one measured
+    # before it. Done here rather than in the loop because "the previous one"
+    # only means anything once the order is settled.
+    for index, entry in enumerate(entries):
+        older = entries[index + 1] if index + 1 < len(entries) else None
+        if older is None:
+            continue
+        entry["against"] = {"release": older["release"], "short": older.get("short")}
+        entry["moves"] = metric_moves(entry["pages"], older["pages"])
+
+    return {
+        "measured": runs[-1].get("at"),
+        "profile": profile,
+        "release": entries[0]["release"] if entries else None,
+        "releases": entries,
+        "unattributed": dateless,
+        "metrics": list(PERF_METRICS),
+    }
+
+
 def cached(previous, name):
     for entry in previous.get("repositories") or []:
         if entry.get("name") == name:
@@ -1304,6 +1931,7 @@ def inspect(name, path, api, known, want_detail):
                 "ci": "unknown",
                 "green": False,
                 "synced": False,
+                "guards": None,
             }
         )
     else:
@@ -1325,6 +1953,10 @@ def inspect(name, path, api, known, want_detail):
                 "green": verdict == "completed/success",
                 "synced": bool(remote) and head == remote,
                 "head": commit_facts(path, "HEAD"),
+                # Local, so it is worked out every tick rather than only on a
+                # detail round: it costs a few stats and a scan that skips
+                # itself when the tip has not moved.
+                "guards": guards(path, head, known),
             }
         )
         if remote and remote != head:
@@ -1349,6 +1981,7 @@ def inspect(name, path, api, known, want_detail):
             "invites",
             "stats",
             "punch",
+            "alerts",
         )
         if key in known
     }
@@ -1454,6 +2087,19 @@ def main():
         "people": people,
         "etags": api.etags,
     }
+
+    # Read from disk rather than asked of GitHub, so it costs nothing off the
+    # rate limit and is redone every tick regardless of whether the detail pass
+    # ran. Never fatal: a box with no performance monitor on it still has three
+    # repositories worth reporting.
+    try:
+        payload["performance"] = site_performance(repositories)
+    except (OSError, ValueError, TypeError, KeyError) as failure:
+        payload["performance"] = {
+            "measured": None,
+            "releases": [],
+            "note": "could not read the performance history: %s" % failure,
+        }
     payload["detail"] = now() if want_detail and not api.failed else previous.get("detail")
     if api.remaining is not None:
         payload["rate"] = {"remaining": api.remaining, "limit": api.limit, "reset": api.reset}

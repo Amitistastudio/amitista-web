@@ -13,6 +13,8 @@
 //     node scripts/scan-secrets.mjs abc123..def456  a range
 //     node scripts/scan-secrets.mjs --staged        what is about to be committed
 //     node scripts/scan-secrets.mjs --history 20    what previous scans found
+//     node scripts/scan-secrets.mjs --json <range>  the same verdict, for a machine
+//     node scripts/scan-secrets.mjs --rules         what it knows how to spot
 //
 // Exit 0 clean or overridden, 1 blocked, 2 asked wrongly.
 import { createHash } from 'node:crypto';
@@ -279,14 +281,30 @@ function showHistory(limit) {
 // --------------------------------------------------------------------- main
 const args = process.argv.slice(2);
 
-if (args[0] === '--history') {
-  process.exit(showHistory(Number(args[1]) || 20));
+// Asked for by the deploy, which runs this over each checkout every time the
+// tip moves and puts the verdict in the panel. It wants the findings, not the
+// telling-off, and it must never have to parse the telling-off to get them.
+const asJson = args.includes('--json');
+const rest = args.filter((arg) => arg !== '--json');
+
+// Asked for by the collector, so the panel can say what the scanner that
+// actually shipped looks for rather than carrying its own copy of the list and
+// drifting from it.
+if (rest[0] === '--rules') {
+  const rules = RULES.map(([rule, label]) => ({ rule, label }));
+  rules.push({ rule: 'generic-secret', label: 'a hardcoded secret assignment' });
+  console.log(JSON.stringify(rules));
+  process.exit(0);
 }
 
-let range = args[0];
+if (rest[0] === '--history') {
+  process.exit(showHistory(Number(rest[1]) || 20));
+}
+
+let range = rest[0];
 let label = range;
 
-if (args[0] === '--staged') {
+if (rest[0] === '--staged') {
   range = '--cached';
   label = 'staged changes';
 } else if (!range) {
@@ -302,7 +320,11 @@ if (args[0] === '--staged') {
 
 const lines = addedLines(range);
 if (lines === null) {
-  console.error(`scan-secrets: ${range} is not something git can diff.`);
+  if (asJson) {
+    console.log(JSON.stringify({ error: `${range} is not something git can diff` }));
+  } else {
+    console.error(`scan-secrets: ${range} is not something git can diff.`);
+  }
   process.exit(2);
 }
 
@@ -340,6 +362,10 @@ if (found.length === 0) {
     entry.allowlisted = waved.map((finding) => ({ file: finding.file, print: finding.print }));
   }
   remember(entry);
+  if (asJson) {
+    console.log(JSON.stringify({ ...entry, allowlistedCount: waved.length }));
+    process.exit(0);
+  }
   const extra = waved.length > 0 ? `, ${waved.length} allowlisted` : '';
   console.log(
     `${YEL}scan-secrets: clean — ${files.size} file(s), ${lines.length} added line(s)${extra}${OFF}`,
@@ -350,6 +376,11 @@ if (found.length === 0) {
 entry.verdict = override ? 'overridden' : 'blocked';
 if (override) entry.reason = override;
 remember(entry);
+
+if (asJson) {
+  console.log(JSON.stringify({ ...entry, allowlistedCount: waved.length }));
+  process.exit(override ? 0 : 1);
+}
 
 console.error(
   `\n${RED}scan-secrets: ${found.length} finding(s) in the lines these commits add${OFF}\n`,

@@ -1,11 +1,24 @@
 import { spawn } from 'node:child_process';
-import { readFile, writeFile, mkdir, rename } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { readFile, readlink, writeFile, mkdir, rename } from 'node:fs/promises';
+import { basename, dirname, join } from 'node:path';
 
 const SITE = process.env.AMITISTA_PERF_URL ?? 'https://amitista.com';
 const STATE = process.env.AMITISTA_PERF_STATE ?? '/var/lib/amitista/perf';
 const HISTORY = join(STATE, 'history.jsonl');
 const BASELINE = join(STATE, 'baseline.json');
+const WEBROOT = process.env.AMITISTA_WEBROOT ?? '/var/www/amitista.com';
+// Which release is serving, and which commit that release is. The first is a
+// symlink this can resolve; the second only the deploy knows, which is why it
+// writes it down. Without both, a measurement is a number with a date on it and
+// no way to say what changed.
+const CURRENT = join(WEBROOT, 'current');
+const LEDGER = join(WEBROOT, 'releases.jsonl');
+// Every deploy now takes a measurement of its own on top of the six-hourly
+// timer, so the history grows with how much work is being done rather than with
+// the clock. A busy week used to be forty lines and can now be four hundred.
+// This is about two years of the timer alone and still a file worth reading in
+// one gulp.
+const KEEP_RUNS = 2000;
 const CHROMIUM = process.env.AMITISTA_CHROMIUM ?? '/usr/bin/chromium';
 const PORT = Number(process.env.AMITISTA_PERF_CDP_PORT ?? 9422);
 const PROFILE = `/tmp/amitista-perf-${PORT}`;
@@ -121,6 +134,12 @@ const COLLECT = `(async () => {
     load: Math.round(nav.loadEventEnd ?? 0),
     longTaskMs: Math.round(tasks.reduce((sum, d) => sum + d, 0)),
     longestTaskMs: Math.round(Math.max(0, ...tasks)),
+    // Total blocking time: the part of each long task past the 50ms a browser
+    // is allowed before an interaction would have to wait. The third Core Web
+    // Vital is INP, which cannot be measured here because nothing interacts
+    // with this page — TBT is the lab stand-in for it, and it is reported under
+    // its own name rather than dressed up as INP.
+    tbt: Math.round(tasks.reduce((sum, d) => sum + Math.max(0, d - 50), 0)),
   };
 })()`;
 
@@ -292,6 +311,131 @@ async function readJson(path, fallback) {
   }
 }
 
+// Whatever is serving right now, named the way the deploy named it, plus the
+// commit it was built from if the deploy wrote one down.
+//
+// Resolved rather than remembered: a rollback moves the symlink back to an
+// older release without any of this running, so the only honest answer to what
+// is live is the one read at the moment of measuring.
+async function liveRelease() {
+  let id = null;
+  try {
+    id = basename(await readlink(CURRENT));
+  } catch {
+    // No symlink, or not a symlink. Nothing is lost but the attribution.
+    return null;
+  }
+
+  const ledger = await readFile(LEDGER, 'utf8').catch(() => '');
+  // Backwards: a release id is a timestamp and so unique in practice, but if
+  // one were ever written twice the later line is the one that means anything.
+  for (const line of ledger.split('\n').reverse()) {
+    if (!line.trim()) continue;
+    try {
+      const entry = JSON.parse(line);
+      if (entry.release === id) return entry;
+    } catch {
+      // A torn line is skipped rather than fatal. The measurement is the job.
+    }
+  }
+  // Serving a release nothing wrote down — deployed before the ledger existed,
+  // or by hand. Worth saying which one rather than reporting no release at all.
+  return { release: id, sha: null, subject: null, author: null };
+}
+
+async function readRuns() {
+  const text = await readFile(HISTORY, 'utf8').catch(() => '');
+  const out = [];
+  for (const line of text.split('\n')) {
+    if (!line.trim()) continue;
+    try {
+      out.push(JSON.parse(line));
+    } catch {
+      // Same reasoning as the ledger: one unreadable line is not worth losing
+      // the rest of the history over.
+    }
+  }
+  return out;
+}
+
+// How much a metric has to move before it is worth writing down at all. The
+// absolute floor stops a route that renders in 90ms reporting a 20% regression
+// every time the box is busy; the fraction stops a slow route reporting one
+// over 130ms of ordinary variance.
+const SHIFT_FRACTION = 0.1;
+const MIN_CLS_SHIFT = 0.02;
+// Per metric, because MIN_SHIFT_MS was chosen for paint timings and a page that
+// went from blocking nothing to blocking 80ms has done something worth saying.
+const SHIFT_FLOOR = { lcp: MIN_SHIFT_MS, fcp: MIN_SHIFT_MS, ttfb: MIN_SHIFT_MS, tbt: 50 };
+
+// What moved between two runs, in both directions. Improvements are recorded
+// with the same care as regressions — "which commit made the site slower" and
+// "did that fix actually work" are the same question asked from either end, and
+// only keeping the bad half would answer one of them.
+function shifts(now, before) {
+  const out = [];
+  if (!Array.isArray(before)) return out;
+
+  for (const page of now) {
+    const previous = before.find((entry) => entry.path === page.path);
+    if (!previous) continue;
+
+    for (const metric of ['lcp', 'fcp', 'ttfb', 'tbt']) {
+      const from = previous[metric];
+      const to = page[metric];
+      if (typeof from !== 'number' || typeof to !== 'number') continue;
+      // Zero is a real reading for TBT — a page that blocked nothing — and the
+      // move away from it is the one worth catching. For a paint timing a zero
+      // means the measurement did not happen, so those are still dropped rather
+      // than reported as an infinite improvement.
+      if (metric !== 'tbt' && (!from || !to)) continue;
+      const delta = to - from;
+      if (Math.abs(delta) < SHIFT_FLOOR[metric]) continue;
+      if (Math.abs(delta) < from * SHIFT_FRACTION) continue;
+      out.push({ path: page.path, metric, from, to, delta });
+    }
+
+    const fromCls = previous.cls;
+    const toCls = page.cls;
+    if (typeof fromCls === 'number' && typeof toCls === 'number') {
+      const delta = Number((toCls - fromCls).toFixed(4));
+      if (Math.abs(delta) >= MIN_CLS_SHIFT) {
+        out.push({ path: page.path, metric: 'cls', from: fromCls, to: toCls, delta });
+      }
+    }
+  }
+  return out;
+}
+
+// The pull request a commit came in on, when the merge left its number in the
+// subject — which squash and merge commits both do. Nothing here talks to
+// GitHub, so this is the whole of what can be known locally; the panel does the
+// proper join against the pull requests the deploy already collects.
+function pullNumber(subject) {
+  const hit = /\(#(\d+)\)\s*$/.exec(String(subject ?? ''));
+  return hit ? Number(hit[1]) : null;
+}
+
+// One line a person can act on: what moved, on which page, and whose commit was
+// the one that landed in between. Deliberately says "since", not "because of" —
+// this is a before-and-after either side of a release, and on a release
+// carrying four commits it can honestly name the release and no more.
+function blameLine(release, moved) {
+  if (!release) return null;
+  const worse = moved.filter((shift) => shift.delta > 0);
+  if (worse.length === 0) return null;
+
+  const who = release.sha ? release.sha.slice(0, 7) : release.release;
+  const pull = pullNumber(release.subject);
+  const named = pull ? `PR #${pull}` : who;
+  const parts = worse.map((shift) =>
+    shift.metric === 'cls'
+      ? `${shift.metric.toUpperCase()} by ${shift.delta.toFixed(3)} on ${shift.path}`
+      : `${shift.metric.toUpperCase()} by ${Math.round(shift.delta)}ms on ${shift.path}`,
+  );
+  return `${named} increased ${parts.join(', ')}`;
+}
+
 // Alerts go to the Discord bot's relay on loopback, which is what
 // /etc/amitista/alerts.env is actually configured for (ALERT_URL + ALERT_TOKEN).
 // A bare ALERT_WEBHOOK Discord URL is still honoured if one is set, so an older
@@ -378,11 +522,65 @@ async function main() {
     ...regressions(pages, comparable, profile),
   ];
 
-  const run = { at: new Date().toISOString(), profile, pages, problems };
+  const release = await liveRelease();
+  if (release) {
+    process.stdout.write(
+      `\n  release ${release.release}${
+        release.sha
+          ? ` — ${release.sha.slice(0, 7)} ${release.subject ?? ''}`
+          : ' — no commit recorded for it'
+      }\n`,
+    );
+  }
+
+  // The last measurement of a different release, on the same profile. Same
+  // profile because a throttled run against an unthrottled one is a comparison
+  // of the emulation and nothing else; a different release because comparing a
+  // release against itself is what the six-hourly timer does all day and it
+  // measures the weather on the box, not the code.
+  const history = await readRuns();
+  const before = release
+    ? history
+        .filter(
+          (entry) =>
+            entry.profile === profile &&
+            entry.release?.release &&
+            entry.release.release !== release.release,
+        )
+        .at(-1)
+    : null;
+  const moved = before ? shifts(pages, before.pages) : [];
+
+  const run = {
+    at: new Date().toISOString(),
+    profile,
+    release,
+    pages,
+    problems,
+    // What this is being compared against travels with the comparison. The
+    // history is the only record of it, and a list of deltas whose other end is
+    // not written down cannot be checked later.
+    since: before ? { release: before.release, at: before.at } : null,
+    shifts: moved,
+  };
+
+  const blamed = blameLine(release, moved);
+  if (blamed) process.stdout.write(`\n  ${blamed}\n`);
 
   if (!dryRun) {
     await mkdir(STATE, { recursive: true });
     await writeFile(HISTORY, `${JSON.stringify(run)}\n`, { flag: 'a' });
+
+    // Kept to the cap here rather than by a logrotate rule, because the reader
+    // that matters parses whole lines: a rotation that split one would leave
+    // the panel reading half a run. Rewritten only when it is actually over,
+    // which is once every few hundred deploys.
+    if (history.length + 1 > KEEP_RUNS) {
+      const kept = [...history, run].slice(-KEEP_RUNS);
+      const tmp = `${HISTORY}.tmp`;
+      await writeFile(tmp, kept.map((entry) => `${JSON.stringify(entry)}\n`).join(''));
+      await rename(tmp, HISTORY);
+    }
 
     if (rebase || !baseline) {
       const tmp = `${BASELINE}.tmp`;
@@ -397,7 +595,14 @@ async function main() {
     return;
   }
 
-  const summary = problems.map((p) => `• ${p}`).join('\n');
+  // The blame line goes above the problems rather than among them. It is not a
+  // problem of its own — every line under it is already the problem — it is the
+  // one piece of context that turns "LCP is over budget" into something with a
+  // commit to go and look at.
+  const summary = [
+    ...(blamed ? [`${blamed}`, ''] : []),
+    ...problems.map((p) => `• ${p}`),
+  ].join('\n');
   process.stderr.write(`\n${summary}\n`);
   if (!dryRun && !rebase) await alert(summary);
   process.exitCode = 1;

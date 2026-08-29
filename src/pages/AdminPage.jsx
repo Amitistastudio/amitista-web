@@ -32,6 +32,7 @@ import {
   Building2,
   KeyRound,
   Radar,
+  Timer,
 } from 'lucide-react';
 import Header from '../components/web1/Header';
 import Footer from '../components/web1/Footer';
@@ -223,7 +224,7 @@ const SECTIONS = [
     icon: GitPullRequest,
     needs: null,
     group: 'github',
-    blurb: 'what is open, what it changes, and what is stopping it going in',
+    blurb: 'the review queue oldest first, and every pull request ever raised',
   },
   {
     id: 'github-performance',
@@ -232,6 +233,14 @@ const SECTIONS = [
     needs: null,
     group: 'github',
     blurb: 'what CI says across the three, and what the review queue is costing',
+  },
+  {
+    id: 'github-vitals',
+    label: 'Site speed',
+    icon: Timer,
+    needs: null,
+    group: 'github',
+    blurb: 'what each release did to the site, and which commit to blame for it',
   },
   {
     id: 'github-tracking',
