@@ -701,6 +701,10 @@ export async function fetchDeveloper() {
   return unwrap(await call('/developer'), 'Could not read the developer snapshot.');
 }
 
+export async function fetchGithubRepositories() {
+  return unwrap(await call('/github/repositories'), 'Could not read the repository snapshot.');
+}
+
 export async function fetchAccount() {
   return unwrap(await call('/account'), 'Could not read your account.');
 }

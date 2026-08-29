@@ -199,7 +199,7 @@ const SECTIONS = [
     icon: FolderGit2,
     needs: null,
     group: 'github',
-    blurb: 'nothing here yet',
+    blurb: 'whether what is on main is actually running on this box',
   },
   {
     id: 'accounts',
