@@ -14,10 +14,12 @@ of blanking the panel.
 """
 
 import importlib.util
+import io
 import json
 import os
 import sys
 import tempfile
+import urllib.error
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 COLLECTOR = os.path.join(HERE, "..", "autodeploy", "github-state.py")
@@ -47,12 +49,21 @@ class FakeGitHub:
         self.conditional = []
         self.sends = list(sends or [])
         self.sent = []
+        self.expected = []
+        self.messages = {}
 
-    def get(self, path, have_cached=False):
+    def get(self, path, have_cached=False, expected=()):
         self.asked.append(path)
         if have_cached:
             self.conditional.append(path)
+        self.expected.append((path, tuple(expected)))
         return self.answers.pop(0)
+
+    def message_for(self, path):
+        for fragment, said in (self.messages or {}).items():
+            if fragment in path:
+                return said
+        return None
 
     def send(self, method, path, body=None):
         self.sent.append((method, path, body))
@@ -604,7 +615,7 @@ check("everything GitHub answered for is carried to the next tick", missing == [
 
 
 class CountingGitHub(FakeGitHub):
-    def get(self, path, have_cached=False):
+    def get(self, path, have_cached=False, expected=()):
         self.asked.append(path)
         if have_cached:
             self.conditional.append(path)
@@ -1013,6 +1024,57 @@ api = CodedGitHub([(None, "error"), (None, "error"), (None, "error")],
 alerts = state.security_alerts(api, "amitista-web", {})
 check("a feed the token may not read says so", "token" in alerts["dependabot"]["why"])
 
+# Two 403s that mean opposite things — one is switched off and could be switched
+# on here, the other needs a plan this org is not on. Guessing from the status
+# sends somebody to fix the wrong one, so GitHub's own sentence wins.
+api = CodedGitHub([(None, "error"), (None, "error"), (None, "error")],
+                  codes={"dependabot": 403, "code-scanning": 403})
+api.messages = {
+    "dependabot": "Dependabot alerts are disabled for this repository.",
+    "code-scanning": "Advanced Security must be enabled for this repository to use code scanning.",
+}
+alerts = state.security_alerts(api, "amitista-web", {})
+check("a refused feed carries GitHub's own reason",
+      alerts["dependabot"]["why"] == "Dependabot alerts are disabled for this repository.")
+check("and two feeds refused with the same status still read differently",
+      "Advanced Security" in alerts["codeScanning"]["why"])
+
+# The statuses a feed can be refused with are the collector's to handle, so they
+# are declared to the request rather than counted as GitHub being unreachable.
+# This is what keeps the panel from saying the whole snapshot may be old.
+api = CodedGitHub([(None, "error"), (None, "error"), (None, "error")])
+state.security_alerts(api, "amitista-web", {})
+check("a feed asks with its refusals declared",
+      all(set(state.ALERT_REFUSALS) <= set(codes) for _, codes in api.expected))
+
+# A no is charged every time it is asked for, unlike a 304, so it is believed
+# for a while. This is the only thing on the page that spends the hourly
+# allowance in the steady state.
+settled = {
+    "dependabot": {"available": False, "what": "x", "why": "off", "items": [], "open": 0,
+                   "checked": state.now()},
+}
+api = CodedGitHub([(None, "error"), (None, "error")], codes={})
+alerts = state.security_alerts(api, "amitista-web", settled)
+check("a feed that said no a moment ago is not asked again",
+      not any("dependabot" in path for path in api.asked))
+check("and keeps the answer it gave", alerts["dependabot"]["why"] == "off")
+
+stale_feed = dict(settled["dependabot"], checked="2020-01-01T00:00:00Z")
+api = CodedGitHub([(None, "error"), (None, "error"), (None, "error")],
+                  codes={"dependabot": 404})
+alerts = state.security_alerts(api, "amitista-shield", {"dependabot": stale_feed})
+check("but one that said no long enough ago is asked again",
+      any("dependabot" in path for path in api.asked))
+
+# A feed that has never been asked has no stamp at all, and must not be read as
+# having been asked at the beginning of time or the far future — it is asked.
+never = {"dependabot": {"available": False, "what": "x", "why": "off", "items": [], "open": 0}}
+api = CodedGitHub([(None, "error"), (None, "error"), (None, "error")], codes={"dependabot": 404})
+state.security_alerts(api, "amitista-web", never)
+check("a feed with no record of when it was asked is asked",
+      any("dependabot" in path for path in api.asked))
+
 # ------------------------------------------------- what stands in the way here
 
 scan_repo = tempfile.mkdtemp(prefix="guards-test-")
@@ -1056,6 +1118,62 @@ held = state.guards(scan_repo, "def5678", was)
 check("and a moved tip does not", held["scan"].get("at") != "earlier")
 check("a scanner that will not run is reported, not assumed clean",
       held["scan"]["ran"] is False and held["scan"].get("clean") is None)
+
+
+# ------------------------------------------- reached, versus told no
+
+# The distinction the panel's headline note rests on. These drive the real
+# request path with urlopen stubbed, because the bug they pin was in the two
+# lines of GitHub.get that decide which kind of bad this was — and everything
+# above this point talks to a fake that never had them.
+
+
+class FakeError(urllib.error.HTTPError):
+    def __init__(self, code, body=b"{}"):
+        urllib.error.HTTPError.__init__(
+            self, "https://api.github.com/x", code, "no", {}, io.BytesIO(body)
+        )
+
+
+def answering(outcome):
+    def urlopen(request, timeout=None):
+        raise outcome
+    return urlopen
+
+
+def asking(outcome, path="/repos/x/y", expected=()):
+    api = state.GitHub("token", {})
+    saved = state.urllib.request.urlopen
+    state.urllib.request.urlopen = answering(outcome)
+    try:
+        return api, api.get(path, expected=expected)
+    finally:
+        state.urllib.request.urlopen = saved
+
+
+api, _ = asking(FakeError(404))
+check("an unexpected refusal is a refusal", api.refused == [("/repos/x/y", 404)])
+check("and is not GitHub being out of reach", api.unreachable is False)
+
+api, _ = asking(FakeError(404), expected=(404,))
+check("a refusal the caller has a story for is neither", not api.refused and not api.unreachable)
+
+api, _ = asking(FakeError(502))
+check("a 502 is GitHub not answering, whoever expected what", api.unreachable is True)
+check("and is not filed as an answer", api.refused == [])
+
+api, _ = asking(FakeError(429), expected=(429,))
+check("a rate limit is out of reach even when expected", api.unreachable is True)
+
+api, _ = asking(urllib.error.URLError("no route to host"))
+check("a connection that never landed is out of reach", api.unreachable is True)
+
+api, _ = asking(FakeError(403, b'{"message": "Dependabot alerts are disabled for this repository."}'))
+check("GitHub's own reason is kept",
+      api.message_for("/repos/x/y") == "Dependabot alerts are disabled for this repository.")
+
+api, _ = asking(FakeError(304))
+check("a 304 is not a failure of any kind", not api.refused and not api.unreachable)
 
 
 if failures:

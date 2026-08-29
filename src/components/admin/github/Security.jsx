@@ -179,7 +179,11 @@ export default function Security({ data }) {
           }
           hint={
             alerts.unavailable > 0
-              ? `${alerts.unavailable} feed(s) not offered on this plan`
+              ? // Not "not on this plan": of the three feeds, two of the ones
+                // refused here are switched off rather than unavailable, and
+                // Dependabot alerts can be switched on from repository
+                // settings. Each row below carries GitHub's own reason.
+                `${alerts.unavailable} feed(s) reporting nothing — see below`
               : alerts.worst
                 ? `worst is ${alerts.worst}`
                 : 'nothing open'

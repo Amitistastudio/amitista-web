@@ -253,6 +253,27 @@ def token():
         return ""
 
 
+def said_by(failure):
+    """GitHub's own words for why it said no, if it left any.
+
+    Read once, straight off the error body, because urllib hands it over as a
+    stream that can only be read the once.
+    """
+    try:
+        said = json.loads(failure.read())
+    except (ValueError, OSError):
+        return None
+    if not isinstance(said, dict) or not said.get("message"):
+        return None
+    reason = said["message"]
+    errors = said.get("errors")
+    if isinstance(errors, list) and errors:
+        first = errors[0]
+        if isinstance(first, dict) and first.get("message"):
+            reason = "%s — %s" % (reason, first["message"])
+    return reason
+
+
 class GitHub:
     """Just enough of the API, with the rate limit taken seriously.
 
@@ -270,14 +291,33 @@ class GitHub:
         self.reset = None
         self.calls = 0
         self.spent = 0
-        self.failed = False
+        # Two different bad outcomes, kept apart because only one of them means
+        # what is on the page might be old.
+        #
+        # "Unreachable" is GitHub not answering: a timeout, a broken connection,
+        # a 5xx, a rate limit. Whatever that request was for is missing from
+        # this look, so the last one has to stand in and the panel has to say
+        # so. "Refused" is GitHub answering, and the answer being no. That is a
+        # fact about the account, the plan or the token, it will read the same
+        # in a minute, and it makes nothing on the page older than it says.
+        #
+        # Conflating the two is what made the panel claim GitHub could not be
+        # reached, permanently, on a box that was reaching it perfectly well
+        # nine times a minute and being told no.
+        self.unreachable = False
+        self.refused = []
         # The status each path last came back with. An error is not one thing:
         # a 404 on the secret scanning feed means this plan does not offer it
         # and never will, and a 502 means ask again in a minute. The panel has
         # to say which, so the code is kept rather than flattened into "error".
         self.codes = {}
+        # What GitHub said about it, when it said no. Its own wording is worth
+        # keeping: "Dependabot alerts are disabled for this repository" and
+        # "Advanced Security must be enabled" are both 403, and guessing from
+        # the code alone gets one of them wrong.
+        self.messages = {}
 
-    def get(self, path, have_cached=False):
+    def get(self, path, have_cached=False, expected=()):
         """Returns (payload, state) where state is ok, unchanged or error.
 
         Only "ok" carries a body worth projecting. On "unchanged" or "error" the
@@ -288,6 +328,10 @@ class GitHub:
         `have_cached` says whether the caller still holds the previous answer.
         The conditional request is only sent when it does: a 304 with nothing to
         fall back on would throw away the data instead of saving a request.
+
+        `expected` lists the statuses this caller has a story for — a feed this
+        plan does not offer answers 404 every time and the panel renders that as
+        an answer, so it is not counted as anything having gone wrong.
         """
         if not self.auth:
             return None, "error"
@@ -321,18 +365,28 @@ class GitHub:
             self.codes[path] = failure.code
             if failure.code == 304:
                 return None, "unchanged"
+            self.messages[path] = said_by(failure)
+            self.spent += 1
             # A 404 (renamed, or no longer visible to this token) and a 500 are
             # different problems, but neither is worth discarding what we knew.
-            self.failed = True
-            self.spent += 1
+            # They differ in whether asking again would help: a 5xx or a rate
+            # limit is GitHub not answering this minute, everything else is
+            # GitHub's answer.
+            if failure.code >= 500 or failure.code == 429:
+                self.unreachable = True
+            elif failure.code not in expected:
+                self.refused.append((path, failure.code))
             return None, "error"
         except (urllib.error.URLError, OSError, ValueError):
-            self.failed = True
+            self.unreachable = True
             self.codes[path] = None
             return None, "error"
 
     def code_for(self, path):
         return self.codes.get(path)
+
+    def message_for(self, path):
+        return self.messages.get(path)
 
     def send(self, method, path, body=None):
         """The only thing in this file that changes anything at GitHub.
@@ -375,18 +429,7 @@ class GitHub:
                     return None, answer.status, None
         except urllib.error.HTTPError as failure:
             self._note(failure.headers)
-            reason = "GitHub refused it (%d)" % failure.code
-            try:
-                said = json.loads(failure.read())
-                if isinstance(said, dict) and said.get("message"):
-                    reason = said["message"]
-                    errors = said.get("errors")
-                    if isinstance(errors, list) and errors:
-                        first = errors[0]
-                        if isinstance(first, dict) and first.get("message"):
-                            reason = "%s — %s" % (reason, first["message"])
-            except (ValueError, OSError):
-                pass
+            reason = said_by(failure) or "GitHub refused it (%d)" % failure.code
             return None, failure.code, reason
         except (urllib.error.URLError, OSError) as failure:
             return None, None, "GitHub could not be reached (%s)" % failure
@@ -1035,13 +1078,33 @@ ALERT_FEEDS = (
 )
 
 # GitHub answers an unavailable feed in more than one way, and the wording it
-# deserves differs. 404 is "not on this plan, or not switched on"; 403 is "this
-# token may not ask", which is a different thing to go and fix.
+# deserves differs. These are the fallbacks: GitHub usually says why in the body
+# of the refusal and its own sentence is used in preference, because the status
+# alone is not enough to tell these apart. Both of
+#
+#   403 "Dependabot alerts are disabled for this repository."
+#   403 "Advanced Security must be enabled for this repository to use code scanning."
+#
+# arrive as 403, and only one of them is something this account can switch on;
+# reading either as "the token may not ask" sends somebody to fix the wrong
+# thing.
 ALERT_WHY = {
     404: "not available on this repository — GitHub offers it on paid plans, or it is switched off",
-    403: "the deploy's token is not allowed to read this feed",
+    403: "not available to this repository or this token",
     401: "the deploy's token was refused",
 }
+
+# The statuses that mean "GitHub answered, and the answer was no". Handled here,
+# in as many words, so they are not also counted as GitHub having been out of
+# reach — which would mark the whole snapshot as possibly stale on a box that
+# was reaching GitHub perfectly well.
+ALERT_REFUSALS = (401, 403, 404)
+
+# How long a feed that said no is believed for. A plan does not change between
+# ticks, so asking every minute spends nine charged requests an hour for three
+# answers that are the same every time — while an upgrade or a switch flipped in
+# settings still shows up within the half hour without anyone doing anything.
+ALERT_RECHECK_SECONDS = int(os.environ.get("AUTODEPLOY_ALERT_RECHECK_SECONDS", "1800"))
 
 
 def alert_row(feed, entry):
@@ -1079,11 +1142,24 @@ def security_alerts(api, repo, cached):
     for feed, tail, what in ALERT_FEEDS:
         path = "/repos/%s/%s/%s?state=open&per_page=%d" % (ORG, repo, tail, MAX_ALERTS)
         was = held.get(feed) or {}
-        payload, condition = api.get(path, isinstance(was.get("items"), list))
+
+        # A feed that answered "no" recently is not asked again yet. Unlike a
+        # 304 this one is charged every time, so re-asking it each tick is the
+        # only thing on this page that costs anything in the steady state.
+        asked = age_seconds(was.get("checked"))
+        if was.get("available") is False and asked is not None and asked < ALERT_RECHECK_SECONDS:
+            out[feed] = was
+            continue
+
+        payload, condition = api.get(
+            path, isinstance(was.get("items"), list), expected=ALERT_REFUSALS
+        )
 
         if condition == "unchanged" or (condition == "error" and api.code_for(path) is None):
             # Nothing new, or GitHub was unreachable. Either way the last answer
-            # is still the best one available and is kept as it was.
+            # is still the best one available and is kept as it was — including
+            # when it was last asked, which a look that never happened has not
+            # moved on.
             out[feed] = was or {"available": None, "what": what, "items": [], "open": 0}
             continue
 
@@ -1092,14 +1168,22 @@ def security_alerts(api, repo, cached):
             out[feed] = {
                 "available": False,
                 "what": what,
-                "why": ALERT_WHY.get(code, "GitHub answered %s" % code),
+                "why": api.message_for(path)
+                or ALERT_WHY.get(code, "GitHub answered %s" % code),
                 "items": [],
                 "open": 0,
+                "checked": now(),
             }
             continue
 
         rows = [row for row in (alert_row(feed, entry) for entry in payload or []) if row]
-        out[feed] = {"available": True, "what": what, "items": rows, "open": len(rows)}
+        out[feed] = {
+            "available": True,
+            "what": what,
+            "items": rows,
+            "open": len(rows),
+            "checked": now(),
+        }
     return out
 
 
@@ -2100,13 +2184,26 @@ def main():
             "releases": [],
             "note": "could not read the performance history: %s" % failure,
         }
-    payload["detail"] = now() if want_detail and not api.failed else previous.get("detail")
+    # Only GitHub being out of reach holds this stamp back, and only because it
+    # is the one case where part of this snapshot really did come from an
+    # earlier look. A refusal is an answer: it arrived just now, and pinning the
+    # stamp for it left the panel reporting a ten-minute-old look every minute,
+    # for ever, on a box that was asking GitHub and being told no on schedule.
+    payload["detail"] = now() if want_detail and not api.unreachable else previous.get("detail")
     if api.remaining is not None:
         payload["rate"] = {"remaining": api.remaining, "limit": api.limit, "reset": api.reset}
     if not auth:
         payload["note"] = "no GitHub token on this box — nothing could be asked of GitHub"
-    elif api.failed:
+    elif api.unreachable:
         payload["note"] = "GitHub could not be reached in full; some of this may be from an earlier look"
+    elif api.refused:
+        # Everything asked for was answered; some of the answers were no, and
+        # not a no the caller was expecting. Named rather than counted, because
+        # one path refused is a thing to go and look at and "3 requests" is not.
+        paths = ", ".join("%s (%d)" % (path, code) for path, code in api.refused[:3])
+        payload["note"] = "GitHub refused %d request(s) this look: %s%s" % (
+            len(api.refused), paths, " …" if len(api.refused) > 3 else ""
+        )
 
     try:
         write_atomic(out_path, payload)
