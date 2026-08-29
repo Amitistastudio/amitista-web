@@ -225,6 +225,14 @@ const SECTIONS = [
     blurb: 'what is open, what it changes, and what is stopping it going in',
   },
   {
+    id: 'github-performance',
+    label: 'Performance',
+    icon: Gauge,
+    needs: null,
+    group: 'github',
+    blurb: 'what CI says across the three, and what the review queue is costing',
+  },
+  {
     id: 'github-org',
     label: 'Organisation',
     icon: Building2,

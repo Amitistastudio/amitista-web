@@ -5,6 +5,7 @@ import { Button, Notice } from './ui';
 import Repositories from './github/Repositories';
 import Issues from './github/Issues';
 import Pulls from './github/Pulls';
+import Performance from './github/Performance';
 import Organization from './github/Organization';
 import People from './github/People';
 
@@ -12,6 +13,7 @@ export const GITHUB_VIEWS = [
   'github',
   'github-issues',
   'github-pulls',
+  'github-performance',
   'github-org',
   'github-people',
 ];
@@ -20,6 +22,7 @@ const VIEWS = {
   github: Repositories,
   'github-issues': Issues,
   'github-pulls': Pulls,
+  'github-performance': Performance,
   'github-org': Organization,
   'github-people': People,
 };
