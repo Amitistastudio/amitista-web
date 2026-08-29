@@ -38,11 +38,21 @@ GROUP = os.environ.get("ADMIN_GROUP", "amitista-admin")
 BRANCH = "main"
 TIMEOUT = 20
 
-# How often the questions only GitHub can answer are actually asked. The deploy
-# ticks about once a minute; asking all of this every tick would be several
-# hundred requests an hour to learn nothing, since pull requests and branches do
-# not move on that timescale.
-DETAIL_SECONDS = int(os.environ.get("AUTODEPLOY_GITHUB_DETAIL_SECONDS", "300"))
+# How often the questions only GitHub can answer are actually asked. Once per
+# deploy tick, which is to say about once a minute.
+#
+# This was five minutes on the reasoning that pull requests and branches do not
+# move on a one-minute timescale. True, and beside the point: somebody opened an
+# issue, went to look for it, and it was not there — and the panel's Refresh
+# button re-reads a file rather than asking GitHub, so there was nothing to do
+# but wait without knowing how long for. Being right about the data changing
+# slowly does not help when the person is standing there.
+#
+# It is affordable because every one of these is a conditional request. GitHub
+# answers an unchanged resource with 304 and does not charge it, so the steady
+# state is about fifteen round trips a minute and nothing at all off the hourly
+# allowance.
+DETAIL_SECONDS = int(os.environ.get("AUTODEPLOY_GITHUB_DETAIL_SECONDS", "60"))
 
 # Ceilings, so one runaway repository cannot bloat the file the panel reads or
 # the number of requests one refresh makes.

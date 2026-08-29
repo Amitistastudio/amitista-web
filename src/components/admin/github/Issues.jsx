@@ -111,8 +111,8 @@ export default function Issues({ data }) {
     return (
       <Panel title="Open issues" icon={CircleDot}>
         <Empty>
-          Nothing open across the three repositories. Issues raised on GitHub show up here within a
-          few minutes — that is how often GitHub is asked, rather than every deploy tick.
+          Nothing open across the three repositories. An issue raised on GitHub appears here within
+          a minute or so, once the deploy has next asked.
         </Empty>
       </Panel>
     );
