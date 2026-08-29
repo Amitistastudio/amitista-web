@@ -27,7 +27,6 @@ import {
   BookMarked,
   Zap,
   FolderGit2,
-  ListChecks,
 } from 'lucide-react';
 import Header from '../components/web1/Header';
 import Footer from '../components/web1/Footer';
@@ -54,7 +53,6 @@ import { Notice } from '../components/admin/ui';
 import GlobalSearch from '../components/admin/GlobalSearch';
 import DeveloperPanel, { DEVELOPER_VIEWS } from '../components/admin/DeveloperPanel';
 import GithubPanel, { GITHUB_VIEWS } from '../components/admin/GithubPanel';
-import MyWorkPanel from '../components/admin/MyWorkPanel';
 import {
   fetchSession,
   signOut,
@@ -204,17 +202,6 @@ const SECTIONS = [
     blurb: 'whether what is on main is actually running on this box',
   },
   {
-    id: 'my-work',
-    label: 'Tasks',
-    icon: ListChecks,
-    // The same three permissions the Boards section takes, because this is a
-    // view over the same cards. Anyone who can open a board can see their own
-    // work; nobody sees anybody else's, whatever they hold.
-    needs: ['boards.read', 'boards.own', 'boards.manage'],
-    group: 'work',
-    blurb: 'every card assigned to you, across every board, soonest first',
-  },
-  {
     id: 'accounts',
     label: 'Accounts',
     icon: Users,
@@ -268,7 +255,6 @@ const GROUPS = [
   { id: 'developer', label: 'Developer' },
   { id: 'github', label: 'GitHub' },
   { id: 'people', label: 'People' },
-  { id: 'work', label: 'My Work' },
   { id: 'you', label: 'You' },
 ];
 
@@ -843,8 +829,6 @@ export default function AdminPage() {
                     {DEVELOPER_VIEWS.includes(current) && <DeveloperPanel view={current} />}
 
                     {GITHUB_VIEWS.includes(current) && <GithubPanel />}
-
-                    {current === 'my-work' && <MyWorkPanel />}
 
                     {current === 'accounts' && (
                       <AccountsPanel

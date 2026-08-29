@@ -705,24 +705,6 @@ export async function fetchGithubRepositories() {
   return unwrap(await call('/github/repositories'), 'Could not read the repository snapshot.');
 }
 
-export async function fetchGithubTasks() {
-  return unwrap(await call('/github/tasks'), 'The GitHub tasks could not be read.');
-}
-
-export async function createGithubTask(repo, title, due) {
-  return unwrap(
-    await send('/github/tasks/create', { repo, title, due: due || null }),
-    'That task could not be added.',
-  );
-}
-
-export async function finishGithubTask(card, done = true) {
-  return unwrap(
-    await send('/github/tasks/done', { card, done }),
-    'That task could not be changed.',
-  );
-}
-
 export async function fetchAccount() {
   return unwrap(await call('/account'), 'Could not read your account.');
 }
