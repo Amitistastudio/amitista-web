@@ -12,6 +12,7 @@ EnvironmentFile=-/etc/amitista/admin.env
 EnvironmentFile=-/etc/amitista/alerts.env
 EnvironmentFile=-/etc/amitista/shield.env
 EnvironmentFile=-/etc/amitista/bot.env
+EnvironmentFile=-/etc/amitista/enchange.env
 
 Restart=always
 RestartSec=2
