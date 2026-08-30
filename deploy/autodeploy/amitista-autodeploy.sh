@@ -287,6 +287,50 @@ deploy_shield() {
 # ============================================================ the main loop
 FAILED=()
 DEPLOYED=()
+MOVED=()
+
+# What this tick did, told to the studio bot so it lands in the GitHub log
+# channels beside the push and the CI run that caused it. Loopback only — the
+# bot checks a bearer token because any service on this box can reach that port,
+# the same reason /api/apply carries one. Never fatal: a bot that is restarting
+# is not a reason to fail a deploy that worked.
+DEPLOY_HOOK="${DEPLOY_HOOK:-http://127.0.0.1:8798/deploy}"
+
+report_deploy() {
+  [ -n "$DRY" ] && return 0
+  local ok="$1" token payload
+  # The one copy of the secret lives in the bot's .env. Reading it here rather
+  # than keeping a second copy is what stops the two drifting apart.
+  token="$(sed -n 's/^DEPLOYHOOK_TOKEN=//p' "$BOTS/.env" 2>/dev/null | tr -d '\r\n')"
+  [ -n "$token" ] || return 0
+  payload="$(printf '%s\n' ${MOVED[@]+"${MOVED[@]}"} | OK="$ok" TOOK="$SECONDS" \
+    DEPLOYED="${DEPLOYED[*]-}" FAILED="${FAILED[*]-}" python3 -c '
+import json, os, sys, time
+moved = [line.rstrip("\n").split("\t") for line in sys.stdin if line.strip()]
+head = moved[0] if moved else ["", "", "", ""]
+note = ["%s %s -> %s  %s" % (r, b[:7], a[:7], s) for r, b, a, s in moved[1:]]
+if os.environ.get("FAILED", "").strip():
+    note.insert(0, "failed: " + os.environ["FAILED"].strip())
+print(json.dumps({
+    "at": int(time.time()),
+    "ok": os.environ.get("OK") == "yes",
+    "components": os.environ.get("DEPLOYED", "").split(),
+    "repo": head[0], "from": head[1], "to": head[2], "subject": head[3],
+    "duration": int(os.environ.get("TOOK") or 0),
+    "note": "\n".join(note),
+}))')" || return 0
+
+  # errorwatch reads this to know when to start counting. Only a tick that
+  # actually installed something goes in it: with no new code there is no
+  # release to compare two windows of errors against.
+  if [ ${#DEPLOYED[@]} -gt 0 ]; then
+    mkdir -p "$STATE"
+    printf '%s\n' "$payload" >> "$STATE/deploys.jsonl"
+  fi
+  curl -fsS -m 5 -X POST "$DEPLOY_HOOK" \
+    -H "Authorization: Bearer $token" -H 'Content-Type: application/json' \
+    --data "$payload" >/dev/null 2>&1 || warn "the bot was not told about this deploy"
+}
 
 run() {                      # run <label> <function> [args...]
   local label="$1"; shift
@@ -324,6 +368,7 @@ sync_repo() {
   git -C "$dir" --no-pager log --oneline "$before..$after" | sed 's/^/    /'
   [ -n "$DRY" ] || git -C "$dir" merge --ff-only --quiet origin/main || { warn "$repo: cannot fast-forward"; return 2; }
   CHANGED="$(changed_between "$dir" "$before" "$after")"
+  MOVED+=("$repo"$'\t'"$before"$'\t'"$after"$'\t'"$(git -C "$dir" log -1 --format=%s "$after" 2>/dev/null)")
   return 0
 }
 
@@ -338,7 +383,8 @@ if [ -n "$ONLY" ]; then
     shield)      run shield      deploy_shield ;;
     *) die "unknown component: $ONLY (website, studio-bot, enchange, admin-api, api-gateway, shield)" ;;
   esac
-  if [ ${#FAILED[@]} -gt 0 ]; then die "$ONLY did not come up and was rolled back"; fi
+  if [ ${#FAILED[@]} -gt 0 ]; then report_deploy no; die "$ONLY did not come up and was rolled back"; fi
+  report_deploy yes
   log "$ONLY redeployed"
   exit 0
 fi
@@ -358,7 +404,7 @@ if [ $SYNC -eq 0 ]; then
     && warn "ai-relay or contact-relay changed and neither has an install.sh — deploy those by hand"
   # deploy/autodeploy/ is owned but has no deploy step: the service runs these
   # files straight out of the checkout, so a fast-forward is the deploy.
-  uncovered amitista-web '^(src/|public/|brand/|index\.html|vite\.config\.js|package(-lock)?\.json|scripts/|deploy/autodeploy/|deploy/admin-api/|deploy/api-gateway/|deploy/(ai-relay|contact-relay)/)'
+  uncovered amitista-web '^(src/|public/|brand/|index\.html|vite\.config\.js|package(-lock)?\.json|scripts/|deploy/autodeploy/|deploy/errorwatch/|deploy/admin-api/|deploy/api-gateway/|deploy/(ai-relay|contact-relay)/)'
 fi
 
 step "amitista-bots"
@@ -416,7 +462,10 @@ step "result"
 # and exit 0 — indistinguishable from an idle tick, so a wedged deploy could sit
 # unnoticed for as long as it liked. It exits non-zero now, and systemd marks
 # the unit failed.
+# An idle tick says nothing: this fires only when something was installed or
+# something broke, or the channel would carry 1,440 messages a day of silence.
 if [ ${#FAILED[@]} -gt 0 ]; then
+  report_deploy no
   die "failed: ${FAILED[*]}"
 fi
 
@@ -424,4 +473,6 @@ if [ ${#DEPLOYED[@]} -eq 0 ]; then
   log "nothing to deploy"
   exit 0
 fi
+
+report_deploy yes
 log "all good"
