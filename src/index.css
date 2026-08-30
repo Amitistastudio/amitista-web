@@ -349,28 +349,12 @@
   }
 }
 
-.ribbon-row {
-  animation: ribbon-in 0.22s cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-@keyframes ribbon-in {
-  from {
-    opacity: 0;
-    transform: translateY(-3px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
   .frost-in,
   .cover-pop,
   .tag-drop,
   .aurora,
-  .refill,
-  .ribbon-row {
+  .refill {
     animation: none;
   }
   .cover-pop,
@@ -481,6 +465,121 @@
 
 .rail::-webkit-scrollbar {
   display: none;
+}
+
+.rail-slot {
+  transition: width 260ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.rail-flyout {
+  contain: layout paint style;
+  transition:
+    width 220ms cubic-bezier(0.16, 1, 0.3, 1),
+    box-shadow 240ms ease;
+  transition-delay: 150ms;
+}
+
+.rail-flyout:not([data-pinned]):hover,
+.rail-flyout:not([data-pinned]):focus-within {
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.65);
+  transition-delay: 70ms;
+}
+
+.rail-flyout[data-pinned] {
+  transition-delay: 0ms;
+}
+
+.rail-label {
+  transition:
+    opacity 180ms ease-out,
+    transform 260ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.rail-flyout:not([data-pinned]) .rail-label {
+  opacity: 0;
+  transform: translateX(-10px);
+  transition-duration: 140ms, 200ms;
+  transition-delay: 150ms;
+}
+
+.rail-flyout:not([data-pinned]):hover .rail-label,
+.rail-flyout:not([data-pinned]):focus-within .rail-label {
+  opacity: 1;
+  transform: none;
+  transition-delay: 120ms;
+}
+
+.rail-kids {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 280ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.rail-kids[data-open='true'] {
+  grid-template-rows: 1fr;
+}
+
+.rail-kids-clip {
+  overflow: hidden;
+  min-height: 0;
+  visibility: hidden;
+  transition: visibility 0s linear 300ms;
+}
+
+.rail-kids[data-open='true'] .rail-kids-clip {
+  visibility: visible;
+  transition-delay: 0s;
+}
+
+.rail-kid {
+  opacity: 0;
+  transform: translateX(-8px);
+  transition:
+    opacity 180ms ease-out,
+    transform 260ms cubic-bezier(0.16, 1, 0.3, 1),
+    color 150ms ease,
+    background-color 150ms ease;
+}
+
+.rail-kids[data-open='true'] .rail-kid {
+  opacity: 1;
+  transform: none;
+  transition-delay: calc(var(--i, 0) * 26ms + 40ms);
+}
+
+.rail-nudge {
+  transition: transform 220ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.rail-row:hover .rail-nudge {
+  transform: translateX(3px);
+}
+
+.rail-edge {
+  transform: scaleY(0.35);
+  transform-origin: center;
+  opacity: 0;
+  transition:
+    transform 300ms cubic-bezier(0.16, 1, 0.3, 1),
+    opacity 160ms ease-out;
+}
+
+.rail-row[data-current='true'] .rail-edge {
+  transform: none;
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rail-slot,
+  .rail-flyout,
+  .rail-label,
+  .rail-kids,
+  .rail-kids-clip,
+  .rail-kid,
+  .rail-nudge,
+  .rail-edge {
+    transition: none;
+  }
 }
 
 .rail-y {

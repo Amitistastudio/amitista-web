@@ -34,6 +34,18 @@ import {
   Radar,
   Timer,
   ShieldCheck,
+  ChevronDown,
+  ChevronRight,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Compass,
+  Layers,
+  Globe,
+  Archive,
+  Terminal,
+  GitBranch,
+  UsersRound,
+  CircleUserRound,
 } from 'lucide-react';
 import Header from '../components/web1/Header';
 import Footer from '../components/web1/Footer';
@@ -322,14 +334,14 @@ const SECTIONS = [
 const PRIVATE_GROUPS = ['github'];
 
 const GROUPS = [
-  { id: 'studio', label: 'Studio' },
-  { id: 'platform', label: 'Platform' },
-  { id: 'site', label: 'Site' },
-  { id: 'logs', label: 'Logs' },
-  { id: 'developer', label: 'Developer' },
-  { id: 'github', label: 'GitHub' },
-  { id: 'people', label: 'People' },
-  { id: 'you', label: 'You' },
+  { id: 'studio', label: 'Studio', icon: Compass },
+  { id: 'platform', label: 'Platform', icon: Layers },
+  { id: 'site', label: 'Site', icon: Globe },
+  { id: 'logs', label: 'Logs', icon: Archive },
+  { id: 'developer', label: 'Developer', icon: Terminal },
+  { id: 'github', label: 'GitHub', icon: GitBranch },
+  { id: 'people', label: 'People', icon: UsersRound },
+  { id: 'you', label: 'You', icon: CircleUserRound },
 ];
 
 function sectionFromHash() {
@@ -368,76 +380,246 @@ function ViewSwitch({ asUser, onChange }) {
   );
 }
 
-function GroupTab({ cluster, open, onOpen, onPeek }) {
-  return (
-    <button
-      type="button"
-      onClick={() => onOpen(cluster)}
-      onMouseEnter={() => onPeek(cluster.id)}
-      onFocus={() => onPeek(cluster.id)}
-      aria-expanded={open}
-      data-current={open ? 'true' : undefined}
-      className={`tap relative shrink-0 px-4 py-3 text-[11px] font-semibold uppercase tracking-[0.16em] whitespace-nowrap transition-colors duration-150 focus:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-purple-500/50 ${
-        open ? 'text-white' : 'text-neutral-600 hover:text-neutral-300'
-      }`}
-    >
-      {cluster.label}
-      <span
-        aria-hidden="true"
-        className={`absolute inset-x-0 -bottom-px h-[2px] transition-colors duration-150 ${
-          open ? 'bg-purple-500' : 'bg-transparent'
-        }`}
-      />
-    </button>
-  );
+const RAIL_KEY = 'amitista.admin.rail';
+
+function readPinned() {
+  if (typeof window === 'undefined') return false;
+  try {
+    return window.localStorage.getItem(RAIL_KEY) === 'open';
+  } catch {
+    return false;
+  }
 }
 
-function NavItem({ section, index, current, onPick, context, lead }) {
+const NavItem = React.memo(function NavItem({
+  section,
+  shortcut,
+  current,
+  onPick,
+  context,
+  blurb,
+  nested,
+  order,
+}) {
   const Icon = section.icon;
-  const key = index < 9 ? String(index + 1) : null;
   return (
     <button
       type="button"
       onClick={() => onPick(section.id)}
-      title={section.blurb}
+      title={`${section.label} — ${section.blurb}`}
       aria-current={current ? 'page' : undefined}
-      aria-keyshortcuts={key ?? undefined}
+      aria-keyshortcuts={shortcut ?? undefined}
       data-current={current ? 'true' : undefined}
-      className={`tap relative flex shrink-0 items-center gap-2.5 px-3.5 py-2 text-[12.5px] font-medium tracking-[0.01em] whitespace-nowrap transition-colors duration-150 focus:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-purple-500/50 ${
-        current || lead
-          ? 'text-white bg-purple-500/[0.10]'
-          : 'text-neutral-500 hover:text-neutral-200 hover:bg-white/[0.03]'
+      style={order == null ? undefined : { '--i': order }}
+      className={`tap rail-row group/item relative flex w-full items-center py-[7px] text-left text-[12.5px] font-medium tracking-[0.01em] focus:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-purple-500/50 ${
+        nested ? 'rail-kid' : 'transition-colors duration-150'
+      } ${
+        current
+          ? 'bg-purple-500/[0.10] text-white'
+          : 'text-neutral-500 hover:bg-white/[0.03] hover:text-neutral-200'
       }`}
     >
-      <Icon
-        className={`h-[15px] w-[15px] shrink-0 transition-colors duration-150 ${
-          current || lead ? 'text-purple-400' : 'text-neutral-600'
-        }`}
-        strokeWidth={1.75}
+      <span
+        aria-hidden="true"
+        className="rail-edge absolute inset-y-0 left-0 w-[2px] bg-purple-500"
       />
-      {context && <span className="text-neutral-600 font-normal">{context} ·</span>}
-      {section.label}
+      <span className="relative flex w-[54px] shrink-0 items-center">
+        {nested && (
+          <span aria-hidden="true" className="absolute inset-y-0 left-[27px] w-px bg-[#1f1f27]" />
+        )}
+        <span
+          className={`relative flex w-full items-center ${nested ? 'pl-[31px]' : 'justify-center'}`}
+        >
+          <Icon
+            className={`h-[13px] w-[13px] shrink-0 transition-colors duration-150 ${
+              current ? 'text-purple-400' : 'text-neutral-600 group-hover/item:text-neutral-400'
+            }`}
+            strokeWidth={1.75}
+          />
+        </span>
+      </span>
+      <span className="rail-label min-w-0 flex-1 pr-3">
+        <span className="rail-nudge block truncate">
+          {context && <span className="font-normal text-neutral-600">{context} · </span>}
+          {section.label}
+        </span>
+        {blurb && (
+          <span className="mt-0.5 block truncate text-[11px] font-normal text-neutral-600">
+            {section.blurb}
+          </span>
+        )}
+      </span>
     </button>
+  );
+});
+
+const GroupRow = React.memo(function GroupRow({ cluster, open, holds, onToggle }) {
+  const Icon = cluster.icon;
+  return (
+    <button
+      type="button"
+      onClick={() => onToggle(cluster.id)}
+      aria-expanded={open}
+      title={`${cluster.label} — ${cluster.entries.length} sections`}
+      className="tap rail-row group/group relative flex w-full items-center py-[9px] text-left transition-colors duration-150 focus:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-purple-500/50 hover:bg-white/[0.03]"
+    >
+      <span className="flex w-[54px] shrink-0 items-center justify-center">
+        <Icon
+          className={`h-[15px] w-[15px] shrink-0 transition-colors duration-150 ${
+            holds ? 'text-purple-400' : 'text-neutral-500 group-hover/group:text-neutral-300'
+          }`}
+          strokeWidth={1.75}
+        />
+      </span>
+      <span
+        className={`rail-label flex-1 truncate text-[10px] font-semibold uppercase tracking-[0.15em] ${
+          holds ? 'text-neutral-300' : 'text-neutral-600 group-hover/group:text-neutral-400'
+        }`}
+      >
+        <span className="rail-nudge block truncate transition-colors duration-150">
+          {cluster.label}
+        </span>
+      </span>
+      <ChevronRight
+        aria-hidden="true"
+        className={`rail-label mr-3 h-3.5 w-3.5 shrink-0 text-neutral-700 transition-transform duration-200 ${
+          open ? 'rotate-90' : ''
+        }`}
+        strokeWidth={2}
+      />
+    </button>
+  );
+});
+
+function SectionList({ clusters, matches, needle, query, active, opened, onToggle, onPick }) {
+  if (needle) {
+    return matches.length ? (
+      <div className="flex flex-col py-1">
+        {matches.map((entry) => (
+          <NavItem
+            key={entry.section.id}
+            section={entry.section}
+            current={entry.section.id === active}
+            blurb
+            context={GROUPS.find((group) => group.id === entry.section.group)?.label}
+            onPick={onPick}
+          />
+        ))}
+      </div>
+    ) : (
+      <p className="rail-label px-3 py-3 text-[12px] font-normal text-neutral-600">
+        Nothing here is called “{query.trim()}”.
+      </p>
+    );
+  }
+
+  return (
+    <div className="flex flex-col py-1">
+      {clusters.map((cluster) => {
+        const open = cluster.id === opened;
+        const holds = cluster.entries.some((entry) => entry.section.id === active);
+        return (
+          <div key={cluster.id} className="border-t border-[#17171d] first:border-t-0">
+            <GroupRow cluster={cluster} open={open} holds={holds} onToggle={onToggle} />
+            <div className="rail-kids" data-open={open ? 'true' : 'false'}>
+              <div className="rail-kids-clip">
+                <div className="pb-1.5">
+                  {cluster.entries.map((entry, order) => (
+                    <NavItem
+                      key={entry.section.id}
+                      section={entry.section}
+                      shortcut={entry.index < 9 ? String(entry.index + 1) : null}
+                      current={entry.section.id === active}
+                      nested
+                      order={order}
+                      onPick={onPick}
+                    />
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
-function Nav({ sections, active, onPick }) {
-  function walk(event) {
-    const keys = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'];
-    if (!keys.includes(event.key)) return;
-    const buttons = Array.from(event.currentTarget.querySelectorAll('button'));
-    const at = buttons.indexOf(document.activeElement);
-    if (at < 0) return;
-    event.preventDefault();
-    const forward = event.key === 'ArrowRight' || event.key === 'ArrowDown';
-    const next =
-      event.key === 'Home'
-        ? 0
-        : event.key === 'End'
-          ? buttons.length - 1
-          : (at + (forward ? 1 : -1) + buttons.length) % buttons.length;
-    buttons[next]?.focus();
-  }
+function Brand() {
+  return (
+    <div className="flex w-full shrink-0 items-center border-b border-[#282832] py-3">
+      <span className="flex w-[54px] shrink-0 items-center justify-center">
+        <img
+          src="/amitista-logo.png"
+          alt=""
+          width="20"
+          height="20"
+          className="h-5 w-5 shrink-0 select-none object-contain"
+        />
+      </span>
+      <span className="rail-label truncate pr-3 text-[11px] font-bold tracking-[0.22em] text-white">
+        AMITISTA
+        <span className="ml-1.5 font-medium text-neutral-500">STUDIO</span>
+      </span>
+    </div>
+  );
+}
+
+function Filter({ inputRef, query, onQuery, onFirst }) {
+  return (
+    <div className="flex w-full shrink-0 items-center border-b border-[#282832]">
+      <span className="flex w-[54px] shrink-0 items-center justify-center">
+        <Search className="h-3.5 w-3.5 shrink-0 text-neutral-600" strokeWidth={1.75} />
+      </span>
+      <input
+        ref={inputRef}
+        type="text"
+        value={query}
+        onChange={(event) => onQuery(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') {
+            onQuery('');
+            inputRef.current?.blur();
+          }
+          if (event.key === 'Enter') {
+            event.preventDefault();
+            onFirst();
+          }
+        }}
+        placeholder="Find a section  /"
+        aria-label="Find a section"
+        className="rail-label w-full min-w-0 bg-transparent py-2.5 pr-3 text-[12px] font-normal text-neutral-200 outline-none placeholder-neutral-700"
+      />
+    </div>
+  );
+}
+
+function Sidebar({ sections, active, onPick }) {
+  const [pinned, setPinned] = React.useState(readPinned);
+  const [query, setQuery] = React.useState('');
+  const [drawer, setDrawer] = React.useState(false);
+
+
+  const holding = sections.find((section) => section.id === active)?.group;
+  const [opened, setOpened] = React.useState(holding);
+  React.useEffect(() => {
+    if (holding) setOpened(holding);
+  }, [holding]);
+  const toggle = React.useCallback((id) => {
+    setOpened((current) => (current === id ? null : id));
+  }, []);
+
+
+  const railField = React.useRef(null);
+  const drawerField = React.useRef(null);
+  const railList = React.useRef(null);
+  const drawerList = React.useRef(null);
+
+  React.useEffect(() => {
+    try {
+      window.localStorage.setItem(RAIL_KEY, pinned ? 'open' : 'icons');
+    } catch {}
+  }, [pinned]);
 
   React.useEffect(() => {
     function jump(event) {
@@ -457,31 +639,6 @@ function Nav({ sections, active, onPick }) {
     return () => window.removeEventListener('keydown', jump);
   }, [sections, onPick]);
 
-  const numbered = sections.map((section, index) => ({ section, index }));
-  const clusters = GROUPS.map((group) => ({
-    ...group,
-    entries: numbered.filter((entry) => entry.section.group === group.id),
-  })).filter((cluster) => cluster.entries.length > 0);
-
-  const activeGroup = sections.find((section) => section.id === active)?.group;
-  const [browsing, setBrowsing] = React.useState(activeGroup);
-  const [query, setQuery] = React.useState('');
-  const field = React.useRef(null);
-  const groups = React.useRef(null);
-  const ribbon = React.useRef(null);
-
-  React.useEffect(() => {
-    for (const rail of [groups.current, ribbon.current]) {
-      const current = rail?.querySelector('[data-current="true"]');
-      if (!rail || !current) continue;
-      const left = current.offsetLeft - (rail.clientWidth - current.clientWidth) / 2;
-      rail.scrollTo({ left: Math.max(0, left), behavior: 'smooth' });
-    }
-  }, [active, browsing]);
-
-  React.useEffect(() => {
-    setBrowsing(activeGroup);
-  }, [activeGroup]);
 
   React.useEffect(() => {
     function focus(event) {
@@ -492,116 +649,175 @@ function Nav({ sections, active, onPick }) {
         return;
       }
       event.preventDefault();
-      field.current?.focus();
+      setDrawer(true);
+      window.requestAnimationFrame(() => {
+        drawerField.current?.focus();
+        railField.current?.focus();
+      });
     }
     window.addEventListener('keydown', focus);
     return () => window.removeEventListener('keydown', focus);
   }, []);
 
-  const needle = query.trim().toLowerCase();
-  const matches = needle
-    ? numbered.filter(({ section }) =>
-        `${section.label} ${section.id} ${section.blurb}`.toLowerCase().includes(needle),
-      )
-    : [];
+  React.useEffect(() => {
+    for (const rail of [railList.current, drawerList.current]) {
+      const current = rail?.querySelector('[data-current="true"]');
+      if (!rail || !current) continue;
+      const above = current.offsetTop < rail.scrollTop;
+      const below = current.offsetTop + current.clientHeight > rail.scrollTop + rail.clientHeight;
+      if (above || below) {
+        rail.scrollTo({ top: Math.max(0, current.offsetTop - 48), behavior: 'smooth' });
+      }
+    }
+  }, [active]);
 
-  const open = clusters.find((cluster) => cluster.id === browsing) ?? clusters[0];
-  const shown = sections.find((section) => section.id === active);
-
-  function land(id) {
-    setQuery('');
-    field.current?.blur();
-    onPick(id);
+  function walk(event) {
+    const keys = ['ArrowUp', 'ArrowDown', 'Home', 'End'];
+    if (!keys.includes(event.key)) return;
+    const buttons = Array.from(event.currentTarget.querySelectorAll('button'));
+    const at = buttons.indexOf(document.activeElement);
+    if (at < 0) return;
+    event.preventDefault();
+    const forward = event.key === 'ArrowDown';
+    const next =
+      event.key === 'Home'
+        ? 0
+        : event.key === 'End'
+          ? buttons.length - 1
+          : (at + (forward ? 1 : -1) + buttons.length) % buttons.length;
+    buttons[next]?.focus();
   }
+
+  const clusters = React.useMemo(() => {
+    const numbered = sections.map((section, index) => ({ section, index }));
+    return GROUPS.map((group) => ({
+      ...group,
+      entries: numbered.filter((entry) => entry.section.group === group.id),
+    })).filter((cluster) => cluster.entries.length > 0);
+  }, [sections]);
+
+  const needle = query.trim().toLowerCase();
+  const matches = React.useMemo(
+    () =>
+      needle
+        ? sections
+            .map((section, index) => ({ section, index }))
+            .filter(({ section }) =>
+              `${section.label} ${section.id} ${section.blurb}`.toLowerCase().includes(needle),
+            )
+        : [],
+    [sections, needle],
+  );
+
+  const shown = sections.find((section) => section.id === active);
+  const where = GROUPS.find((group) => group.id === shown?.group)?.label;
+  const Current = shown?.icon;
+
+
+  const land = React.useCallback(
+    (id) => {
+      setQuery('');
+      setDrawer(false);
+      document.activeElement?.blur?.();
+      onPick(id);
+    },
+    [onPick],
+  );
+
+  const first = React.useCallback(() => {
+    if (matches[0]) land(matches[0].section.id);
+  }, [matches, land]);
+
+  const list = (
+    <SectionList
+      clusters={clusters}
+      matches={matches}
+      needle={needle}
+      query={query}
+      active={active}
+      opened={opened}
+      onToggle={toggle}
+      onPick={land}
+    />
+  );
 
   return (
     <nav
       aria-label="Panel sections"
-      onMouseLeave={() => setBrowsing(activeGroup)}
-      className="border border-[#282832] bg-[#0a0a0d] mb-8"
+      className={`rail-slot w-full shrink-0 ${pinned ? 'lg:w-[240px]' : 'lg:w-[54px]'}`}
     >
-      <div
-        ref={groups}
-        className="rail flex items-stretch border-b border-[#282832] bg-[#08080b] [--rail-bg:#08080b]"
-      >
-        {clusters.map((cluster) => (
-          <GroupTab
-            key={cluster.id}
-            cluster={cluster}
-            open={!needle && cluster.id === open?.id}
-            onPeek={setBrowsing}
-            onOpen={(picked) => {
-              setBrowsing(picked.id);
-              if (!picked.entries.some((entry) => entry.section.id === active)) {
-                onPick(picked.entries[0].section.id);
-              }
-            }}
+      <div className="border border-[#282832] bg-[#0a0a0d] lg:hidden">
+        <button
+          type="button"
+          onClick={() => setDrawer((open) => !open)}
+          aria-expanded={drawer}
+          className="tap flex w-full items-center gap-2.5 px-3 py-3 text-left text-[12.5px] font-medium text-white transition-colors hover:bg-white/[0.03]"
+        >
+          <img
+            src="/amitista-logo.png"
+            alt=""
+            width="18"
+            height="18"
+            className="h-[18px] w-[18px] shrink-0 select-none object-contain"
           />
-        ))}
+          {Current && (
+            <Current className="h-[15px] w-[15px] shrink-0 text-purple-400" strokeWidth={1.75} />
+          )}
+          <span className="min-w-0 flex-1 truncate">
+            {where && <span className="font-normal text-neutral-600">{where} · </span>}
+            {shown?.label ?? 'Sections'}
+          </span>
+          <ChevronDown
+            className={`h-4 w-4 shrink-0 text-neutral-500 transition-transform duration-200 ${
+              drawer ? 'rotate-180' : ''
+            }`}
+            strokeWidth={1.75}
+          />
+        </button>
 
-        <div className="ml-auto hidden items-center gap-2 border-l border-[#1c1c22] px-3 sm:flex">
-          <Search className="h-3.5 w-3.5 shrink-0 text-neutral-600" strokeWidth={1.75} />
-          <input
-            ref={field}
-            type="text"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Escape') {
-                setQuery('');
-                field.current?.blur();
-              }
-              if (event.key === 'Enter' && matches[0]) {
-                event.preventDefault();
-                land(matches[0].section.id);
-              }
-            }}
-            placeholder="Find a section  /"
-            aria-label="Find a section"
-            className="w-[150px] bg-transparent py-2.5 text-[12px] font-normal text-neutral-200 placeholder-neutral-700 outline-none"
-          />
-        </div>
+        {drawer && (
+          <div className="flex max-h-[60vh] w-full flex-col border-t border-[#282832]">
+            <Filter inputRef={drawerField} query={query} onQuery={setQuery} onFirst={first} />
+            <div ref={drawerList} onKeyDown={walk} className="rail-y min-h-0 flex-1">
+              {list}
+            </div>
+          </div>
+        )}
       </div>
 
-      <div
-        key={needle ? 'search' : open?.id}
-        ref={ribbon}
-        onKeyDown={walk}
-        className="ribbon-row rail snap-rail flex flex-nowrap items-center gap-1 p-1.5 sm:flex-wrap"
-      >
-        {needle
-          ? matches.map((entry, order) => (
-              <NavItem
-                key={entry.section.id}
-                section={entry.section}
-                index={entry.index}
-                current={entry.section.id === active}
-                lead={order === 0}
-                context={GROUPS.find((group) => group.id === entry.section.group)?.label}
-                onPick={land}
-              />
-            ))
-          : open?.entries.map((entry) => (
-              <NavItem
-                key={entry.section.id}
-                section={entry.section}
-                index={entry.index}
-                current={entry.section.id === active}
-                onPick={onPick}
-              />
-            ))}
+      <div className="relative hidden lg:sticky lg:top-[88px] lg:block lg:h-[calc(100vh-112px)]">
+        <div
+          data-pinned={pinned ? 'true' : undefined}
+          className={`rail-flyout absolute inset-y-0 left-0 z-40 overflow-hidden border border-[#282832] bg-[#0a0a0d] ${
+            pinned ? 'w-[240px]' : 'w-[54px] hover:w-[240px] focus-within:w-[240px]'
+          }`}
+        >
+          <div className="flex h-full w-[240px] flex-col">
+            <Brand />
+            <Filter inputRef={railField} query={query} onQuery={setQuery} onFirst={first} />
 
-        {needle && matches.length === 0 && (
-          <p className="px-3 py-2 text-[12px] font-normal text-neutral-600">
-            Nothing here is called “{query.trim()}”.
-          </p>
-        )}
+            <div ref={railList} onKeyDown={walk} className="rail-y min-h-0 flex-1">
+              {list}
+            </div>
 
-        {!needle && shown?.blurb && (
-          <p className="ml-auto hidden pr-3 pl-4 text-[11px] font-normal text-neutral-600 md:block">
-            {shown.blurb}
-          </p>
-        )}
+            <button
+              type="button"
+              onClick={() => setPinned((open) => !open)}
+              aria-pressed={pinned}
+              title={pinned ? 'Let the rail close on its own again' : 'Keep the rail open'}
+              className="tap flex w-full shrink-0 items-center border-t border-[#282832] py-2.5 text-[11px] font-medium text-neutral-600 transition-colors hover:bg-white/[0.03] hover:text-neutral-300"
+            >
+              <span className="flex w-[54px] shrink-0 items-center justify-center">
+                {pinned ? (
+                  <PanelLeftClose className="h-[15px] w-[15px]" strokeWidth={1.75} />
+                ) : (
+                  <PanelLeftOpen className="h-[15px] w-[15px]" strokeWidth={1.75} />
+                )}
+              </span>
+              <span className="rail-label">{pinned ? 'Let it close' : 'Keep it open'}</span>
+            </button>
+          </div>
+        </div>
       </div>
     </nav>
   );
@@ -784,7 +1000,7 @@ export default function AdminPage() {
             )}
 
             {state === SIGNED_IN && (
-              <div className="w-full max-w-6xl flex flex-col">
+              <div className="w-full max-w-[1320px] flex flex-col">
                 <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 sm:gap-6 mb-6 sm:mb-8">
                   <div>
                     <h1 className="text-[28px] sm:text-4xl font-normal text-white tracking-tight leading-none mb-2 sm:mb-3">
@@ -826,9 +1042,9 @@ export default function AdminPage() {
                   </div>
                 </div>
 
-                <Nav sections={allowed} active={current} onPick={pick} />
+                <div className="flex flex-col gap-5 lg:flex-row lg:gap-8">
+                  <Sidebar sections={allowed} active={current} onPick={pick} />
 
-                <div className="flex flex-col">
                   <div className="flex-1 min-w-0 flex flex-col">
                     {previewing && (
                       <div className="mb-6">
