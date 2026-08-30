@@ -130,27 +130,13 @@ export default function Footer() {
           <span>
             © 2026 {STUDIO_NAME} · {JURISDICTION}
           </span>
-          <div className="flex items-center gap-4">
-            <a
-              href="//www.dmca.com/Protection/Status.aspx?ID=b3669dc4-efef-44ad-b021-a328324f32b9"
-              title="DMCA.com Protection Status"
-              className="dmca-badge"
-              target="_blank"
-              rel="noreferrer noopener"
-            >
-              <img
-                src="https://images.dmca.com/Badges/dmca_protected_sml_120n.png?ID=b3669dc4-efef-44ad-b021-a328324f32b9"
-                alt="DMCA.com Protection Status"
-              />
-            </a>
-            <button
-              type="button"
-              onClick={scrollToTop}
-              className="inline-flex items-center gap-2 hover:text-white transition-colors cursor-pointer"
-            >
-              <ArrowUp size={12} strokeWidth={2} />
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={scrollToTop}
+            className="inline-flex items-center gap-2 hover:text-white transition-colors cursor-pointer"
+          >
+            <ArrowUp size={12} strokeWidth={2} />
+          </button>
         </div>
       </div>
     </footer>
