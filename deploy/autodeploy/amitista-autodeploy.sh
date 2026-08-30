@@ -340,10 +340,9 @@ run() {                      # run <label> <function> [args...]
 sync_repo() {
   local dir="$1" repo="$2"
   git -C "$dir" fetch --quiet origin main 2>/dev/null || { warn "$repo: fetch failed"; return 2; }
-  local before after
-  before="$(git -C "$dir" rev-parse HEAD)"
+  local head_now after
+  head_now="$(git -C "$dir" rev-parse HEAD)"
   after="$(git -C "$dir" rev-parse origin/main)"
-  [ "$before" = "$after" ] && return 1          # nothing new
 
   # Commits sitting in the checkout that are not on main yet. Fast-forwarding to
   # origin/main is a no-op when the checkout is ahead of it, so the deploy would
@@ -351,11 +350,31 @@ sync_repo() {
   # different, older commit — the gate answering for code that is not the code
   # being deployed. It also renders backwards in the log, "newer -> older",
   # which is the tell. Wait for the push instead; CI has not seen this yet.
-  local ahead; ahead="$(git -C "$dir" rev-list --count "$after..$before" 2>/dev/null || echo 0)"
+  local ahead; ahead="$(git -C "$dir" rev-list --count "$after..$head_now" 2>/dev/null || echo 0)"
   if [ "${ahead:-0}" -gt 0 ]; then
     warn "$repo: $ahead local commit(s) are not on origin/main, so nothing is deployed."
     warn "$repo: Push them and CI will gate them like anything else."
     return 1
+  fi
+
+  # "before" is the last commit this script knows it actually deployed from —
+  # not simply HEAD at the top of this tick. A commit made (and pushed)
+  # straight in this checkout, on the box, leaves HEAD already equal to
+  # origin/main with nothing left for the fetch above to find: comparing
+  # against HEAD alone read that as "nothing new", forever, and a real change
+  # sat undeployed with no failure and nothing to notice. The marker is what
+  # turns that into a catch-up instead of silence. A missing or dangling
+  # marker (first run after adding this, or state wiped) falls back to HEAD,
+  # which reproduces the old behaviour exactly rather than replaying history.
+  local marker="$STATE/deployed-$repo.sha" before
+  before="$(cat "$marker" 2>/dev/null || true)"
+  if [ -z "$before" ] || ! git -C "$dir" cat-file -e "${before}^{commit}" 2>/dev/null; then
+    before="$head_now"
+  fi
+
+  if [ "$before" = "$after" ]; then
+    [ -n "$DRY" ] || printf '%s\n' "$after" > "$marker"
+    return 1          # nothing new
   fi
 
   local verdict; verdict="$(ci_is_green "$repo" "$after")"
@@ -364,11 +383,13 @@ sync_repo() {
     log "$repo: ${after:0:7} is not deployable yet (CI $verdict)"
     return 1
   fi
+  [ "$before" != "$head_now" ] && log "$repo: catching up a commit made straight in this checkout"
   log "$repo: ${before:0:7} -> ${after:0:7} (CI $verdict)"
   git -C "$dir" --no-pager log --oneline "$before..$after" | sed 's/^/    /'
   [ -n "$DRY" ] || git -C "$dir" merge --ff-only --quiet origin/main || { warn "$repo: cannot fast-forward"; return 2; }
   CHANGED="$(changed_between "$dir" "$before" "$after")"
   MOVED+=("$repo"$'\t'"$before"$'\t'"$after"$'\t'"$(git -C "$dir" log -1 --format=%s "$after" 2>/dev/null)")
+  [ -n "$DRY" ] || printf '%s\n' "$after" > "$marker"
   return 0
 }
 
