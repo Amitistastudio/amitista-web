@@ -19,8 +19,6 @@ import {
   FileSearch,
   Search,
   FolderOpen,
-  Eye,
-  EyeOff,
   HeartPulse,
   Gauge,
   Rocket,
@@ -337,36 +335,6 @@ function sectionFromHash() {
   if (typeof window === 'undefined') return 'overview';
   const raw = window.location.hash.replace('#', '').trim().split('/')[0];
   return SECTIONS.some((section) => section.id === raw) ? raw : 'overview';
-}
-
-function ViewSwitch({ asUser, onChange }) {
-  return (
-    <div
-      className="inline-flex border border-[#282832] bg-[#0a0a0d]"
-      role="group"
-      aria-label="Which view of the panel to show"
-    >
-      {[
-        [false, 'Admin', EyeOff],
-        [true, 'User', Eye],
-      ].map(([value, label, Icon]) => (
-        <button
-          key={label}
-          type="button"
-          onClick={() => onChange(value)}
-          aria-pressed={asUser === value}
-          className={`tap inline-flex items-center gap-2 px-4 py-2.5 text-[12px] font-semibold tracking-wide transition-colors ${
-            asUser === value
-              ? 'bg-purple-500/15 text-white'
-              : 'text-neutral-500 hover:text-neutral-300'
-          }`}
-        >
-          <Icon className="h-3.5 w-3.5" strokeWidth={2} />
-          {label}
-        </button>
-      ))}
-    </div>
-  );
 }
 
 const RAIL_KEY = 'amitista.admin.rail';
@@ -818,8 +786,6 @@ export default function AdminPage() {
   const [role, setRole] = React.useState(null);
   const [permissions, setPermissions] = React.useState([]);
   const [privateGroups, setPrivateGroups] = React.useState([]);
-  const [viewerPermissions, setViewerPermissions] = React.useState([]);
-  const [asUser, setAsUser] = React.useState(false);
   const [mustChange, setMustChange] = React.useState(false);
   const [configured, setConfigured] = React.useState(true);
   const [needsGate, setNeedsGate] = React.useState(false);
@@ -827,15 +793,6 @@ export default function AdminPage() {
   const [loading, setLoading] = React.useState(false);
   const [section, setSection] = React.useState(sectionFromHash);
   const cancelled = React.useRef(false);
-
-  const canPreview = permissions.includes('overview.read');
-  const previewing = asUser && canPreview;
-  const held = React.useMemo(
-    () =>
-      previewing ? permissions.filter((entry) => viewerPermissions.includes(entry)) : permissions,
-    [previewing, permissions, viewerPermissions],
-  );
-  const seenAs = previewing ? 'viewer' : role;
 
   React.useEffect(() => {
     const previous = document.title;
@@ -864,9 +821,7 @@ export default function AdminPage() {
       setUser(session.user);
       setRole(session.role ?? null);
       setPermissions(session.permissions ?? []);
-      setViewerPermissions(session.viewerPermissions ?? []);
       setPrivateGroups(session.private ?? []);
-      setAsUser(false);
       setMustChange(Boolean(session.mustChange));
       setState(SIGNED_IN);
       if (!session.mustChange && (session.permissions ?? []).includes('overview.read')) load();
@@ -904,10 +859,10 @@ export default function AdminPage() {
 
   React.useEffect(() => {
     if (state !== SIGNED_IN || section !== 'overview' || mustChange) return undefined;
-    if (!held.includes('overview.read')) return undefined;
+    if (!permissions.includes('overview.read')) return undefined;
     const poll = setInterval(load, 60000);
     return () => clearInterval(poll);
-  }, [state, section, held, mustChange, load]);
+  }, [state, section, permissions, mustChange, load]);
 
   const gateAgain = React.useCallback(() => setNeedsGate(true), []);
   const gatePassed = React.useCallback(() => {
@@ -956,7 +911,7 @@ export default function AdminPage() {
     : SECTIONS.filter(
         (entry) =>
           (!entry.private || privateGroups.includes(entry.private)) &&
-          (entry.needs === null || [entry.needs].flat().some((need) => held.includes(need))),
+          (entry.needs === null || [entry.needs].flat().some((need) => permissions.includes(need))),
       );
   const current = allowed.some((entry) => entry.id === section)
     ? section
@@ -1018,13 +973,11 @@ export default function AdminPage() {
 
                   <div className="flex flex-wrap items-center gap-2 sm:gap-3 sm:shrink-0">
                     {!mustChange &&
-                      (held.includes('orders.read') || held.includes('support.manage')) && (
+                      (permissions.includes('orders.read') ||
+                        permissions.includes('support.manage')) && (
                         <GlobalSearch onGo={goTo} />
                       )}
-                    {canPreview && !mustChange && (
-                      <ViewSwitch asUser={asUser} onChange={setAsUser} />
-                    )}
-                    {current === 'overview' && held.includes('overview.read') && (
+                    {current === 'overview' && permissions.includes('overview.read') && (
                       <button
                         type="button"
                         onClick={load}
@@ -1050,23 +1003,6 @@ export default function AdminPage() {
                   <Sidebar sections={allowed} active={current} onPick={pick} />
 
                   <div className="flex-1 min-w-0 flex flex-col">
-                    {previewing && (
-                      <div className="mb-6">
-                        <Notice tone="amber" icon={Eye}>
-                          This is the panel as a user account sees it. It only hides things from you
-                          — the server still answers you as {role ?? 'yourself'}, and nothing has
-                          changed for them.{' '}
-                          <button
-                            type="button"
-                            onClick={() => setAsUser(false)}
-                            className="underline underline-offset-2 hover:text-white transition-colors"
-                          >
-                            Back to the admin view.
-                          </button>
-                        </Notice>
-                      </div>
-                    )}
-
                     {mustChange && (
                       <div className="mb-6">
                         <Notice tone="amber">
@@ -1082,7 +1018,7 @@ export default function AdminPage() {
                         <div
                           className={`transition-opacity duration-200 ${loading ? 'opacity-60' : 'opacity-100'}`}
                         >
-                          <OverviewPanel data={data} permissions={held} role={seenAs} />
+                          <OverviewPanel data={data} permissions={permissions} role={role} />
                         </div>
                       ) : (
                         <div className="border border-[#282832] bg-[#0a0a0d] px-6 py-8">
@@ -1100,19 +1036,21 @@ export default function AdminPage() {
 
                     {current === 'api-admin' && (
                       <ApiAdminPanel
-                        canManage={held.includes('api.manage')}
-                        canSeeHistory={held.includes('security.read')}
+                        canManage={permissions.includes('api.manage')}
+                        canSeeHistory={permissions.includes('security.read')}
                         self={user}
                       />
                     )}
 
                     {current === 'shield' && (
-                      <ShieldPanel canManage={held.includes('shield.manage')} />
+                      <ShieldPanel canManage={permissions.includes('shield.manage')} />
                     )}
 
-                    {current === 'bot' && <BotPanel canManage={held.includes('bot.manage')} />}
+                    {current === 'bot' && (
+                      <BotPanel canManage={permissions.includes('bot.manage')} />
+                    )}
 
-                    {current === 'transcripts' && <TranscriptsPanel permissions={held} />}
+                    {current === 'transcripts' && <TranscriptsPanel permissions={permissions} />}
 
                     {current === 'c2c' && <LogsPanel />}
 
@@ -1126,17 +1064,19 @@ export default function AdminPage() {
 
                     {current === 'accounts' && (
                       <AccountsPanel
-                        canManage={held.includes('users.manage')}
-                        canSeeActivity={held.includes('security.read')}
+                        canManage={permissions.includes('users.manage')}
+                        canSeeActivity={permissions.includes('security.read')}
                         self={user}
                         onGoTo={pick}
                         onSignedOut={forget}
                       />
                     )}
 
-                    {current === 'orders' && <OrdersPanel permissions={held} />}
+                    {current === 'orders' && <OrdersPanel permissions={permissions} />}
 
-                    {current === 'support' && <SupportPanel onGoTo={pick} permissions={held} />}
+                    {current === 'support' && (
+                      <SupportPanel onGoTo={pick} permissions={permissions} />
+                    )}
 
                     {current === 'my-projects' && <MyProjectsPanel />}
 
