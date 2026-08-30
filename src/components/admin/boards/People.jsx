@@ -1,7 +1,7 @@
 import React from 'react';
 import { Globe, Hourglass, LockKeyhole, LogOut, Search, UserPlus, X } from 'lucide-react';
 import { Button, Select, Empty, Notice, SearchInput, Pill } from '../ui';
-import { Avatar, GeneralTag, isGeneral } from './shared';
+import { Avatar, GeneralTag, StaffTag, isGeneral, isStaff } from './shared';
 import { BOARD_ROLE_HINT, BOARD_ROLE_LABEL } from '../../../lib/admin';
 
 const ROLES = ['owner', 'editor', 'viewer'];
@@ -151,6 +151,9 @@ export default function People({
   pinned,
   keyholders,
   generals,
+  staff,
+  granted,
+  createdBy,
   here,
   onAdd,
   onAsk,
@@ -192,6 +195,7 @@ export default function People({
             const last = fixed || (held === 'owner' && owners.length < 2);
             const open = workload(cards, person);
             const looking = (here ?? []).includes(person);
+            const grantedBy = (granted ?? {})[person]?.by;
             return (
               <li key={person} className="flex flex-wrap items-center gap-3 px-4 py-3">
                 <Avatar name={person} size="lg" crowned={isGeneral(generals, person)} />
@@ -202,6 +206,7 @@ export default function People({
                       {person === you ? ' (you)' : ''}
                     </span>
                     {isGeneral(generals, person) && <GeneralTag />}
+                    {!isGeneral(generals, person) && isStaff(staff, person) && <StaffTag />}
                     {keeper && <Pill tone="purple">On every board</Pill>}
                     {looking && <Pill tone="green">Here now</Pill>}
                     {open > 0 && <Pill tone="neutral">{open} open</Pill>}
@@ -214,6 +219,12 @@ export default function People({
                         : last
                           ? 'The only owner — make somebody else an owner first.'
                           : BOARD_ROLE_HINT[held]}
+                    {!keeper &&
+                      (person === createdBy
+                        ? ' · Created this board.'
+                        : grantedBy
+                          ? ` · Added by ${grantedBy === you ? 'you' : grantedBy}.`
+                          : '')}
                   </span>
                 </span>
                 {canAdmin && !keeper ? (

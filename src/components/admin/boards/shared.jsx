@@ -539,6 +539,22 @@ export function GeneralTag({ short, className = '' }) {
   );
 }
 
+// Same membership check as isGeneral, named for what boards.manage actually
+// means here: this account can already reach (and manage) this board from
+// its panel role alone, seat on it or not.
+export const isStaff = isGeneral;
+
+export function StaffTag({ className = '' }) {
+  return (
+    <span
+      title="Holds Manage boards on the panel — can already open and run this board without being named here"
+      className={`inline-flex items-center border border-sky-300/35 bg-sky-400/10 px-1.5 py-[2px] text-[10px] font-semibold uppercase tracking-[0.14em] text-sky-200 ${className}`}
+    >
+      Staff
+    </span>
+  );
+}
+
 function CrownMark({ className }) {
   return (
     <svg viewBox="0 0 20 20" aria-hidden="true" fill="currentColor" className={className}>

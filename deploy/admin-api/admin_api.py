@@ -8321,6 +8321,15 @@ class Handler(BaseHTTPRequestHandler):
             if entry.get("role") == "owner" and (entry.get("name") or "").lower() in held
         )
 
+    def board_staff(self, seated):
+        held = {name.lower() for name in seated}
+        return sorted(
+            entry.get("name")
+            for entry in users.listing()
+            if "boards.manage" in (entry.get("permissions") or ())
+            and (entry.get("name") or "").lower() in held
+        )
+
 
     def board_account(self, name):
         cleaned = str(name or "").strip()[:USER_LIMIT]
@@ -8354,6 +8363,9 @@ class Handler(BaseHTTPRequestHandler):
                 "colours": list(BOARD_COLOURS),
                 "roles": list(BOARD_ROLES),
                 "generals": self.board_generals(
+                    set(shown) | {name for entry in listing for name in (entry.get("members") or {})}
+                ),
+                "staff": self.board_staff(
                     set(shown) | {name for entry in listing for name in (entry.get("members") or {})}
                 ),
                 "visibility": list(BOARD_OWN_VISIBILITY if own else BOARD_VISIBILITY),
@@ -8390,6 +8402,7 @@ class Handler(BaseHTTPRequestHandler):
                 "you": actor,
                 "purposes": board_purposes(),
                 "generals": self.board_generals(record.get("members") or {}),
+                "staff": self.board_staff(record.get("members") or {}),
             },
         )
 

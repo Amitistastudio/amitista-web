@@ -570,6 +570,7 @@ export default function Settings({
   keyholders,
   purposes,
   generals,
+  staff,
   here,
   sending,
   actions,
@@ -939,6 +940,8 @@ export default function Settings({
               Board owners manage people and settings · editors add and move cards · read-only sees
               the board and nothing else. Anyone holding the owner role on the panel wears the
               General owner tag here — it comes with the account, so it is not a seat you hand out.
+              Anyone else holding Manage boards on the panel wears a plain Staff tag instead, for the
+              same reason.
             </p>
             <People
               members={board.members}
@@ -949,6 +952,9 @@ export default function Settings({
               cards={board.cards}
               keyholders={keyholders}
               generals={generals}
+              staff={staff}
+              granted={board.granted}
+              createdBy={board.createdBy}
               here={here}
               canAdmin={can}
               busy={busy}

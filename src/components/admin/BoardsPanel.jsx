@@ -410,6 +410,7 @@ export default function BoardsPanel() {
   const [board, setBoard] = React.useState(null);
   const [spec, setSpec] = React.useState(null);
   const [generals, setGenerals] = React.useState([]);
+  const [staff, setStaff] = React.useState([]);
   const [settings, setSettings] = React.useState(false);
   const [creating, setCreating] = React.useState(false);
   const [dragging, setDragging] = React.useState(false);
@@ -462,12 +463,14 @@ export default function BoardsPanel() {
           setBoard(result.board);
           if (result.purposes) setSpec(result.purposes);
           if (result.generals) setGenerals(result.generals);
+          if (result.staff) setStaff(result.staff);
           if (!quiet || !indexed.current) {
             const listing = await fetchBoards(false);
             if (cancelled.current) return;
             indexed.current = true;
             setIndex(listing);
             if (listing.generals) setGenerals(listing.generals);
+            if (listing.staff) setStaff(listing.staff);
           }
         } else {
           const result = await fetchBoards(tab === 'archive');
@@ -476,6 +479,7 @@ export default function BoardsPanel() {
           setIndex(result);
           if (result.purposes) setSpec(result.purposes);
           if (result.generals) setGenerals(result.generals);
+          if (result.staff) setStaff(result.staff);
         }
         if (!cancelled.current) setError(null);
       } catch (failure) {
@@ -601,6 +605,7 @@ export default function BoardsPanel() {
 
   if (openId && board) {
     const counts = tally(board, you);
+    const people = Object.keys(board.members ?? {});
     const filtered =
       filters.text || filters.mine || filters.hideDone || filters.label || filters.archived;
     return (
@@ -643,7 +648,8 @@ export default function BoardsPanel() {
               {!board.canWrite && <Pill tone="amber">Read only</Pill>}
               <span>
                 {plural(counts.cards, 'card')} · {counts.done} done
-                {counts.overdue ? ` · ${counts.overdue} overdue` : ''}
+                {counts.overdue ? ` · ${counts.overdue} overdue` : ''} · {people.length}{' '}
+                {people.length === 1 ? 'person' : 'people'}
               </span>
             </p>
             <div className="mt-3">
@@ -652,12 +658,17 @@ export default function BoardsPanel() {
           </div>
 
           <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:shrink-0">
-            <span className="flex -space-x-1.5">
-              {Object.keys(board.members ?? {})
-                .slice(0, 5)
-                .map((name) => (
+            <span className="flex items-center gap-1.5" title={`${people.length} on this board`}>
+              <span className="flex -space-x-1.5">
+                {people.slice(0, 5).map((name) => (
                   <Avatar key={name} name={name} size="lg" crowned={isGeneral(generals, name)} />
                 ))}
+              </span>
+              {people.length > 5 && (
+                <span className="text-[11px] font-normal text-neutral-600">
+                  +{people.length - 5}
+                </span>
+              )}
             </span>
             {live.here.length > 0 && <Here people={live.here} />}
             <span data-tour="board-live" className="flex items-center gap-2">
@@ -778,6 +789,7 @@ export default function BoardsPanel() {
               keyholders={index?.keyholders}
               purposes={spec}
               generals={generals}
+              staff={staff}
               here={live.here}
               sending={index?.remind?.sending}
               actions={actions}

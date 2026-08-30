@@ -4607,6 +4607,11 @@ class Boards:
                 if kind in BOARD_ART_KINDS and isinstance(held, dict)
             },
             "members": self._people(record),
+            "granted": {
+                name: dict(entry)
+                for name, entry in (record.get("granted") or {}).items()
+                if name in (record.get("members") or {}) and isinstance(entry, dict)
+            },
             "asks": [dict(entry) for entry in self._asks(record)],
             "labels": [dict(label) for label in record.get("labels") or []],
             "remind": remind_public(record.get("remind")),
@@ -5152,6 +5157,11 @@ class Boards:
                 if len(members) >= BOARD_MEMBERS_MAX:
                     raise StoreError("A board takes at most %d people." % BOARD_MEMBERS_MAX)
                 members[actor] = check_board_role(mine.get("role"))
+                granted = record.get("granted")
+                if not isinstance(granted, dict):
+                    granted = {}
+                granted[actor] = {"by": mine.get("by"), "at": now_iso()}
+                record["granted"] = granted
             self._touch(record, actor)
             return {
                 "board": record.get("id"),
@@ -5239,6 +5249,10 @@ class Boards:
                 members[account] = was
                 raise StoreError("A board needs at least one owner.", 409)
             record["members"] = members
+            granted = record.get("granted")
+            if isinstance(granted, dict) and account in granted:
+                granted.pop(account, None)
+                record["granted"] = granted
             self._touch(record, actor)
             standing = self.seat(record, actor, manage)
             if standing is None:
@@ -5262,6 +5276,12 @@ class Boards:
                 if account in members:
                     members.pop(account)
                     record["members"] = members
+                    touched += 1
+                    shifted = True
+                granted = record.get("granted")
+                if isinstance(granted, dict) and account in granted:
+                    granted.pop(account, None)
+                    record["granted"] = granted
                     touched += 1
                     shifted = True
                 waiting = record.get("asks") or []
