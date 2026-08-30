@@ -5,7 +5,6 @@ import { Button, Notice } from './ui';
 import Health from './developer/Health';
 import Endpoints from './developer/Endpoints';
 import Releases from './developer/Releases';
-import Reference from './developer/Reference';
 import Performance from './developer/Performance';
 
 export const DEVELOPER_VIEWS = [
@@ -13,7 +12,6 @@ export const DEVELOPER_VIEWS = [
   'dev-endpoints',
   'dev-performance',
   'dev-releases',
-  'dev-reference',
 ];
 
 const VIEWS = {
@@ -21,7 +19,6 @@ const VIEWS = {
   'dev-endpoints': Endpoints,
   'dev-performance': Performance,
   'dev-releases': Releases,
-  'dev-reference': Reference,
 };
 
 // One fetch backs all four sections. AdminPage renders this component for every

@@ -1151,7 +1151,7 @@ export const PERMISSION_LABELS = {
   'c2c.logs': 'Read the exchange bot’s logs',
   'transcripts.read': 'Search and read archived transcripts',
   'transcripts.manage': 'Delete an archived transcript for good',
-  'developer.read': 'See the developer group — health, endpoints, releases and the reference',
+  'developer.read': 'See the developer group — health, endpoints, performance and releases',
 };
 
 export const PERMISSION_GROUPS = [
