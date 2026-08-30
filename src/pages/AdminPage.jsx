@@ -777,7 +777,7 @@ function Sidebar({ sections, active, onPick }) {
         )}
       </div>
 
-      <div className="relative hidden lg:sticky lg:top-[88px] lg:block lg:h-[calc(100vh-112px)]">
+      <div className="relative z-50 hidden lg:sticky lg:top-[88px] lg:block lg:h-[calc(100vh-112px)]">
         <div
           data-pinned={pinned ? 'true' : undefined}
           className={`rail-flyout absolute inset-y-0 left-0 z-40 overflow-hidden border border-[#282832] bg-[#0a0a0d] ${
