@@ -14,7 +14,6 @@ import ContourField from '../components/ContourField';
 import Reveal from '../components/Reveal';
 import Header from '../components/web1/Header';
 import Footer from '../components/web1/Footer';
-import AvailabilityBand from '../components/AvailabilityBand';
 import { CONTACT_EMAIL, DISCORD_INVITE, CONTACT_ENDPOINT } from '../siteConfig';
 import { submitEnquiry, UNAVAILABLE } from '../lib/enquiry';
 import { openAsk } from '../lib/useCommandPalette';
@@ -294,7 +293,6 @@ export default function ContactPage() {
   return (
     <div className="min-h-screen bg-[#060608] text-white selection:bg-purple-500 selection:text-white flex flex-col justify-between font-sans">
       <Header />
-      <AvailabilityBand />
 
       <main id="main" tabIndex={-1} className="w-full flex justify-center bg-[#060608] flex-1 focus:outline-none">
         <section className="w-full max-w-[1480px] border-x border-[#282832] relative flex flex-col items-center justify-start text-left overflow-hidden">
