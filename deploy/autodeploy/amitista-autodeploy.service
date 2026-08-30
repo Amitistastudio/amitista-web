@@ -7,11 +7,4 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 ExecStart=/root/website/deploy/autodeploy/amitista-autodeploy.sh
-# The website build is the slow part of a deploy; a stuck npm should not wedge
-# the timer behind it for ever.
 TimeoutStartSec=1800
-
-# Deliberately unhardened. This unit installs services, writes into /opt and
-# restarts units as root, so the usual ProtectSystem / PrivateTmp settings would
-# stop it doing its job rather than make it safer. The protection that matters
-# here is upstream: it only deploys commits CI has already gone green on.

@@ -1,0 +1,10 @@
+[Unit]
+Description=Watch for access changes the admin panel has asked for
+Documentation=file:/root/website/deploy/autodeploy/README.md
+
+[Path]
+PathExistsGlob=/var/lib/amitista/admin/github-queue/*.json
+Unit=amitista-github-queue.service
+
+[Install]
+WantedBy=paths.target

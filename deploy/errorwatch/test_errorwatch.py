@@ -1,13 +1,5 @@
 #!/usr/bin/env python3
 
-"""Checks for errorwatch: the counting, the windows, and what it refuses to say.
-
-The arithmetic is the point. A card that claims a release made things 38% worse
-is only worth posting if the two windows it compared were the right two, so the
-window boundaries, the grace after a deploy and the empty-baseline case are all
-pinned here rather than trusted.
-"""
-
 import json
 import os
 import sys
@@ -98,7 +90,7 @@ class Parsing(unittest.TestCase):
         held = ew.SOURCES[source_key]
         ew.SOURCES[source_key] = path
         try:
-            scan(self.state)                      # seed the offset
+            scan(self.state)
             with open(path, "a", encoding="utf-8") as handle:
                 handle.write("".join(f"{line}\n" for line in lines))
             scan(self.state)
@@ -326,7 +318,7 @@ class Releases(unittest.TestCase):
         self.state["pending"] = [deploy]
         ew.settle(self.state)
         card = self.sent[0]
-        json.dumps(card, allow_nan=False)                     # would raise on an infinity
+        json.dumps(card, allow_nan=False)
         row = next(r for r in card["rows"] if r["source"] == "app")
         self.assertEqual((row["before"], row["after"], row["pct"]), (0, 1, None))
 

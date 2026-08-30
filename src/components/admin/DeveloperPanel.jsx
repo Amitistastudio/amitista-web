@@ -21,9 +21,6 @@ const VIEWS = {
   'dev-releases': Releases,
 };
 
-// One fetch backs all four sections. AdminPage renders this component for every
-// developer section, so moving between them keeps it mounted and reuses the
-// payload it already has — the snapshot only changes every five minutes anyway.
 export default function DeveloperPanel({ view }) {
   const [data, setData] = React.useState(null);
   const [error, setError] = React.useState(null);

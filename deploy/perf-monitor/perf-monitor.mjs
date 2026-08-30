@@ -8,17 +8,8 @@ const STATE = process.env.AMITISTA_PERF_STATE ?? '/var/lib/amitista/perf';
 const HISTORY = join(STATE, 'history.jsonl');
 const BASELINE = join(STATE, 'baseline.json');
 const WEBROOT = process.env.AMITISTA_WEBROOT ?? '/var/www/amitista.com';
-// Which release is serving, and which commit that release is. The first is a
-// symlink this can resolve; the second only the deploy knows, which is why it
-// writes it down. Without both, a measurement is a number with a date on it and
-// no way to say what changed.
 const CURRENT = join(WEBROOT, 'current');
 const LEDGER = join(WEBROOT, 'releases.jsonl');
-// Every deploy now takes a measurement of its own on top of the six-hourly
-// timer, so the history grows with how much work is being done rather than with
-// the clock. A busy week used to be forty lines and can now be four hundred.
-// This is about two years of the timer alone and still a file worth reading in
-// one gulp.
 const KEEP_RUNS = 2000;
 const CHROMIUM = process.env.AMITISTA_CHROMIUM ?? '/usr/bin/chromium';
 const PORT = Number(process.env.AMITISTA_PERF_CDP_PORT ?? 9422);
@@ -32,36 +23,12 @@ const BUDGETS = {
 };
 const REGRESSION = 1.35;
 const MIN_SHIFT_MS = 120;
-// A ratio alone is meaningless on a site this fast: 272ms → 400ms clears 1.35x
-// while still using a third of the LCP budget. A metric is only worth calling a
-// regression once it has also left the comfortable part of its budget, which is
-// what keeps the six-hourly run quiet unless something genuinely moved.
 const QUIET_FRACTION = 0.6;
 
-// How busy the box may be before a measurement is worth taking, as a share of
-// its cores. The deploy starts this service the moment a release goes live, so
-// without this the run lands in the busiest minute the box ever has: installers
-// finishing, units restarting, the deploy's own collector asking GitHub for
-// thirty things. A page that animates is the one that suffers — its frames
-// stretch past the 50ms line and every one of them starts counting as a long
-// task, so the same build reads 120ms on a quiet box and 1500ms on a busy one.
-// That is not a regression, and it should never have been offered as one.
 const QUIET_LOAD = Number(process.env.AMITISTA_PERF_QUIET_LOAD ?? 0.7);
 const QUIET_WAIT_MS = Number(process.env.AMITISTA_PERF_QUIET_WAIT_MS ?? 150_000);
 const QUIET_POLL_MS = 5_000;
 
-// How many times every run measures, and how many more it takes when what it
-// measured looks like news.
-//
-// One pass against one pass is not enough to tell a change from the weather: six
-// passes of one unchanged build measured 52, 62, 117, 131, 194 and 1534ms of
-// long tasks on /. Two always, rather than one now and more later, because the
-// panel compares this release against the one before it and that one is not
-// going to be measured again — a run that only deepens itself when it sees
-// something would leave every comparison resting on whatever single reading the
-// previous release happened to get. The third pass is the one that matters when
-// a reading is wrong: it is the first count at which the middle reading throws
-// an outlier away rather than averaging it in.
 const MEASURE_PASSES = Number(process.env.AMITISTA_PERF_PASSES ?? 2);
 const CONFIRM_PASSES = Number(process.env.AMITISTA_PERF_CONFIRM_PASSES ?? 1);
 
@@ -122,7 +89,6 @@ async function browserEndpoint() {
       const response = await fetch(`http://127.0.0.1:${PORT}/json/version`);
       if (response.ok) return (await response.json()).webSocketDebuggerUrl;
     } catch {
-      // not listening yet
     }
     await sleep(250);
   }
@@ -339,35 +305,23 @@ async function readJson(path, fallback) {
   }
 }
 
-// Whatever is serving right now, named the way the deploy named it, plus the
-// commit it was built from if the deploy wrote one down.
-//
-// Resolved rather than remembered: a rollback moves the symlink back to an
-// older release without any of this running, so the only honest answer to what
-// is live is the one read at the moment of measuring.
 async function liveRelease() {
   let id = null;
   try {
     id = basename(await readlink(CURRENT));
   } catch {
-    // No symlink, or not a symlink. Nothing is lost but the attribution.
     return null;
   }
 
   const ledger = await readFile(LEDGER, 'utf8').catch(() => '');
-  // Backwards: a release id is a timestamp and so unique in practice, but if
-  // one were ever written twice the later line is the one that means anything.
   for (const line of ledger.split('\n').reverse()) {
     if (!line.trim()) continue;
     try {
       const entry = JSON.parse(line);
       if (entry.release === id) return entry;
     } catch {
-      // A torn line is skipped rather than fatal. The measurement is the job.
     }
   }
-  // Serving a release nothing wrote down — deployed before the ledger existed,
-  // or by hand. Worth saying which one rather than reporting no release at all.
   return { release: id, sha: null, subject: null, author: null };
 }
 
@@ -379,29 +333,15 @@ async function readRuns() {
     try {
       out.push(JSON.parse(line));
     } catch {
-      // Same reasoning as the ledger: one unreadable line is not worth losing
-      // the rest of the history over.
     }
   }
   return out;
 }
 
-// How much a metric has to move before it is worth writing down at all. The
-// absolute floor stops a route that renders in 90ms reporting a 20% regression
-// every time the box is busy; the fraction stops a slow route reporting one
-// over 130ms of ordinary variance.
 const SHIFT_FRACTION = 0.1;
 const MIN_CLS_SHIFT = 0.02;
-// Per metric, because MIN_SHIFT_MS was chosen for paint timings and a page that
-// went from blocking nothing to blocking 80ms has done something worth saying.
 const SHIFT_FLOOR = { lcp: MIN_SHIFT_MS, fcp: MIN_SHIFT_MS, ttfb: MIN_SHIFT_MS, tbt: 50 };
 
-// What moved between two runs, in both directions. Improvements are recorded
-// with the same care as regressions — "which commit made the site slower" and
-// "did that fix actually work" are the same question asked from either end, and
-// only keeping the bad half would answer one of them.
-// The one-minute load average per core. A three-core box running a deploy sits
-// well over 1; idling it sits under 0.2.
 function busyness() {
   return loadavg()[0] / Math.max(1, cpus().length);
 }
@@ -419,9 +359,6 @@ async function waitForQuiet() {
     if (load <= QUIET_LOAD) break;
   }
   const waited = Date.now() - start;
-  // Reported either way. A measurement taken on a box that never went quiet is
-  // still worth having — it is the only one there is going to be — but what it
-  // was competing with belongs in the record next to the numbers.
   process.stdout.write(
     `  ${load <= QUIET_LOAD ? 'settled' : 'still busy'} at ${load.toFixed(2)}/core` +
       ` after ${(waited / 1000).toFixed(0)}s\n`,
@@ -436,10 +373,6 @@ function middle(values) {
   return sorted.length % 2 ? sorted[half] : (sorted[half - 1] + sorted[half]) / 2;
 }
 
-// Several passes over the same routes, reduced to the middle reading of each
-// metric. The middle rather than the mean on purpose: one pass landing on a
-// busy second is exactly the thing being defended against, and an average
-// carries it into the answer while a median throws it away.
 function medianPages(passes) {
   const first = passes[0] ?? [];
   return first.map((page) => {
@@ -465,10 +398,6 @@ function shifts(now, before) {
       const from = previous[metric];
       const to = page[metric];
       if (typeof from !== 'number' || typeof to !== 'number') continue;
-      // Zero is a real reading for TBT — a page that blocked nothing — and the
-      // move away from it is the one worth catching. For a paint timing a zero
-      // means the measurement did not happen, so those are still dropped rather
-      // than reported as an infinite improvement.
       if (metric !== 'tbt' && (!from || !to)) continue;
       const delta = to - from;
       if (Math.abs(delta) < SHIFT_FLOOR[metric]) continue;
@@ -488,19 +417,11 @@ function shifts(now, before) {
   return out;
 }
 
-// The pull request a commit came in on, when the merge left its number in the
-// subject — which squash and merge commits both do. Nothing here talks to
-// GitHub, so this is the whole of what can be known locally; the panel does the
-// proper join against the pull requests the deploy already collects.
 function pullNumber(subject) {
   const hit = /\(#(\d+)\)\s*$/.exec(String(subject ?? ''));
   return hit ? Number(hit[1]) : null;
 }
 
-// One line a person can act on: what moved, on which page, and whose commit was
-// the one that landed in between. Deliberately says "since", not "because of" —
-// this is a before-and-after either side of a release, and on a release
-// carrying four commits it can honestly name the release and no more.
 function blameLine(release, moved) {
   if (!release) return null;
   const worse = moved.filter((shift) => shift.delta > 0);
@@ -517,10 +438,6 @@ function blameLine(release, moved) {
   return `${named} increased ${parts.join(', ')}`;
 }
 
-// Alerts go to the Discord bot's relay on loopback, which is what
-// /etc/amitista/alerts.env is actually configured for (ALERT_URL + ALERT_TOKEN).
-// A bare ALERT_WEBHOOK Discord URL is still honoured if one is set, so an older
-// deployment keeps working.
 async function alertConfig() {
   const env = await readFile('/etc/amitista/alerts.env', 'utf8').catch(() => '');
   const from = (name) =>
@@ -570,14 +487,6 @@ async function main() {
   const comparable = baseline?.profile === profile ? baseline.pages : null;
   const release = await liveRelease();
 
-  // The last measurement of a different release, on the same profile. Same
-  // profile because a throttled run against an unthrottled one is a comparison
-  // of the emulation and nothing else; a different release because comparing a
-  // release against itself is what the six-hourly timer does all day and it
-  // measures the weather on the box, not the code.
-  //
-  // Read before anything is measured, because whether this run needs a second
-  // and third pass depends on what the first one has to say about it.
   const history = await readRuns();
   const before = release
     ? history
@@ -619,9 +528,6 @@ async function main() {
     invariants = await checkInvariants();
     pages = medianPages(passes);
 
-    // Nothing to report means nothing to prove. Anything else — over budget,
-    // moved against the baseline, moved against the last release — is worth the
-    // pass that turns an average of two into a middle of three.
     const suspect =
       overBudget(pages, profile).length > 0 ||
       regressions(pages, comparable, profile).length > 0 ||
@@ -669,17 +575,10 @@ async function main() {
     at: new Date().toISOString(),
     profile,
     release,
-    // How many passes these numbers are the middle of, and how loaded the box
-    // was when they were taken. Both travel with the run because both decide
-    // how much the numbers are worth: the panel will not name a commit over a
-    // comparison that is one pass against one pass.
     samples,
     load: quiet.load,
     pages,
     problems,
-    // What this is being compared against travels with the comparison. The
-    // history is the only record of it, and a list of deltas whose other end is
-    // not written down cannot be checked later.
     since: before ? { release: before.release, at: before.at } : null,
     shifts: moved,
   };
@@ -691,10 +590,6 @@ async function main() {
     await mkdir(STATE, { recursive: true });
     await writeFile(HISTORY, `${JSON.stringify(run)}\n`, { flag: 'a' });
 
-    // Kept to the cap here rather than by a logrotate rule, because the reader
-    // that matters parses whole lines: a rotation that split one would leave
-    // the panel reading half a run. Rewritten only when it is actually over,
-    // which is once every few hundred deploys.
     if (history.length + 1 > KEEP_RUNS) {
       const kept = [...history, run].slice(-KEEP_RUNS);
       const tmp = `${HISTORY}.tmp`;
@@ -715,10 +610,6 @@ async function main() {
     return;
   }
 
-  // The blame line goes above the problems rather than among them. It is not a
-  // problem of its own — every line under it is already the problem — it is the
-  // one piece of context that turns "LCP is over budget" into something with a
-  // commit to go and look at.
   const summary = [
     ...(blamed ? [`${blamed}`, ''] : []),
     ...problems.map((p) => `• ${p}`),

@@ -156,8 +156,6 @@ if systemctl is-active --quiet mongod && command -v mongosh >/dev/null; then
     ok "mongod refuses unauthenticated commands"
   fi
 
-  # Server-side JavaScript being back on would restore $where as an injection
-  # path, so this watches the setting rather than trusting it stayed put.
   if [ -r /etc/amitista/mongodump.yaml ] \
      && timeout 10 mongosh --quiet --config /etc/amitista/mongodump.yaml \
           --eval 'db.admin_docs.find({$where:"true"}).toArray()' >/dev/null 2>&1; then
@@ -166,9 +164,6 @@ if systemctl is-active --quiet mongod && command -v mongosh >/dev/null; then
     ok "mongod refuses server-side JavaScript"
   fi
 
-  # The account and token stores in Mongo are sealed. Anything writing them back
-  # in the clear is a silent loss of encryption at rest, so it is checked, not
-  # assumed.
   if [ -r /etc/amitista/mongodump.yaml ]; then
     CLEAR=$(timeout 10 mongosh --quiet --config /etc/amitista/mongodump.yaml --eval '
       var bad = [];
@@ -186,8 +181,6 @@ if systemctl is-active --quiet mongod && command -v mongosh >/dev/null; then
   fi
 fi
 
-# The archive is the only copy of Mongo. An archive written without a dump in it
-# is the failure mode that stays invisible until a restore is attempted.
 NEWEST=$(ls -1t /var/backups/amitista/amitista-*.tar.gz.gpg 2>/dev/null | head -1)
 if [ -z "$NEWEST" ]; then
   fail "no encrypted backup archive exists"

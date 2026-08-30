@@ -203,9 +203,6 @@ const SECTIONS = [
     blurb: 'what is serving, what each deploy changed, and what you can roll back to',
   },
   {
-    // Kept as 'github' rather than renamed to 'github-repositories': it is the
-    // section this group has always opened on, and the hash is a link people
-    // may already have.
     id: 'github',
     label: 'Repositories',
     icon: FolderGit2,
@@ -900,12 +897,6 @@ export default function AdminPage() {
     }
   }
 
-  // A section marked private is hidden from everyone the server did not name,
-  // owners included — that list is handed out per account rather than per
-  // permission, and the server decides who is on it. Everything else goes by
-  // what the account holds. An empty group disappears from the nav on its own,
-  // so a heading only ever shows for an account that can open something under
-  // it.
   const allowed = mustChange
     ? SECTIONS.filter((entry) => entry.id === 'account')
     : SECTIONS.filter(

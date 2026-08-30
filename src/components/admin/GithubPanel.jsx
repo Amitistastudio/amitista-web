@@ -36,42 +36,6 @@ const VIEWS = {
   'github-people': People,
 };
 
-// The gate is real, and it is three gates rather than one. Most of the group
-// needs github.read, which owners and developers hold. Security needs
-// github.security, which only an owner holds. People and access is by account
-// name — the list on the server, not a permission, because an owner resolves to
-// every permission at read time and so would hold any permission invented for
-// it.
-//
-// All of that is checked on the server rather than left to the nav to hide.
-// Every section here reads the one snapshot, so the server hands over a
-// snapshot cut to what the account may see: no guards or alerts without
-// github.security, no access, invitations or org people without being named.
-// A section whose data was cut is a section the nav did not offer in the first
-// place.
-//
-// Nothing in here can change a repository's contents. It reads the snapshot the
-// deploy writes and reports it; there is no button that pushes, merges or
-// deploys, and adding one would mean handing this service a token it cannot
-// read.
-//
-// People and access is the one section that asks for a change, and it does not
-// make one either. It posts what it wants to the admin API, which writes it to
-// a queue directory, and the deploy — root, holding the token — decides at the
-// end of its next tick whether to carry it out. So a change here is a request
-// with about a minute of latency, and the section says so rather than
-// pretending otherwise.
-//
-// The sections are nav entries rather than tabs inside one, so AdminPage
-// renders this component for every one of them. That keeps it mounted while you
-// move between them, which is the point: both read the one snapshot the deploy
-// writes, and it is fetched once rather than again per section.
-//
-// The collector also still gathers pull requests, branches and workflow-run
-// history: it costs nothing to keep, because conditional requests mean
-// unchanged data is not charged against the rate limit, so the sections that
-// read those come back by restoring their components from 2c2f34d rather than
-// by rebuilding anything.
 export default function GithubPanel({ view }) {
   const [data, setData] = React.useState(null);
   const [error, setError] = React.useState(null);
@@ -109,11 +73,6 @@ export default function GithubPanel({ view }) {
     );
   }
 
-  // Two ages, because they answer different questions and can drift apart: the
-  // checkout comparison is local and always current, while the GitHub half is
-  // whatever the last conditional request came back with. Both are shown so
-  // that "I just opened an issue and it is not here" has an answer on the page
-  // rather than needing one from me.
   const rate = data.rate ?? {};
   const View = VIEWS[view] ?? Repositories;
 
@@ -150,9 +109,6 @@ export default function GithubPanel({ view }) {
       {error && <Notice tone="rose">{error}</Notice>}
 
       <div className={`transition-opacity duration-200 ${loading ? 'opacity-60' : 'opacity-100'}`}>
-        {/* Handed down so a section that has asked for something can watch for
-            it to land, rather than leaving somebody to press Refresh at a
-            deploy tick they cannot see. */}
         <View data={data} onRefresh={load} />
       </div>
     </div>

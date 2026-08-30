@@ -1,46 +1,8 @@
 #!/bin/bash
-# Verify that the site is actually behind Cloudflare, and stays there.
-#
-# Three things this catches, all of which have a history of being wrong:
-#
-#   1. A hostname that resolves past the edge. The apex A record can be proxied
-#      while the AAAA record is not, in which case every IPv6 visitor bypasses
-#      Cloudflare and the origin address is published in DNS. That is not a
-#      hypothetical: it was the state of this zone on 14 Aug 2026, in the hour
-#      after the nameserver move, and nothing on the box would have reported it.
-#
-#   2. Cloudflare's published IP ranges drifting away from the trust list in
-#      /etc/nginx/conf.d/10-cloudflare-realip.conf. If that list goes stale,
-#      real-IP restoration silently stops working for the new ranges and every
-#      visitor behind them collapses into one rate-limit bucket.
-#
-#      This only ever reports the drift. It does not rewrite the conf. That
-#      file decides who is allowed to assert a client address by sending a
-#      CF-Connecting-IP header, so it is a trust boundary, and a trust boundary
-#      does not get widened automatically on the strength of an HTTP response.
-#
-#   3. The origin answering for its own address. The catch-all in the site conf
-#      returns 444 to anything whose Host is not ours, which is what stops an
-#      attacker who has found the origin from skipping the edge. If that ever
-#      regresses, the edge stops being worth having.
-#
-# ON NOT USING THE SYSTEM RESOLVER. Every lookup here goes straight to the
-# zone's authoritative nameservers. The first version of this script asked the
-# box's resolver and reported a bypass that did not exist: the records had
-# already been proxied, but 1.1.1.1 was still handing out the pre-migration
-# origin address from cache, on some queries and not others. A recursive
-# resolver answers with what it cached, which is a fact about the resolver and
-# not about the zone. Asking the authoritative server is the only lookup whose
-# answer means what this check needs it to mean.
-#
-# Alerts go to the same webhook the healthcheck uses.
 
 set -uo pipefail
 
 APEX="${AMITISTA_APEX:-amitista.com}"
-# The origin address is deliberately not in this file: the repository is public
-# and the whole point of check 4 below is that the address is hard to find.
-# It lives in /etc/amitista/cf.env, which the unit reads.
 ORIGIN_V4="${AMITISTA_ORIGIN_V4:-}"
 REALIP_CONF=/etc/nginx/conf.d/10-cloudflare-realip.conf
 ALERT_ENV=/etc/amitista/alerts.env
@@ -56,7 +18,6 @@ trap 'rm -f "$UPSTREAM"' EXIT
   curl -sS https://www.cloudflare.com/ips-v6 --max-time 20; } 2>/dev/null \
   | grep -vE '^\s*$' | sort -u >"$UPSTREAM"
 
-# One authoritative nameserver for the zone, resolved once and reused.
 NS=$(dig +short NS "$APEX" 2>/dev/null | head -1)
 if [ -z "$NS" ]; then
   fail "could not find the authoritative nameservers for $APEX"
@@ -71,8 +32,6 @@ addr = ipaddress.ip_address(sys.argv[2])
 sys.exit(0 if any(addr in n for n in nets) else 1)
 PY
 }
-
-# --- 1. is every published address a Cloudflare address? --------------------
 
 record_check() {
   local host=$1 rrtype=$2
@@ -100,12 +59,6 @@ if [ -n "$NS" ] && [ -s "$UPSTREAM" ]; then
   record_check "www.$APEX"  AAAA
 fi
 
-# --- 2. does the edge actually answer, and is real-IP restoration intact? ----
-#
-# cf-ray is added by Cloudflare and cannot be forged by the origin, so its
-# presence proves the request was served through the edge. --resolve pins the
-# address so this does not depend on the local resolver either.
-
 EDGE=$(dig +short "@$NS" "$APEX" A 2>/dev/null | head -1)
 if [ -n "$EDGE" ]; then
   HEADERS=$(curl -sS -I "https://$APEX/" --resolve "$APEX:443:$EDGE" --max-time 20 2>/dev/null)
@@ -115,8 +68,6 @@ if [ -n "$EDGE" ]; then
     fail "$APEX did not come back through Cloudflare when asked at its published address"
   fi
 fi
-
-# --- 3. published ranges vs the real-IP trust list ---------------------------
 
 if [ ! -s "$UPSTREAM" ]; then
   fail "could not fetch Cloudflare's published IP ranges — drift is unverified this run"
@@ -136,13 +87,6 @@ else
   [ -z "$MISSING$STALE" ] && ok "real-IP trust list matches Cloudflare's published ranges ($(wc -l <"$UPSTREAM") ranges)"
 fi
 
-# --- 4. does the origin still refuse to answer for its own address? ---------
-#
-# A dropped connection is the pass condition, so curl's exit status is the
-# signal and its printed code is not consulted. Comparing the printed body of
-# a failed transfer is how the first version of this check reported a false
-# failure.
-
 if [ -z "$ORIGIN_V4" ]; then
   fail "AMITISTA_ORIGIN_V4 is not set, so the direct-to-IP check did not run — put the origin address in /etc/amitista/cf.env"
 elif curl -sS -o /dev/null -k "https://$ORIGIN_V4/" --max-time 15 >/dev/null 2>&1; then
@@ -150,8 +94,6 @@ elif curl -sS -o /dev/null -k "https://$ORIGIN_V4/" --max-time 15 >/dev/null 2>&
 else
   ok "origin drops direct-to-IP requests"
 fi
-
-# --- report -----------------------------------------------------------------
 
 if [ ${#FAILURES[@]} -eq 0 ]; then
   echo "cf-posture-check: all checks passed"

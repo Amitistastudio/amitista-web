@@ -126,8 +126,6 @@ const securityTxt = [
   '',
 ].join('\n');
 
-// public/.well-known/ holds nothing that is committed, so it is absent in a
-// fresh clone — create it rather than letting prebuild die on ENOENT.
 await mkdir(join(root, 'public/.well-known'), { recursive: true });
 await writeFile(join(root, 'public/.well-known/security.txt'), securityTxt);
 

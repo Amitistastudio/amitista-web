@@ -37,10 +37,7 @@ import {
 const DAY = 86400000;
 const INVITE_STALE_DAYS = 7;
 
-// How often to look again while something is waiting to be carried out. The
-// deploy ticks about once a minute, so this catches the outcome within a few
-// seconds of it happening without anyone watching for a tick they cannot see.
-const WATCH_MS = 15000;
+const WATCH_MS = 3000;
 
 const ageDays = (at) => (at ? Math.floor((Date.now() - Date.parse(at)) / DAY) : null);
 
@@ -51,20 +48,10 @@ const listSentence = (parts) =>
     ? parts.join('')
     : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
 
-// Everyone who can reach anything, and what they hold on each repository.
-//
-// Built from the per-repository lists as well as the member list, because they
-// answer different questions and the difference is the point: an outside
-// collaborator is on a repository and not in the organisation, and an owner is
-// in the organisation and on every repository without ever having been added to
-// one.
 function everyone(repositories, members) {
   const rows = new Map();
   const take = (login, extra) => {
     const held = rows.get(login) ?? { login, holds: {}, member: null };
-    // Only what is actually there. Object.assign happily writes an undefined
-    // over a value, and the same person arrives from two lists — one of which
-    // may not carry their avatar.
     Object.entries(extra).forEach(([key, value]) => {
       if (value !== undefined && value !== null) held[key] = value;
     });
@@ -102,7 +89,6 @@ function everyone(repositories, members) {
   });
 }
 
-// One line for what somebody holds, so the row says it without being opened.
 function summarise(person, repositories) {
   const held = repositories.filter((repo) => person.holds[repo.name]);
   if (held.length === 0) return 'no access to any repository';
@@ -116,8 +102,6 @@ function summarise(person, repositories) {
   );
 }
 
-// The section's own verdict list. Not everything unusual — only the things that
-// would be worth doing something about, each saying what and why.
 function concerns(org, people, repositories, team) {
   const out = [];
   const add = (rank, tone, title, detail) => out.push({ rank, tone, title, detail });
@@ -218,9 +202,6 @@ function Login({ login, url }) {
 
 function LevelPicker({ id, value, disabled, onChange, label }) {
   return (
-    // Select paints its own class list and spreads props after it, so passing
-    // className would replace the styling rather than add to it. Width belongs
-    // on a wrapper.
     <span className="inline-block w-28">
       <Select id={id} value={value} disabled={disabled} aria-label={label} onChange={onChange}>
         {REPO_ROLES.map((level) => (
@@ -233,12 +214,6 @@ function LevelPicker({ id, value, disabled, onChange, label }) {
   );
 }
 
-// The five levels and what each one actually allows.
-//
-// One component doing two jobs on purpose: with onPick it is how you choose a
-// level, and without it, it is the reference for what the words in the table
-// mean. Those had better not drift apart — the whole complaint about the names
-// is that "triage" and "maintain" give no clue where the line is.
 function Levels({ value, onPick, name, disabled }) {
   const choosing = typeof onPick === 'function';
 
@@ -281,10 +256,6 @@ function Levels({ value, onPick, name, disabled }) {
   );
 }
 
-// One person's access to one repository, with whatever can actually be done
-// about it. Controls only appear where they would work: access that comes from
-// being an owner cannot be taken away here, and saying so is more use than a
-// button that fails.
 function RepoAccess({ repo, held, login, self, busy, onGrant, onRevoke }) {
   const current = held ? roleApi(held.role) : null;
   const [wanted, setWanted] = React.useState(current ?? 'pull');
@@ -308,9 +279,6 @@ function RepoAccess({ repo, held, login, self, busy, onGrant, onRevoke }) {
             {held ? (
               <>
                 <span className="text-neutral-300">{roleLabel(held.role)}</span>
-                {/* Guarded rather than defaulted: roleGist of nothing would
-                    read "read only", which is the reassuring answer to give
-                    about a level we do not recognise. */}
                 {role(held.role) ? ` — ${roleGist(role(held.role))}` : ''}
                 {` · ${held.direct ? 'added to this repository' : 'through the organisation'}`}
               </>
@@ -362,10 +330,6 @@ function RepoAccess({ repo, held, login, self, busy, onGrant, onRevoke }) {
         )}
       </div>
 
-      {/* What the dropdown currently says, in words. Whether it describes what
-          they hold or what they are about to be given depends on whether it has
-          been moved, which is exactly the question somebody is asking as they
-          move it. */}
       {!note && (
         <p className="text-[11px] text-neutral-600 leading-relaxed mt-2">
           {held && wanted === current ? 'Holds now: ' : 'Would give: '}
@@ -376,9 +340,6 @@ function RepoAccess({ repo, held, login, self, busy, onGrant, onRevoke }) {
   );
 }
 
-// One row of the table, and everything about that person underneath it when
-// opened. The row and the controls are the same thing on purpose: a separate
-// list per repository meant reading the same person four times over.
 function PersonRow({ person, repositories, actor, busy, open, onToggle, onGrant, onRevoke }) {
   const self = actor && person.login.toLowerCase() === actor.toLowerCase();
   const span = repositories.length + 2;
@@ -479,9 +440,6 @@ function PersonRow({ person, repositories, actor, busy, open, onToggle, onGrant,
   );
 }
 
-// One form for all of it. Adding a teammate to three repositories used to mean
-// filling in three identical forms; each repository is still a separate request
-// so that one being refused does not take the others down with it.
 function AddSomeone({ repositories, busy, onGrant }) {
   const [login, setLogin] = React.useState('');
   const [permission, setPermission] = React.useState('pull');
@@ -599,7 +557,7 @@ function AddSomeone({ repositories, busy, onGrant }) {
               begins when they accept it.
             </>
           ) : (
-            'Fill in all three and the invitation goes out on the next deploy tick.'
+            'Fill in all three and the invitation goes out as soon as you ask for it.'
           )}
         </p>
       </div>
@@ -607,13 +565,6 @@ function AddSomeone({ repositories, busy, onGrant }) {
   );
 }
 
-// How far "can change code" actually reaches on these repositories.
-//
-// A level says whether somebody may push. Which branches will accept that push
-// is a different mechanism entirely — branch protection — and confusing the two
-// is the easiest mistake to make here. Read from the branches the collector
-// already lists rather than assumed, because the answer changes the moment one
-// is protected.
 function Reach({ repositories }) {
   const branches = repositories.flatMap((repo) =>
     listOf(repo, 'branches').map((branch) => ({ ...branch, repo: repo.name })),
@@ -686,9 +637,6 @@ export default function People({ data, onRefresh }) {
   const outside = team.filter((person) => person.member === null);
   const owners = team.filter((person) => person.member === 'owner').length;
 
-  // While something is waiting to be carried out, look again on a short cycle
-  // so the outcome lands on the page by itself. It stops the moment the queue
-  // is empty, so an idle panel asks the server nothing.
   const waiting = queued.length;
   React.useEffect(() => {
     if (waiting === 0 || !onRefresh) return undefined;
@@ -710,10 +658,6 @@ export default function People({ data, onRefresh }) {
     }
   }, []);
 
-  // One request per repository, and settled rather than all-or-nothing: two of
-  // three landing is a real outcome, and reporting it as a failure would send
-  // somebody to undo work that was never done. What was asked for and what was
-  // refused are both said, separately.
   const grant = async (repos, login, permission) => {
     const wanted = Array.isArray(repos) ? repos : [repos];
     setBusy(true);
@@ -803,13 +747,12 @@ export default function People({ data, onRefresh }) {
         />
       </div>
 
-      {/* Both, when a grant across several repositories partly landed. */}
       {failure && <Notice tone="rose">{failure}</Notice>}
       {asked && (
         <Notice tone="amber" icon={Clock}>
-          Asked for: {asked}. Nothing has changed at GitHub yet — the deploy carries these out at
-          the end of its next tick, about a minute from now. This page is watching for it and will
-          show what happened under “Changes asked for” by itself.
+          Asked for: {asked}. It is being carried out at GitHub now — a second or two, and a
+          little longer if a deploy is mid-flight. This page is watching for it and will show what
+          happened under “Changes asked for” by itself.
         </Notice>
       )}
 
@@ -899,9 +842,6 @@ export default function People({ data, onRefresh }) {
         <AddSomeone repositories={repositories} busy={busy} onGrant={grant} />
       </Panel>
 
-      {/* The reference for every level name that appears above. It is a panel
-          rather than a tooltip because "what does maintain actually mean" is a
-          question somebody asks once and then wants to be able to find again. */}
       <Panel title="What the levels mean" icon={BookOpen}>
         <div className="px-4 sm:px-6 py-4">
           <Levels />
@@ -1009,8 +949,6 @@ export default function People({ data, onRefresh }) {
           icon={Building2}
           action={
             <GithubLink
-              // Organisation settings do not live under the organisation's own
-              // page — GitHub keeps them under /organizations/<name>/.
               href={
                 org.login
                   ? `https://github.com/organizations/${org.login}/settings/member_privileges`

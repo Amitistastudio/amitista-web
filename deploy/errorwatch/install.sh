@@ -1,6 +1,4 @@
 #!/bin/bash
-# Install the error watch timer. The script itself runs out of the checkout, so
-# a fast-forward is its deploy and only the units are copied.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

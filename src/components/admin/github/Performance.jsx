@@ -7,11 +7,6 @@ import { GithubLink, count, listOf, pullVerdict, repositoriesIn, short } from '.
 const DAY = 86400000;
 const SHOWN = 8;
 
-// Open pull requests bucketed by how long they have been waiting. The
-// boundaries are days rather than an even scale because that is how a wait is
-// actually talked about: something opened this morning is not in the same
-// position as something opened a fortnight ago, and the difference between nine
-// days and ten matters to nobody.
 const AGES = [
   { label: 'today', upto: 1 },
   { label: '1–2 days', upto: 3 },
@@ -20,29 +15,15 @@ const AGES = [
   { label: 'over 2 weeks', upto: Infinity },
 ];
 
-// Guarded rather than trusting the timestamp: a missing or unparseable date
-// gives null, and every caller drops those instead of counting them as today.
 const ageDays = (at) => {
   const parsed = at ? Date.parse(at) : NaN;
   return Number.isNaN(parsed) ? null : Math.floor((Date.now() - parsed) / DAY);
 };
 
-// Newest first, on when GitHub started the run rather than the order it handed
-// them back — the collector keeps only the last ten per repository, and which
-// ten it kept is not a promise about their order.
 const newestFirst = (a, b) => String(b.created ?? '').localeCompare(String(a.created ?? ''));
 
-// A run that finished and decided nothing: skipped by a path filter, neutral,
-// or superseded by a newer push to the same branch. It is not a pass, and it is
-// certainly not a failure, so it is kept out of the rate altogether rather than
-// pulling it down for something nobody did wrong.
 const UNDECIDED = new Set(['skipped', 'neutral', 'stale']);
 
-// What a build is doing, in one word, with the tone to say it in. Everything
-// here counts through this one function so a row and a total can never disagree
-// about what a failure is. GitHub's own word is kept — 'cancelled' and
-// 'timed out' point somewhere quite different from a test going red, and which
-// one it is decides whether anybody needs to do anything.
 function buildState(run) {
   if (run.status !== 'completed') {
     if (run.status === 'in_progress') return { key: 'running', tone: 'amber', label: 'running' };
@@ -69,10 +50,6 @@ function buildState(run) {
   };
 }
 
-// The rate is passes over passes and failures, so the runs that decided nothing
-// are in `undecided` and in neither half of it. Anything still going is in
-// `running` and counts as neither — otherwise a busy minute would read as a
-// drop in quality.
 function runHealth(runs) {
   const states = runs.map(buildState);
   const tally = (key) => states.filter((state) => state.key === key).length;
@@ -90,8 +67,6 @@ function runHealth(runs) {
   };
 }
 
-// Seconds as the collector recorded them, said the way a build is talked about.
-// Under a minute stays in seconds, because "0m 48s" reads as slower than it is.
 function took(seconds) {
   if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds < 0) return null;
   if (seconds < 60) return `${Math.round(seconds)}s`;
@@ -100,8 +75,6 @@ function took(seconds) {
   return rest === 0 ? `${minutes}m` : `${minutes}m ${rest}s`;
 }
 
-// The middle one rather than the mean: a single run that hung for twenty
-// minutes would move an average enough to make a fast pipeline look slow.
 function median(values) {
   if (values.length === 0) return null;
   const sorted = [...values].sort((a, b) => a - b);
@@ -111,9 +84,6 @@ function median(values) {
 
 const runsOf = (repo) => listOf(repo, 'runs').map((run) => ({ ...run, repo: repo.name }));
 
-// The latest run on each repository, worst first: what is broken, then what is
-// still going, then what passed. A repository with no run at all goes last and
-// says so — it is a real state and reading it as green would be a lie.
 const LATEST_ORDER = { failed: 0, running: 1, undecided: 2, passed: 3, none: 4 };
 
 function latestPerRepository(repositories) {
@@ -134,15 +104,10 @@ function latestPerRepository(repositories) {
     );
 }
 
-// Every failure the snapshot still holds, newest first, each keeping the run it
-// came from so the row can link straight at its logs.
 function failureHistory(runs) {
   return runs.filter((run) => buildState(run).key === 'failed').sort(newestFirst);
 }
 
-// GitHub's own words for the failures, most common first. Kept as a single line
-// under the history rather than a panel of its own: it answers "is this one
-// thing going wrong repeatedly or five different things once".
 function failureReasons(runs) {
   const tally = new Map();
   runs
@@ -156,9 +121,6 @@ function failureReasons(runs) {
     .sort((a, b) => b.runs - a.runs);
 }
 
-// How long a build takes on each repository. Only finished runs carry a usable
-// duration; one still going would report however long it has been up to now and
-// drag the middle down every time somebody pushes.
 function durations(repositories) {
   return repositories
     .map((repo) => {
@@ -178,10 +140,6 @@ function durations(repositories) {
     .sort((a, b) => b.middle - a.middle);
 }
 
-// Lines changed is the honest measure of what a review is being asked to do.
-// It is only present on the pull requests the collector looked into, so the
-// rest are left out of the sizing rather than counted as zero — a pull request
-// of unknown size at the bottom of the list would be read as a small one.
 function churn(pulls) {
   return pulls
     .filter((pull) => typeof pull.additions === 'number' && typeof pull.deletions === 'number')
@@ -189,9 +147,6 @@ function churn(pulls) {
     .sort((a, b) => b.lines - a.lines);
 }
 
-// Labels are built alongside the counts and in the same order, because the
-// tooltips only appear when the two arrays are the same length — a mismatch
-// degrades to bare bars without saying so.
 function spread(pulls) {
   const counts = AGES.map(() => 0);
   pulls.forEach((pull) => {
@@ -212,10 +167,6 @@ const rateTone = (rate) =>
         ? 'text-amber-300'
         : 'text-rose-400';
 
-// One build, said the same way wherever it appears: what it was, what it
-// decided, which commit, how long it took, and a link at the run itself. The
-// link is the point of the row on a failure — the logs are one click from here
-// rather than a hunt through the Actions tab.
 function BuildRow({ run, state, repo, children }) {
   const length = took(run.seconds);
   return (

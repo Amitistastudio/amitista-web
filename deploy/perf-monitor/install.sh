@@ -24,10 +24,6 @@ say "Taking the first measurement as the baseline"
   die "the first run failed — fix that before enabling the timer, or it will alert every six hours"
 
 say "Enabling the timer"
-# enable, then restart. `enable --now` starts a stopped unit but leaves a
-# running one exactly as it is, so a deploy would install new code into /opt
-# and the old process would keep serving it — reporting success the whole
-# time. restart starts a stopped unit too, so this covers a first install.
 systemctl enable amitista-perf.timer
 systemctl restart amitista-perf.timer
 systemctl list-timers amitista-perf.timer --no-pager

@@ -20,10 +20,6 @@ chmod 700 "$DEST"
 
 TMP="$DEST/.incomplete-$STAMP.tar.gz"
 
-# The live WiredTiger files under /var/lib/mongodb are not safe to copy from a
-# running server, so Mongo is captured with mongodump instead. The dump lands in
-# a 0700 staging directory, is folded into the same tar, and is shredded on the
-# way out so the only lasting copy is inside the GPG archive.
 MONGO_STAGE="$DEST/.mongo-$STAMP"
 clean_stage() {
   [ -d "$MONGO_STAGE" ] || return 0
@@ -34,9 +30,6 @@ trap 'rm -f "$TMP" "$TMP.gpg" "$DEST/.tar-err-$STAMP"; clean_stage' EXIT
 
 MONGO_PATHS=()
 if systemctl is-active --quiet mongod && command -v mongodump >/dev/null; then
-  # mongodump.yaml authenticates as amitista_backup, which holds read on
-  # amitista_admin and nothing else, so a leak of this config cannot write to
-  # or administer the database.
   if [ -r /etc/amitista/mongodump.yaml ]; then
     (umask 077; mkdir -p "$MONGO_STAGE")
     if mongodump --config /etc/amitista/mongodump.yaml \
@@ -54,9 +47,6 @@ else
   echo "backup: mongod is not running, skipping Mongo" >&2
 fi
 
-# tar treats a named path that does not exist as a fatal error (exit 2), so a
-# directory that moves or is retired silently ends the nightly backup. Checking
-# first turns that into one line naming the path, instead of a bare exit code.
 BACKUP_PATHS=(
   /root/website
   /etc/nginx
@@ -84,8 +74,6 @@ if [ "${#MISSING[@]}" -gt 0 ]; then
   exit 1
 fi
 
-# tar's own stderr is kept rather than discarded, so a future failure arrives
-# with the reason attached instead of just a status number.
 TAR_ERR="$DEST/.tar-err-$STAMP"
 tar --create --gzip --file "$TMP" \
     --exclude='node_modules' \
@@ -103,10 +91,6 @@ tar --create --gzip --file "$TMP" \
         if [ -s "$TAR_ERR" ]; then
           sed 's/^/backup: tar: /' "$TAR_ERR" >&2
         else
-          # An empty stderr beside a fatal status means the message belonged to
-          # a warning class silenced above, which in practice is a file that
-          # moved under tar while it read. Say so, rather than leaving the next
-          # reader with a bare number and nothing to go on.
           echo "backup: tar: no stderr — a file most likely moved mid-read" >&2
         fi
         rm -f "$TAR_ERR"
@@ -115,7 +99,6 @@ tar --create --gzip --file "$TMP" \
     }
 rm -f "$TAR_ERR"
 
-# The plaintext dump must not outlive the tar it was made for.
 clean_stage
 
 chmod 600 "$TMP"

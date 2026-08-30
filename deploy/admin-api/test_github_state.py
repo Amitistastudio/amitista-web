@@ -1,18 +1,5 @@
 #!/usr/bin/env python3
 
-"""The collector behind the GitHub panel.
-
-It lives in deploy/autodeploy/ because it runs as root from the deploy, but its
-test lives here because this is the directory CI runs. Loaded by path, since
-the filename has a hyphen in it and cannot be imported by name.
-
-What is worth pinning: GitHub counts a pull request as an issue, so /issues
-returns both and the panel would list every pull request twice — once correctly
-and once as an issue — if the filter ever came out. The rest is the promise
-that a GitHub that cannot be reached leaves the last known answer alone instead
-of blanking the panel.
-"""
-
 import importlib.util
 import io
 import json
@@ -41,7 +28,6 @@ def check(label, condition):
 
 
 class FakeGitHub:
-    """Stands in for the API. Records what was asked and answers from a script."""
 
     def __init__(self, answers, sends=None):
         self.answers = answers
@@ -87,11 +73,8 @@ def issue(number, title, **extra):
     return entry
 
 
-# ------------------------------------------------- a pull request is not an issue
-
 mixed = [
     issue(1, "A real issue"),
-    # GitHub marks a pull request by handing back this key, and nothing else.
     issue(2, "A pull request wearing an issue's clothes", pull_request={"url": "..."}),
     issue(3, "Another real issue"),
 ]
@@ -106,8 +89,6 @@ check(
     "a page that is nothing but pull requests yields no issues",
     state.open_issues(api, "amitista-web", None) == [],
 )
-
-# --------------------------------------------------------------- the projection
 
 rich = issue(
     7,
@@ -140,8 +121,6 @@ check("and is marked clipped", only["clipped"] is True)
 api = FakeGitHub([([issue(10, "no body", body=None)], "ok")])
 check("a missing body becomes an empty one", state.open_issues(api, "x", None)[0]["body"] == "")
 
-# ------------------------------------------- GitHub being unreachable keeps facts
-
 held = [{"number": 1, "title": "kept from last time"}]
 
 api = FakeGitHub([(None, "error")])
@@ -156,8 +135,6 @@ check("an error with nothing known yields an empty list", state.open_issues(api,
 api = FakeGitHub([("not a list", "ok")])
 check("a nonsense body is refused", state.open_issues(api, "x", held) == held)
 
-# The conditional request is only sent when there is something to fall back on;
-# a 304 with nothing held would throw the data away instead of saving a request.
 api = FakeGitHub([([], "ok")])
 state.open_issues(api, "x", held)
 check("a conditional request is sent when an answer is held", api.conditional == api.asked)
@@ -165,13 +142,6 @@ check("a conditional request is sent when an answer is held", api.conditional ==
 api = FakeGitHub([([], "ok")])
 state.open_issues(api, "x", None)
 check("and is not sent when nothing is held", api.conditional == [])
-
-# ------------------------------- a settled list is not a settled pull request
-
-# The list's ETag settles whether anything was opened, closed or pushed to. It
-# says nothing about a workflow finishing, which does not touch the pull request
-# it ran for — so a verdict that had not settled must still be asked after, or
-# it says "pending" for as long as the list stays still.
 
 DERIVED = ({"mergeable_state": "clean", "mergeable": True, "additions": 3}, "ok")
 FILES = ([], "ok")
@@ -184,9 +154,6 @@ out = state.open_pulls(api, "amitista-web", pending)
 check("an unsettled verdict is re-asked even when the list has not moved", out[0]["ci"] == "completed/success")
 check("and nothing else about the pull request is disturbed", out[0]["title"] == "waiting")
 
-# The merge state is recomputed by GitHub rather than stored, so it is refreshed
-# on the quiet path too. This is the case that shipped wrong once: a pull request
-# that had settled to clean went on being reported as having an unhappy check.
 stale = [{"number": 5, "sha": "abc", "ci": "completed/success", "mergeState": "unstable", "title": "done"}]
 api = FakeGitHub([(None, "unchanged"), DERIVED, FILES, REVIEWS])
 out = state.open_pulls(api, "amitista-web", stale)
@@ -194,13 +161,9 @@ check("a stale merge state is refreshed even when the list has not moved", out[0
 check("a settled verdict is not re-asked", not any("actions/runs" in path for path in api.asked))
 check("and it is left as it was", out[0]["ci"] == "completed/success")
 
-# GitHub being unreachable is not the same as the list being unchanged: nothing
-# is asked after, and what was known is kept.
 api = FakeGitHub([(None, "error")])
 check("an unreachable GitHub keeps the pull requests it knew", state.open_pulls(api, "x", pending) == pending)
 
-# Only the newest few are looked into, because each one costs requests of its
-# own; the rest are still listed.
 many = [
     {"number": n, "title": "pr %d" % n, "user": {"login": "x"}, "head": {"ref": "b", "sha": "s"}, "base": {"ref": "main"}, "html_url": "u"}
     for n in range(state.MAX_PULL_DETAIL + 3)
@@ -220,15 +183,10 @@ check(
 )
 check("the ones looked into carry their size", out[0]["additions"] == 1)
 
-# The merge state is derived, so it is asked for unconditionally: GitHub's ETag
-# for a pull request does not reliably move when only mergeable_state changes,
-# and a stale one makes the panel state a wrong verdict confidently.
 api = FakeGitHub([({"additions": 1, "deletions": 0, "mergeable_state": "clean"}, "ok")])
 state.pull_extra(api, "x", 4, {"mergeable": False, "mergeState": "dirty"})
 check("the merge state is never asked for conditionally", api.conditional == [])
 check("and it is asked for at all", len(api.asked) == 1)
-
-# --------------------------------------------------------- recent activity
 
 def commit(sha, subject, **extra):
     entry = {
@@ -249,15 +207,11 @@ check("the signed author is kept", only["author"] == "Amitista Studio")
 check("so is the account, which is not always the same person", only["login"] == "kostis4563")
 check("and the date it was written", only["at"] == "2026-08-29T10:00:00Z")
 
-# A commit can carry an author git knows about and no GitHub account at all,
-# which comes back as a null rather than a missing key.
 api = FakeGitHub([([commit("b" * 40, "By a stranger", author=None)], "ok")])
 check("a commit with no GitHub account still lists", state.recent_commits(api, "x", None)[0]["login"] is None)
 
 api = FakeGitHub([(None, "error")])
 check("an unreachable GitHub keeps the commits it knew", state.recent_commits(api, "x", [{"sha": "held"}]) == [{"sha": "held"}])
-
-# ------------------------------------------------------------- smaller promises
 
 check("a blank line is not a subject", state.first_line("") == "")
 check("only the first line is a subject", state.first_line("one\ntwo") == "one")
@@ -269,11 +223,8 @@ check(
 check("an unmeasurable run is not zero", state.seconds_between("nonsense", None) is None)
 check(
     "the porcelain column is not mistaken for the path",
-    # The bug this replaced shifted every path one character left.
     [line[3:] for line in " M deploy/thing.sh".splitlines()] == ["deploy/thing.sh"],
 )
-
-# ------------------------------------------------------------------- people
 
 def account(login, **extra):
     entry = {
@@ -286,10 +237,6 @@ def account(login, **extra):
     return entry
 
 
-# Access by any route, and access somebody was actually given. They are not the
-# same list and the difference is what the panel can and cannot change: an
-# owner's access comes from the organisation, so offering to remove it here
-# would be offering something that does not work.
 api = FakeGitHub([
     ([account("kostis4563", role_name="admin"), account("helper", role_name="write")], "ok"),
     ([account("helper", role_name="write")], "ok"),
@@ -301,9 +248,6 @@ check("access through the organisation is marked as not direct", out[0]["direct"
 check("access somebody was given is marked direct", out[1]["direct"] is True)
 check("both lists are asked for", len(api.asked) == 2)
 
-# If the second question could not be answered, what was known about it last
-# time is carried rather than guessed. Guessing either way offers a control
-# that does not match reality.
 held = [dict(account("helper"), role="write", direct=True)]
 api = FakeGitHub([([account("helper", role_name="write")], "ok"), (None, "error")])
 check(
@@ -314,9 +258,6 @@ check(
 api = FakeGitHub([(None, "unchanged")])
 check("a 304 keeps the access list", state.repo_access(api, "x", held) == held)
 
-# An empty list is an answer — "nobody has been added to this repository" — and
-# is the state these repositories are actually in. Treating it as nothing known
-# sends every one of these requests unconditionally, every tick, for ever.
 api = FakeGitHub([([], "ok"), ([], "ok")])
 state.repo_access(api, "x", [])
 check("knowing the answer is empty still sends a conditional request", api.conditional == api.asked)
@@ -368,8 +309,6 @@ api = FakeGitHub([
 org = state.org_people(api, None)
 check("the organisation's settings are kept", org["org"]["defaultPermission"] == "read")
 check("including whether two-factor is required", org["org"]["twoFactorRequired"] is False)
-# GitHub's word for the top organisation role is "admin". Nobody calls it that
-# — GitHub's own interface says "owner" — so it is translated once, here.
 check("GitHub's 'admin' role is reported as owner", org["members"][0]["role"] == "owner")
 check("and a member as a member", org["members"][1]["role"] == "member")
 check("members come from two requests, not one per person", len(api.asked) == 5)
@@ -388,8 +327,6 @@ check("an account with no two-factor is named", out["withoutTwoFactor"] == ["kos
 api = FakeGitHub([(None, "error"), (None, "error"), (None, "error"), (None, "error"), (None, "error")])
 out = state.org_people(api, org)
 check("an unreachable GitHub keeps the members it knew", out["members"] == org["members"])
-
-# ------------------------------------------------ commits and lines per person
 
 weeks = [
     {"w": 1735257600 + index * 604800, "c": index, "a": index * 10, "d": index}
@@ -420,12 +357,6 @@ check("a person with no GitHub account is left out", state.contributions(
     FakeGitHub([([{"author": None, "total": 5, "weeks": []}], "ok")]), "r", None
 ) == [])
 
-
-# ------------------------------------------- where a pull request stands
-
-# GitHub keeps every review ever left, so the raw list is a history and not a
-# verdict. What counts is each person's latest decisive one, and a comment is
-# never decisive: somebody who approved and then commented has still approved.
 
 
 def review(login, verdict, at):
@@ -482,8 +413,6 @@ check(
 )
 
 
-# ------------------------------------------------- every pull request raised
-
 
 def raised(number, **extra):
     row = {
@@ -515,9 +444,6 @@ check("who merged it is kept", state.pull_history(FakeGitHub([([
     raised(4, merged_at="2026-01-02T00:00:00Z", merged_by={"login": "kostis4563"}),
 ], "ok"), ([], "ok")]), "r", None)[0]["mergedBy"] == "kostis4563")
 
-# The history keeps its own review and check verdicts, and that is only
-# affordable because a pull request nobody has touched is not asked after at
-# all. Not a conditional request — no request.
 settled = [{
     "number": 1,
     "updated": "2026-01-05T00:00:00Z",
@@ -564,8 +490,6 @@ check(
 )
 
 
-# ---------------------------------------------------- when commits were made
-
 api = FakeGitHub([([[0, 0, 0], [1, 9, 4], [3, 14, 7]], "ok")])
 card = state.punch_card(api, "r", None)
 check("a punch card keeps only the hours that carry commits", card == [
@@ -582,18 +506,6 @@ check(
     state.punch_card(FakeGitHub([({}, "ok")]), "r", held) == held,
 )
 
-
-# ------------------------------------- everything asked of GitHub is carried
-
-# The quiet bug this replaced: two new keys were added to what detail_for
-# returns and not to what inspect carries between ticks. Nothing looked wrong —
-# the panel showed the right thing — but every one of those requests was sent
-# unconditionally every minute instead of being answered 304 for free, and the
-# first time GitHub was unreachable the whole lot would have vanished from the
-# panel rather than standing still.
-#
-# So this is the general form rather than a check for those two names: whatever
-# detail_for produces, inspect has to carry.
 
 detail_keys = {
     "facts": {"url": "u"},
@@ -628,13 +540,6 @@ check(
     sorted(produced) == sorted(detail_keys),
 )
 
-
-# --------------------------------------------------- what root will act on
-
-# The queue is written by the admin service, which runs as a different and less
-# privileged account. If that account were ever taken, this check is the whole
-# of what stands between it and handing somebody admin — so it is tested as the
-# security boundary it is, not as input validation.
 
 REPOS = {"amitista-web", "amitista-studio-bot"}
 ACTOR = "kostis4563"
@@ -674,16 +579,11 @@ for intent, why in (
 ):
     check("%s is refused" % why, state.check_intent(intent, REPOS, ACTOR) is not None)
 
-# ------------------------------------------------------------- and then does it
-
 api = FakeGitHub([], sends=[({"id": 9}, 201, None)])
 out = state.carry_out(api, {"action": "grant", "repo": "amitista-web", "login": "octocat", "permission": "push"})
 check("a grant is a PUT on the collaborator", api.sent[0][0] == "PUT")
 check("at the login's own path", api.sent[0][1].endswith("/collaborators/octocat"))
 check("carrying the permission", api.sent[0][2] == {"permission": "push"})
-# 201 with a body is an invitation waiting to be accepted; 204 is access that
-# already existed changing level. Telling them apart matters: one of them is
-# not access yet.
 check("a body coming back means an invitation was sent", out["result"] == "invited")
 
 api = FakeGitHub([], sends=[(None, 204, None)])
@@ -700,8 +600,6 @@ check("with GitHub's own words for it", out["error"] == "Not Found")
 api = FakeGitHub([], sends=[(None, 204, None)])
 state.carry_out(api, {"action": "uninvite", "repo": "x", "invite": 88})
 check("cancelling an invitation deletes it by id", api.sent[0][1].endswith("/invitations/88"))
-
-# ---------------------------------------------------------------- the drain
 
 state.QUEUE_DIR = tempfile.mkdtemp(prefix="github-queue-test-")
 
@@ -720,8 +618,6 @@ queue("2.json", {"id": "b", "action": "grant", "repo": "amitista-web", "login": 
 api = FakeGitHub([], sends=[(None, 204, None), (None, 204, None)])
 log = state.drain_queue(api, REPOS, ACTOR, None)
 check("everything queued is carried out", len(api.sent) == 2)
-# Two changes to one person's access have to be made in the order they were
-# asked for, or the second silently undoes the first.
 check("in the order it was queued", [call[2]["permission"] for call in api.sent] == ["push", "admin"])
 check("the queue is emptied", waiting() == [])
 check("and what happened is written down", len(log) == 2)
@@ -733,8 +629,6 @@ log = state.drain_queue(api, REPOS, ACTOR, log)
 check("a request that fails the check reaches GitHub not at all", api.sent == [])
 check("but is still recorded", log[0]["ok"] is False)
 check("with the reason", "not a repository on this box" in log[0]["error"])
-# Not retried. A wrong login fails identically every minute, and a loop nobody
-# can see is worse than a refusal somebody can read.
 check("and is not left to be tried again", waiting() == [])
 
 queue("4.json", {"id": "d", "action": "revoke", "repo": "amitista-web", "login": ACTOR})
@@ -755,15 +649,6 @@ check("an empty queue leaves the log exactly as it was", state.drain_queue(api, 
 
 state.QUEUE_DIR = os.path.join(state.QUEUE_DIR, "gone")
 check("a queue directory that does not exist is not an error", state.drain_queue(api, REPOS, ACTOR, log) is log)
-
-# ------------------------------------------------ which commit made it slower
-#
-# Three files that never see each other: the monitor writes what it measured and
-# which release was serving, the deploy writes which commit each release is, and
-# this joins them to the pull requests it already holds. What has to keep being
-# true is that it refuses to guess. A release with no measurement, a reading
-# with no release, a release built from a dirty checkout — each of those is a
-# reason to say less, not a gap to fill in with the neighbouring commit's name.
 
 print("\n-- performance, joined to the commit that caused it")
 
@@ -824,8 +709,6 @@ newest = report["releases"][0]
 
 check("the newest measured release is first", newest["release"] == "20260820-090000")
 check("its metrics are the middle of its own readings", newest["pages"][0]["lcp"] == 1200)
-# 860, 900, 860 — the mean would be 873 and the median is 860. Either would do
-# here; what matters is that one slow reading cannot redraw a release.
 check("and the release before it is the median of three", report["releases"][1]["pages"][0]["lcp"] == 860)
 check("it is compared against the release measured before it",
       newest["against"]["release"] == "20260820-080000")
@@ -839,16 +722,11 @@ check("the commit's URL comes from what was already collected",
 check("the oldest release has nothing behind it to compare against",
       "against" not in report["releases"][-1])
 
-# ------------------------------------------------- what it declines to report
-
 write_lines(state.PERF_HISTORY, [
     run("2026-08-20T08:10:00Z", "20260820-080000", 860),
     run("2026-08-20T09:10:00Z", "20260820-090000", 900),
 ])
 moves = state.site_performance(SITE)["releases"][0]["moves"]
-# 40ms on 860 is under both the absolute floor and a tenth of what it was. The
-# box is shared with a deploy, three bots and nginx; a page that renders 40ms
-# later is the box having been busy, not a commit.
 check("a change smaller than the noise floor is not a regression", moves == [])
 
 write_lines(state.PERF_HISTORY, [
@@ -859,8 +737,6 @@ moves = state.site_performance(SITE)["releases"][0]["moves"]
 check("a paint metric that did not measure is not an infinite regression",
       [m["metric"] for m in moves] == [])
 
-# Blocking time is the opposite case: zero is a real reading, and moving off it
-# is the single most useful thing this can catch.
 write_lines(state.PERF_HISTORY, [
     run("2026-08-20T08:10:00Z", "20260820-080000", 860, tbt=0),
     run("2026-08-20T09:10:00Z", "20260820-090000", 860, tbt=310),
@@ -878,15 +754,6 @@ check("a throttled run is not compared against an unthrottled one",
       [entry["release"] for entry in report["releases"]] == ["20260820-090000"])
 check("the profile being reported on is said out loud", report["profile"] == "slow-4g-4x-cpu")
 
-# ---------------------------------------------- measured once, or measured
-
-# The bug this pins put a rose banner at the top of the panel reading "Commit
-# c701c74 increased Long tasks by 1402ms on /" over a commit that touched three
-# lines of Python and one string in the admin panel. The deploy starts the
-# monitor the moment a release goes live, so its one measurement lands while
-# installers are finishing and units are restarting — and / animates, so its
-# frames cross the 50ms line and every one of them starts counting. Six passes
-# of that same unchanged build measured 52, 62, 117, 131, 194 and 1534ms.
 write_lines(state.PERF_HISTORY, [
     run("2026-08-20T08:10:00Z", "20260820-080000", 860),
     run("2026-08-20T09:10:00Z", "20260820-090000", 1200),
@@ -907,9 +774,6 @@ check("a run the monitor took several passes over counts as several",
       report["releases"][0]["runs"] == 3)
 check("and a comparison of two of those is confirmed", moves[0]["confirmed"] is True)
 
-# The passes are what count, not the lines. A release measured twice by the
-# six-hourly timer is as well attested as one the monitor measured twice in a
-# row, and neither should have to wait on the other's bookkeeping.
 write_lines(state.PERF_HISTORY, [
     run("2026-08-20T08:10:00Z", "20260820-080000", 860, samples=2),
     run("2026-08-20T09:10:00Z", "20260820-090000", 1200),
@@ -919,13 +783,9 @@ moves = state.site_performance(SITE)["releases"][0]["moves"]
 check("two lines are as good as one line of two passes",
       moves[0]["runs"] == {"now": 2, "before": 2} and moves[0]["confirmed"] is True)
 
-# A history line written before any of this existed says nothing about passes.
-# It is one measurement, which is what it always was.
 check("a line with no count of its own is one measurement", state.run_samples({}) == 1)
 check("and so is one that claims a nonsense number",
       state.run_samples({"samples": 0}) == 1 and state.run_samples({"samples": "3"}) == 1)
-
-# ------------------------------------------------------ rollbacks and gaps
 
 write_lines(state.PERF_HISTORY, [
     run("2026-08-20T08:10:00Z", "20260820-080000", 860),
@@ -933,15 +793,10 @@ write_lines(state.PERF_HISTORY, [
     run("2026-08-20T09:40:00Z", "20260820-080000", 870),
 ])
 report = state.site_performance(SITE)
-# The symlink went back to the older release, so the newest reading belongs to
-# the older commit. Ordering by release name would put the rolled-back one on
-# top and report the site as slow when it is not.
 check("a rollback puts what is serving now at the top",
       report["releases"][0]["release"] == "20260820-080000")
 check("and it is compared against what it replaced",
       report["releases"][0]["against"]["release"] == "20260820-090000")
-# 860 and 870 either side of the release that was rolled back, so the median of
-# what the older release measures is 865 against the newer one's 1200.
 check("so the rollback reads as the improvement it was",
       report["releases"][0]["moves"][0]["delta"] == -335)
 
@@ -971,13 +826,9 @@ write_lines(state.PERF_HISTORY, [
     run("2026-08-20T09:10:00Z", "20260820-090000", 1200),
 ])
 newest = state.site_performance(SITE)["releases"][0]
-# Built from a checkout with uncommitted changes in it. What was measured is
-# not what that commit says, so the panel is told to stop short of blaming it.
 check("a release built from a dirty checkout says so", newest["dirty"] is True)
 check("and carries no pull request, because the subject is not a merge",
       "pull" not in newest)
-
-# ------------------------------------------------------------ nothing there
 
 state.PERF_HISTORY = os.path.join(perf_dir, "no-such-history.jsonl")
 report = state.site_performance(SITE)
@@ -993,15 +844,8 @@ check("a half-written line loses that reading and nothing else",
       report["releases"][0]["pages"][0]["lcp"] == 860)
 
 
-# ------------------------------------------------ what GitHub says about risk
-#
-# The one that matters here is the difference between "nothing is wrong" and
-# "GitHub will not tell you". Both come back as an empty list, and reading the
-# second as the first is the most dangerous mistake this panel could make.
-
 
 class CodedGitHub(FakeGitHub):
-    """A FakeGitHub that also remembers the status each path answered with."""
 
     def __init__(self, answers, codes=None, sends=None):
         FakeGitHub.__init__(self, answers, sends)
@@ -1045,8 +889,6 @@ check("and says why, rather than showing zero",
 check("an available feed with nothing in it is available and empty",
       alerts["dependabot"]["available"] is True)
 
-# A feed that was readable a minute ago and is unreachable now keeps what it
-# had. Anything else would empty the panel every time GitHub hiccups.
 was = {"dependabot": {"available": True, "what": "x", "items": [advisory(1, "high", "a", "b")], "open": 1}}
 api = CodedGitHub([(None, "error"), (None, "error"), (None, "error")], codes={})
 api.codes = {}
@@ -1066,16 +908,11 @@ api = CodedGitHub([(None, "unchanged"), (None, "unchanged"), (None, "unchanged")
 alerts = state.security_alerts(api, "amitista-web", was)
 check("and an unchanged feed keeps it too", alerts["dependabot"]["open"] == 1)
 
-# 403 is a different problem from 404 and is worth different words: one is the
-# plan, the other is the token.
 api = CodedGitHub([(None, "error"), (None, "error"), (None, "error")],
                   codes={"dependabot": 403})
 alerts = state.security_alerts(api, "amitista-web", {})
 check("a feed the token may not read says so", "token" in alerts["dependabot"]["why"])
 
-# Two 403s that mean opposite things — one is switched off and could be switched
-# on here, the other needs a plan this org is not on. Guessing from the status
-# sends somebody to fix the wrong one, so GitHub's own sentence wins.
 api = CodedGitHub([(None, "error"), (None, "error"), (None, "error")],
                   codes={"dependabot": 403, "code-scanning": 403})
 api.messages = {
@@ -1088,17 +925,11 @@ check("a refused feed carries GitHub's own reason",
 check("and two feeds refused with the same status still read differently",
       "Advanced Security" in alerts["codeScanning"]["why"])
 
-# The statuses a feed can be refused with are the collector's to handle, so they
-# are declared to the request rather than counted as GitHub being unreachable.
-# This is what keeps the panel from saying the whole snapshot may be old.
 api = CodedGitHub([(None, "error"), (None, "error"), (None, "error")])
 state.security_alerts(api, "amitista-web", {})
 check("a feed asks with its refusals declared",
       all(set(state.ALERT_REFUSALS) <= set(codes) for _, codes in api.expected))
 
-# A no is charged every time it is asked for, unlike a 304, so it is believed
-# for a while. This is the only thing on the page that spends the hourly
-# allowance in the steady state.
 settled = {
     "dependabot": {"available": False, "what": "x", "why": "off", "items": [], "open": 0,
                    "checked": state.now()},
@@ -1116,15 +947,11 @@ alerts = state.security_alerts(api, "amitista-shield", {"dependabot": stale_feed
 check("but one that said no long enough ago is asked again",
       any("dependabot" in path for path in api.asked))
 
-# A feed that has never been asked has no stamp at all, and must not be read as
-# having been asked at the beginning of time or the far future — it is asked.
 never = {"dependabot": {"available": False, "what": "x", "why": "off", "items": [], "open": 0}}
 api = CodedGitHub([(None, "error"), (None, "error"), (None, "error")], codes={"dependabot": 404})
 state.security_alerts(api, "amitista-web", never)
 check("a feed with no record of when it was asked is asked",
       any("dependabot" in path for path in api.asked))
-
-# ------------------------------------------------- what stands in the way here
 
 scan_repo = tempfile.mkdtemp(prefix="guards-test-")
 os.makedirs(os.path.join(scan_repo, ".githooks"))
@@ -1154,9 +981,6 @@ check("the build's own check is seen", held["build"]["distCheck"] is True)
 check("a checkout that has not enabled the hook says so",
       held["prePush"]["enabledHere"] is False)
 
-# The scan is skipped when the tip has not moved, because it runs every tick
-# and the answer cannot have changed. The file only has to exist for this — the
-# point is that it is never run.
 with open(os.path.join(scan_repo, "scripts", "scan-secrets.mjs"), "w", encoding="utf-8") as handle:
     handle.write("// stub: running this would fail, which is the test\n")
 
@@ -1168,13 +992,6 @@ check("and a moved tip does not", held["scan"].get("at") != "earlier")
 check("a scanner that will not run is reported, not assumed clean",
       held["scan"]["ran"] is False and held["scan"].get("clean") is None)
 
-
-# ------------------------------------------- reached, versus told no
-
-# The distinction the panel's headline note rests on. These drive the real
-# request path with urlopen stubbed, because the bug they pin was in the two
-# lines of GitHub.get that decide which kind of bad this was — and everything
-# above this point talks to a fake that never had them.
 
 
 class FakeError(urllib.error.HTTPError):

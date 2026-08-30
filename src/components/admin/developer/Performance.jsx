@@ -4,9 +4,6 @@ import { formatAgo, formatBytes } from '../../../lib/admin';
 import { Bar, Empty, Notice, Panel, WindowSwitch } from '../ui';
 import { Scroller, Td, Th } from './shared';
 
-// The four the monitor records often enough to plot. Bytes and long-task time
-// are in the run table but not the chart: they answer "how heavy is this page",
-// which a trend line does not make clearer than the number does.
 const TRENDED = [
   { id: 'lcp', label: 'LCP', title: 'Largest contentful paint' },
   { id: 'fcp', label: 'FCP', title: 'First contentful paint' },
@@ -35,13 +32,6 @@ function budgetOf(budgets, metric) {
   return typeof limit === 'number' && limit > 0 ? limit : null;
 }
 
-// The chart is scaled to what the route actually did, with the budget drawn as
-// a line the bars can cross when it is close enough to matter. Anchoring every
-// chart to the budget instead was the first thing tried and it was worse: a
-// route sitting at a fifth of its budget became twenty identical stubs, which
-// is the shape of nothing. Headroom is already answered in words next to the
-// figure — the chart's job is the shape, so the peak is labelled to keep the
-// scale honest rather than flattened to make five tiles share one axis.
 function BudgetSparkline({ points, budget, metric, route, height = 46 }) {
   const values = points.map((point) => point.value);
   const peak = Math.max(...values, 0);

@@ -42,10 +42,6 @@ install -m 644 "$SRC/amitista-api.service" /etc/systemd/system/amitista-api.serv
 systemctl daemon-reload
 
 say "Starting"
-# enable, then restart. `enable --now` starts a stopped unit but leaves a
-# running one exactly as it is, so a deploy would install new code into /opt
-# and the old process would keep serving it — reporting success the whole
-# time. restart starts a stopped unit too, so this covers a first install.
 systemctl enable amitista-api.service
 systemctl restart amitista-api.service
 sleep 1

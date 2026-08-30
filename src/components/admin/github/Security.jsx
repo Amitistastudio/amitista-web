@@ -6,9 +6,6 @@ import { GithubLink, count, listOf, repositoriesIn } from './shared';
 
 const SHOWN = 6;
 
-// Worst first, and the words are GitHub's own. A dependabot alert and a code
-// scanning alert use different vocabularies for the same idea, so both are
-// looked up here rather than compared as strings anywhere else.
 const SEVERITY = ['critical', 'high', 'medium', 'moderate', 'low', 'warning', 'note'];
 const severityRank = (level) => {
   const at = SEVERITY.indexOf(String(level ?? '').toLowerCase());
@@ -25,10 +22,6 @@ const FEEDS = [
   ['codeScanning', 'Code scanning'],
 ];
 
-// What the scanner knows, in the four groups somebody actually asks about. The
-// rules themselves come from the scanner that shipped — this only decides which
-// heading each falls under, so a rule added there appears here without anybody
-// remembering to come and say so.
 const FAMILIES = [
   ['Private keys', (rule) => /private-key|putty/.test(rule)],
   ['API keys', (rule) => /key$|key-|-key/.test(rule)],
@@ -40,8 +33,6 @@ const familyOf = (rule) => FAMILIES.find(([, matches]) => matches(rule))?.[0] ??
 const guardsOf = (repo) => (repo?.guards && typeof repo.guards === 'object' ? repo.guards : null);
 const alertsOf = (repo) => (repo?.alerts && typeof repo.alerts === 'object' ? repo.alerts : {});
 
-// Every finding the box's own scan turned up, across the three, each keeping
-// the repository it came from so a row can name it.
 function findings(repositories) {
   return repositories.flatMap((repo) => {
     const scan = guardsOf(repo)?.scan;
@@ -53,9 +44,6 @@ function findings(repositories) {
   });
 }
 
-// An alert feed that is unavailable is not a feed with nothing in it. Counting
-// the two together would report a repository with no secret scanning at all as
-// having no secrets, which is the one mistake this section exists to avoid.
 function alertTally(repositories) {
   let open = 0;
   let worst = null;
@@ -137,9 +125,6 @@ export default function Security({ data }) {
     }))
     .filter((family) => family.rules.length > 0);
 
-  // The deploy's own gates, which are the last thing between a bad commit and
-  // the web root. Read off the state each repository is actually in rather than
-  // described, because a gate nobody has checked is a gate nobody should trust.
   const gates = repositories.map((repo) => {
     const guards = guardsOf(repo);
     const dirty = listOf(repo, 'dirty');
@@ -179,11 +164,7 @@ export default function Security({ data }) {
           }
           hint={
             alerts.unavailable > 0
-              ? // Not "not on this plan": of the three feeds, two of the ones
-                // refused here are switched off rather than unavailable, and
-                // Dependabot alerts can be switched on from repository
-                // settings. Each row below carries GitHub's own reason.
-                `${alerts.unavailable} feed(s) reporting nothing — see below`
+              ? `${alerts.unavailable} feed(s) reporting nothing — see below`
               : alerts.worst
                 ? `worst is ${alerts.worst}`
                 : 'nothing open'

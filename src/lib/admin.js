@@ -86,9 +86,6 @@ export async function fetchSession() {
     role: result.body.role ?? null,
     permissions: result.body.permissions ?? [],
     viewerPermissions: result.body.viewerPermissions ?? [],
-    // Groups the server hands out by account rather than by permission. This
-    // and the two below rebuild the session a field at a time, so anything the
-    // payload gains has to be named here or it is silently dropped.
     private: result.body.private ?? [],
     mustChange: Boolean(result.body.mustChange),
     configured: true,
@@ -718,10 +715,6 @@ export async function fetchGithubRepositories() {
   return unwrap(await call('/github/repositories'), 'Could not read the repository snapshot.');
 }
 
-// What a model makes of one pull request: a paragraph on what it does, and the
-// things in the diff worth looking at. The answer is cached against the head
-// commit on the server, so asking twice about a pull request nobody has pushed
-// to costs nothing and everybody sees the same reading.
 export async function fetchGithubReview(repo, number) {
   return unwrap(
     await call(`/github/review?repo=${encodeURIComponent(repo)}&number=${encodeURIComponent(number)}`),
@@ -729,16 +722,10 @@ export async function fetchGithubReview(repo, number) {
   );
 }
 
-// Avatars come back through the panel rather than straight off
-// avatars.githubusercontent.com, which img-src 'self' data: will not load.
 export function githubAvatarUrl(login) {
   return `${BASE}/github/avatar?login=${encodeURIComponent(login)}`;
 }
 
-// The three that ask for a change rather than making one. What comes back says
-// the request was written down; whether GitHub accepted it shows up in the next
-// snapshot, about a minute later. The wording everywhere downstream keeps that
-// distinction — "asked for", not "done".
 export async function queueGithubAccess(repo, login, permission) {
   return unwrap(
     await send('/github/access', { repo, login, permission }),
@@ -1230,9 +1217,6 @@ export const PERMISSION_NEEDS = {
   'orders.manage': ['orders.read'],
   'orders.files': ['orders.read'],
   'firewall.manage': ['firewall.read'],
-  // The Security screen is drawn from the same snapshot as the rest of the
-  // group, and that snapshot opens on github.read. Held on its own it would put
-  // a section in the nav that the server then refuses to fill.
   'github.security': ['github.read'],
 };
 
@@ -2157,8 +2141,6 @@ export const BOARD_ROLE_HINT = {
   viewer: 'Reads the board and nothing else.',
 };
 
-/* ── Ticket transcripts ───────────────────────────────────── */
-
 export const TRANSCRIPT_KINDS = [
   { id: '', label: 'Everything' },
   { id: 'ticket', label: 'Support' },
@@ -2197,12 +2179,6 @@ export async function deleteTranscript(id) {
   return unwrap(await send('/transcripts/delete', { id }), 'That transcript could not be deleted.');
 }
 
-/* ── Exchange bot (c2c) logs ───────────────────────────────────────────── */
-
-/**
- * The panel asks the admin API, which asks the exchange bot over loopback.
- * Nothing here writes: there is no counterpart to these that changes a log.
- */
 export async function fetchC2cLogSummary(since) {
   const query = since ? `?since=${encodeURIComponent(since)}` : '';
   return unwrap(await call(`/c2c/logs/summary${query}`), 'The exchange logs could not be read.');

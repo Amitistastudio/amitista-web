@@ -680,13 +680,6 @@ function Field({ label, tone, children }) {
   );
 }
 
-// One line by default, opened only when somebody wants the rest.
-//
-// Sixty of these is a list to scan rather than a set of cards to read, and the
-// three things worth scanning for — where the review got to, whether the checks
-// passed, whether it went in — are colour before they are words. The words are
-// still there on the dot and in the detail; what is gone is the space they were
-// taking to say the same thing sixty times.
 function Past({ row }) {
   const [open, setOpen] = React.useState(false);
   const look = STATE_LOOK[row.state] ?? STATE_LOOK.closed;

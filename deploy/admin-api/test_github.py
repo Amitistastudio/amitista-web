@@ -1,21 +1,5 @@
 #!/usr/bin/env python3
 
-"""The GitHub group of the panel.
-
-Three things are worth holding still here. The group opens on github.read, so
-an owner and a developer both reach it, and the scanners behind it open on
-github.security, which a developer does not hold. People and access stays by
-account name rather than by permission, because an owner resolves to every
-permission at read time and so would hold any permission invented for it — that
-has to keep being true, including for owners. And because one route feeds every
-section, what each account is handed out of the one snapshot is the only real
-gate between them, so the trimming is pinned here rather than left to the nav.
-
-The verdicts also have to survive a snapshot that is missing, stale, or written
-by a newer collector than this code knows about, because the panel showing
-something confidently wrong is the failure this whole group exists to prevent.
-"""
-
 import http.client
 import json
 import os
@@ -46,16 +30,12 @@ import admin_api
 ORIGIN = "https://amitista.com"
 OWNER = "amitista"
 OWNER_PASSWORD = "ownerpassphrase17"
-# The account PRIVATE_GROUPS names for the github group.
 INSIDER = "blxr"
 INSIDER_PASSWORD = "insiderpass88"
 OUTSIDER = "helper"
 OUTSIDER_PASSWORD = "secondaccount42"
-# A developer: github.read and nothing more of the group.
 DEVELOPER = "coder"
 DEVELOPER_PASSWORD = "developerpass55"
-# A hand-tuned role holding the security half on its own, which the shipped
-# roles never produce but the role editor can.
 SCANNER = "auditor"
 SCANNER_PASSWORD = "quietwatcher63"
 
@@ -161,8 +141,6 @@ def holds(name):
     return set(users.find(name).get("permissions") or [])
 
 
-# ------------------------------------------------------------------ the gate
-
 write_snapshot([repo()])
 
 status, _, _ = request("GET", "/github/repositories")
@@ -183,16 +161,10 @@ check("an owner can read it", status == 200)
 status, _ = read(developer)
 check("so can a developer", status == 200)
 
-# Security is drawn from the same snapshot as everything else, so holding it
-# alone has to open this route too — otherwise the nav offers a screen the
-# server then refuses to fill.
 check("the security half can be held on its own", holds(SCANNER) == {"github.security"})
 status, _ = read(scanner)
 check("and opens the snapshot on its own", status == 200)
 
-# The named account reaches the group whatever role it holds. People and access
-# is drawn from this same snapshot, so being shut out of the read route would
-# shut it out of the one section it is named for.
 check("the named account holds neither permission", not ({"github.read", "github.security"} & holds(INSIDER)))
 status, body = read(insider)
 check("the named account can read it anyway", status == 200)
@@ -200,12 +172,6 @@ check("the named account can read it anyway", status == 200)
 check("the named account is the only one in the group", admin_api.private_groups_for(INSIDER) == ["github"])
 check("an unnamed account is in no group", admin_api.private_groups_for(OUTSIDER) == [])
 check("the gate is not case sensitive", admin_api.private_groups_for(INSIDER.upper()) == ["github"])
-
-# ------------------------------------------------ what each account is handed
-
-# One route feeds every section of the group, so this trimming is the only real
-# gate between them: hiding a section in the nav would otherwise leave its data
-# in the payload of anybody who opened any other one.
 
 write_snapshot(
     [
@@ -254,8 +220,6 @@ check("and still not who may reach the repository", "access" not in only)
 
 write_snapshot([repo()])
 
-# ------------------------------------------------------------ a missing file
-
 os.unlink(SNAPSHOT)
 status, body = read(insider)
 check("a missing snapshot is not an error", status == 200)
@@ -268,8 +232,6 @@ with open(SNAPSHOT, "w", encoding="utf-8") as handle:
 status, body = read(insider)
 check("an unreadable snapshot is not an error", status == 200)
 check("an unreadable snapshot says it was not collected", body["collected"] is False)
-
-# --------------------------------------------------------------- staleness
 
 write_snapshot([repo()], generated_ago=5)
 status, body = read(insider)
@@ -289,8 +251,6 @@ with open(SNAPSHOT, "w", encoding="utf-8") as handle:
     json.dump({"generated": stamp(5), "repositories": "not a list"}, handle)
 status, body = read(insider)
 check("a malformed repository list becomes an empty one", body["repositories"] == [])
-
-# -------------------------------------------------------- what it passes on
 
 write_snapshot(
     [
@@ -319,14 +279,9 @@ check("a failed CI verdict is not green", shield["green"] is False)
 bots = next(entry for entry in body["repositories"] if entry["name"] == "amitista-bots")
 check("a dirty checkout keeps its file list", bots["dirty"] == ["data/state.json"])
 
-# A newer collector may add fields this code has never heard of. Dropping them
-# silently would mean the panel quietly ignoring something the deploy thought
-# was worth reporting.
 write_snapshot([repo(somethingNew={"deep": [1, 2]})])
 status, body = read(insider)
 check("unknown fields survive the round trip", body["repositories"][0]["somethingNew"] == {"deep": [1, 2]})
-
-# ------------------------------------------------- what GitHub itself said
 
 write_snapshot(
     [
@@ -378,9 +333,6 @@ check("run history survives", len(only["runs"]) == 2)
 check("a failed run keeps its conclusion", only["runs"][1]["conclusion"] == "failure")
 check("run duration survives", only["runs"][0]["seconds"] == 33)
 
-# Issues reach the panel whole. The projection itself — and the fact that a pull
-# request is not an issue — is pinned in test_github_state.py, next to the code
-# that does it.
 write_snapshot(
     [
         repo(
@@ -417,8 +369,6 @@ check(
     next(e for e in body["repositories"] if e["name"] == "amitista-bots")["issues"] == [],
 )
 
-# The collector's conditional-request bookkeeping is of no use to the panel and
-# grows without bound, so it must not be handed out.
 with open(SNAPSHOT, "w", encoding="utf-8") as handle:
     json.dump(
         {
@@ -435,8 +385,6 @@ check("the etag map is not handed to the panel", "etags" not in body)
 check("the rate limit is handed to the panel", body["rate"]["remaining"] == 4887)
 check("when GitHub was last asked is handed to the panel", body["detail"] == stamp(120))
 
-# GitHub being unreachable must not empty the panel — the collector carries the
-# last known answer forward and says so.
 write_snapshot([repo(pulls=[{"number": 3, "title": "kept"}])])
 with open(SNAPSHOT, "r", encoding="utf-8") as handle:
     carried = json.load(handle)
@@ -446,14 +394,6 @@ with open(SNAPSHOT, "w", encoding="utf-8") as handle:
 status, body = read(insider)
 check("a carried-forward answer is still shown", body["repositories"][0]["pulls"][0]["number"] == 3)
 check("and the reason is passed on", "could not be reached" in body["note"])
-
-# ------------------------------------------------------- asking for access
-
-# This service holds no GitHub token and could not carry any of this out if it
-# wanted to. All it can do is leave a file for the collector, which is root and
-# checks the whole thing again before acting on it. So what is pinned here is
-# the two halves of that: nothing reaches the queue that should not, and what
-# does reach it is written down honestly enough for root to act on.
 
 write_snapshot([repo(), repo(name="amitista-studio-bot", path="/opt/amitista/studio-bot")])
 
@@ -491,8 +431,6 @@ status, _ = ask("/github/access", {"repo": "amitista-web", "login": "octocat", "
 check("nor can an owner, who holds every permission", status == 403)
 check("still nothing was written down", queued() == [])
 
-# ---- what is refused before it can be written down
-
 for bad, why in (
     ({"repo": "amitista-web", "login": "octo cat", "permission": "push"}, "a login with a space"),
     ({"repo": "amitista-web", "login": "-octocat", "permission": "push"}, "a login starting with a hyphen"),
@@ -508,8 +446,6 @@ for bad, why in (
     status, body = ask("/github/access", bad)
     check("%s is refused" % why, status == 400)
 check("none of the refused requests were written down", queued() == [])
-
-# ---- what is accepted
 
 status, body = ask("/github/access", {"repo": "amitista-web", "login": "octocat", "permission": "push"})
 check("a whole request is accepted", status == 200)
@@ -541,14 +477,9 @@ for bad, why in (
     status, _ = ask("/github/access/invite/cancel", bad)
     check("cancelling with %s is refused" % why, status == 400)
 
-# Order matters and is carried by the filename: two changes to one person's
-# access have to be made in the order they were asked for, or the second undoes
-# the first.
 check("the queue is drained in the order it was written", queued() == sorted(queued()))
 check("three requests are waiting in total", len(queued()) == 3)
 
-# The panel is told what is waiting, so it can say "asked for" rather than
-# implying the change has happened.
 status, body = read(insider)
 check("what is waiting travels to the panel", len(body["queued"]) == 3)
 check("and says who asked", body["queued"][0]["by"] == INSIDER)
@@ -561,11 +492,6 @@ for name in queued():
 status, body = read(insider)
 check("an empty queue is an empty list, not a missing key", body["queued"] == [])
 
-# ------------------------------------------------------------- read only
-
-# Everything but access. The repositories route in particular must stay a read:
-# it is the one every section is built on, and a write on it would mean this
-# service could change something without root's say-so.
 for method in ("POST", "DELETE", "PUT"):
     status, _, _ = request(method, "/github/repositories", {} if method != "DELETE" else None, cookie=insider)
     check("the group offers no %s" % method.lower(), status in (400, 404, 405, 501))
@@ -573,14 +499,6 @@ for method in ("POST", "DELETE", "PUT"):
 for path in ("/github/access", "/github/access/remove", "/github/access/invite/cancel"):
     status, _, _ = request("GET", path, cookie=insider)
     check("%s cannot be reached with a GET" % path, status in (400, 404, 405, 501))
-
-# -------------------------------------------------------------------- avatars
-
-# The panel cannot hot-link avatars.githubusercontent.com: the site is served
-# under img-src 'self' data:, so the browser refuses the image outright. The
-# avatar route re-serves it from this origin instead. The host gate is the
-# whole of the defence — this route reaches the network on request, so what it
-# may reach has to stay a closed list.
 
 check("the discord cdn is fetchable", admin_api.remote_art("https://cdn.discordapp.com/avatars/1/a.png"))
 check("the github avatar cdn is fetchable", admin_api.remote_art("https://avatars.githubusercontent.com/u/1?v=4"))
@@ -598,8 +516,6 @@ for bad, why in (
 ):
     check("not fetchable: %s" % why, admin_api.remote_art(bad) is None)
 
-# Resolved out of the snapshot the panel is already drawing, so the browser
-# never says which url to fetch and this service needs no GitHub token.
 with open(SNAPSHOT, "w", encoding="utf-8") as handle:
     json.dump(
         {
@@ -633,8 +549,6 @@ check("an avatar hosted off the cdn resolves to nothing", admin_api.github_avata
 check("a login not in the snapshot resolves to nothing", admin_api.github_avatar_for("stranger") is None)
 check("an empty login resolves to nothing", admin_api.github_avatar_for("") is None)
 
-# The network stands in, so the gate and the route are what is under test here
-# and not GitHub's availability.
 served = []
 
 
@@ -657,8 +571,6 @@ status, raw, _ = request("GET", "/github/avatar?login=kostis4563", cookie=inside
 check("the named account is handed the image", status == 200 and raw == b"\x89PNG stand-in")
 check("and it came from the avatar cdn", len(served) == 1 and served[0].startswith(admin_api.GITHUB_CDN))
 
-# Faces are drawn on the pull request and tracking screens too, not only on
-# people and access, so anybody who can open those has to be able to fetch one.
 status, raw, _ = request("GET", "/github/avatar?login=kostis4563", cookie=owner)
 check("an owner is handed the image", status == 200 and raw == b"\x89PNG stand-in")
 
@@ -683,13 +595,6 @@ for method in ("POST", "DELETE", "PUT"):
     status, _, _ = request(method, "/github/avatar", {} if method != "DELETE" else None, cookie=insider)
     check("the avatar route offers no %s" % method.lower(), status in (400, 404, 405, 501))
 
-# ------------------------------------------------- the diff does not travel
-
-# The collector keeps a patch per changed file so a review has something to
-# read. The panel never displays one, so every reader of the snapshot would be
-# paying for tens of kilobytes none of them use — and a diff is the most
-# sensitive thing in the snapshot. It is stripped on the way out.
-
 write_snapshot([
     repo(
         pulls=[{
@@ -709,17 +614,12 @@ check("but the file is still listed", only["path"] == "src/app.py")
 check("and whether it was clipped survives", only["clipped"] is True)
 check("the panel is told whether a reviewer is configured", body["reviewer"] is False)
 
-# ------------------------------------------------------ asking for a reading
-
 status, _, _ = request("GET", "/github/review?repo=amitista-web&number=3")
 check("a stranger cannot ask for a review", status == 401)
 
 status, _, _ = request("GET", "/github/review?repo=amitista-web&number=3", cookie=outsider)
 check("an admin, holding neither github permission, cannot either", status == 403)
 
-# The reading belongs to the pull request screen, so it opens to whoever that
-# screen opens to. No model is configured in this test, so reaching it at all
-# comes back as a 503 rather than a 403 — which is the distinction being made.
 status, _, _ = request("GET", "/github/review?repo=amitista-web&number=3", cookie=owner)
 check("an owner reaches it", status == 503)
 
@@ -735,8 +635,6 @@ check("and asking without a number is refused", status == 400)
 status, _, _ = request("GET", "/github/review?repo=amitista-web&number=abc", cookie=insider)
 check("as is a number that is not one", status == 400)
 
-# No key is configured in this test, and that has to come back as a plain
-# refusal rather than an error: the section is meant to say it is not set up.
 status, raw, _ = request("GET", "/github/review?repo=amitista-web&number=3", cookie=insider)
 check("with no model configured it refuses with a 503", status == 503)
 check("and says what to set", b"ADMIN_AI_KEY" in (raw or b""))

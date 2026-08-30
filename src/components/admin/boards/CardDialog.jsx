@@ -419,7 +419,6 @@ export default function CardDialog({ board, boards, card, you, generals, actions
     () => () => {
       for (const entry of queue) if (entry.preview) URL.revokeObjectURL(entry.preview);
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
   );
 

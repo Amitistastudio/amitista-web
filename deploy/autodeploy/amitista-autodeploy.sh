@@ -1,27 +1,4 @@
 #!/usr/bin/env bash
-#
-# Bring the live services up to whatever is on main.
-#
-# Pull-based: the server asks GitHub, GitHub never reaches in. No deploy
-# credential is stored off this machine and no inbound port is opened.
-#
-# Nothing is deployed unless CI is green for the exact commit being deployed.
-# That is the whole gate. There is no human approval step, deliberately — with
-# one person holding the account, self-approval catches nothing that a passing
-# test suite does not. What it does stop is a broken build reaching production
-# because it was merged at two in the morning.
-#
-# Only components whose files actually changed are touched, so a copy edit on
-# the website never restarts the exchange bot.
-#
-#     amitista-autodeploy.sh              deploy whatever is due
-#     amitista-autodeploy.sh --dry-run    say what it would do, change nothing
-#     amitista-autodeploy.sh --force      deploy even if CI has not reported
-#     amitista-autodeploy.sh --only NAME   redeploy one component from the
-#                                          current checkout, whether or not main
-#                                          moved — for when /opt has drifted
-#                                          rather than the repository
-#
 set -uo pipefail
 
 WEB=/root/website
@@ -54,19 +31,12 @@ die()  { printf '%s FAIL %s\n' "$(date -u +%H:%M:%S)" "$*" >&2; exit 1; }
 [ "$(id -u)" -eq 0 ] || die "needs root — it installs services and restarts units"
 mkdir -p "$STATE"
 
-# One deploy at a time. A timer firing while a deploy is mid-flight would
-# otherwise restart a unit underneath itself.
 exec 9>/var/lock/amitista-autodeploy.lock
 flock -n 9 || { log "another deploy holds the lock; leaving it to finish"; exit 0; }
 
 TOKEN="$(tr -d '\r\n' < "$TOKEN_FILE" 2>/dev/null || true)"
 [ -n "$TOKEN" ] || die "no GitHub token at $TOKEN_FILE"
 
-# ---------------------------------------------------------------- CI gate
-# Asks GitHub what it concluded for this exact commit. A commit CI has not
-# reported on yet is not deployed: better a few minutes late than live and
-# broken. Anything unexpected is treated as "not green", because the failure
-# mode of guessing wrong here is a bad deploy.
 ci_is_green() {
   local repo="$1" sha="$2" out status conclusion
   out="$(curl -sS --max-time 20 -H "Authorization: token $TOKEN" \
@@ -89,13 +59,10 @@ except Exception:
   [ "$status" = "completed" ] && [ "$conclusion" = "success" ]
 }
 
-# --------------------------------------------------------------- helpers
 changed_between() { git -C "$1" diff --name-only "$2" "$3" 2>/dev/null; }
 touches()         { printf '%s\n' "$1" | grep -qE "$2"; }
 
 settle_check() {
-  # systemd calls a unit active the instant it forks, so a service that dies on
-  # a bad import still looks fine for a moment. Wait, then ask.
   local units=("$@") dead=()
   sleep 5
   for u in "${units[@]}"; do
@@ -103,16 +70,6 @@ settle_check() {
   done
   printf '%s' "${dead[*]}"
 }
-
-# --------------------------------------------------------------- the scan
-# Everything below exists because of one silent failure: a deploy wrote its own
-# generated files back into the tracked checkout, and the next commit touching
-# one of them aborted the fast-forward. Nothing said so. The deploy simply
-# stopped happening, and looked exactly like an idle tick for ten minutes.
-#
-# The pattern generalises past that one bug — anything that leaves the checkout
-# dirty arms the same trap — so the checkout is inspected rather than trusted,
-# both before a merge is attempted and again after a deploy has run.
 
 DIRTY_SEEN=()
 
@@ -127,10 +84,6 @@ scan_checkout() {
   return 1
 }
 
-# A change that matches no component deploys nothing. That is usually correct —
-# a README edit should not restart a bot — but it is worth saying out loud,
-# because the case where it is wrong (a new directory nobody wired up) is
-# otherwise indistinguishable from the case where it is right.
 uncovered() {
   local repo="$1" pattern="$2" rest
   rest="$(printf '%s\n' "$CHANGED" | grep -v '^$' | grep -vE "$pattern")"
@@ -139,7 +92,6 @@ uncovered() {
   printf '%s\n' "$rest" | sed 's/^/        /'
 }
 
-# ================================================================ website
 deploy_website() {
   local before_release; before_release="$(readlink /var/www/amitista.com/current)"
   step "website"
@@ -152,8 +104,6 @@ deploy_website() {
     return 1
   fi
 
-  # The site is static behind nginx, so "did it work" is a real request, not a
-  # unit state. Failing that, the symlink goes back to the release that served.
   local code
   code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 https://amitista.com/ 2>/dev/null)"
   if [ "$code" != "200" ]; then
@@ -165,7 +115,6 @@ deploy_website() {
   log "live, and answering 200"
 }
 
-# =============================================================== studio bot
 deploy_studio_bot() {
   step "studio bot"
   if [ -n "$DRY" ]; then log "(dry run) would npm ci and restart the three bot units"; return 0; fi
@@ -177,13 +126,6 @@ deploy_studio_bot() {
     return 1
   fi
 
-  # The contact relay probes the bot's listener and caches the answer for five
-  # minutes, treating a refused connection as definitive. Restarting the bot
-  # therefore leaves the relay reporting "enquiries go nowhere" long after the
-  # bot is back, which trips the healthcheck into a false alarm — and its own
-  # remediation then restarts the relay anyway. Doing it here, deliberately and
-  # straight away, is a second of downtime instead of five minutes of a wrong
-  # answer.
   systemctl restart amitista-contact
   local relay; relay="$(settle_check amitista-contact)"
   [ -n "$relay" ] && warn "amitista-contact did not come back after the bot restart"
@@ -191,12 +133,6 @@ deploy_studio_bot() {
   log "three bot units running, contact relay re-probed"
 }
 
-# ================================================================ enchange
-# The one component where the repository is not the runtime. enchange runs as
-# its own user, which cannot read into the bot's directory and should not be
-# able to — the wallet key is the reason. So its source is copied out, and
-# data/, .env and node_modules are left alone: state, secrets and installed
-# packages belong to the live host.
 deploy_enchange() {
   step "enchange"
   local snap="$STATE/enchange-$STAMP.tar.gz"
@@ -227,7 +163,6 @@ deploy_enchange() {
   log "enchange-bot running, source snapshot at $snap"
 }
 
-# ==================================================================== APIs
 deploy_api() {
   local name="$1" unit="$2" installer="$WEB/deploy/$1/install.sh"
   step "$name"
@@ -240,11 +175,6 @@ deploy_api() {
   local snap="$STATE/$name-$STAMP.tar.gz"
   tar czf "$snap" -C "/opt/amitista/$name" --exclude=__pycache__ . 2>/dev/null || true
 
-  # Which process was serving before the installer ran. A long-lived Python
-  # service holds its code in memory, so installing a new file under it changes
-  # nothing until it restarts — and an installer that says `enable --now`
-  # rather than `restart` leaves a running unit exactly where it was while
-  # reporting success. Same process afterwards means the deploy did not land.
   local before_pid; before_pid="$(systemctl show -p MainPID --value "$unit" 2>/dev/null || true)"
 
   if ! "$installer" >>"$STATE/$name-$STAMP.log" 2>&1; then
@@ -269,7 +199,6 @@ deploy_api() {
   log "$unit running"
 }
 
-# ================================================================== shield
 deploy_shield() {
   step "shield"
   if [ -n "$DRY" ]; then log "(dry run) would run feed/install.sh and evaluator/install.sh"; return 0; fi
@@ -284,23 +213,15 @@ deploy_shield() {
   return $ok
 }
 
-# ============================================================ the main loop
 FAILED=()
 DEPLOYED=()
 MOVED=()
 
-# What this tick did, told to the studio bot so it lands in the GitHub log
-# channels beside the push and the CI run that caused it. Loopback only — the
-# bot checks a bearer token because any service on this box can reach that port,
-# the same reason /api/apply carries one. Never fatal: a bot that is restarting
-# is not a reason to fail a deploy that worked.
 DEPLOY_HOOK="${DEPLOY_HOOK:-http://127.0.0.1:8798/deploy}"
 
 report_deploy() {
   [ -n "$DRY" ] && return 0
   local ok="$1" token payload
-  # The one copy of the secret lives in the bot's .env. Reading it here rather
-  # than keeping a second copy is what stops the two drifting apart.
   token="$(sed -n 's/^DEPLOYHOOK_TOKEN=//p' "$BOTS/.env" 2>/dev/null | tr -d '\r\n')"
   [ -n "$token" ] || return 0
   payload="$(printf '%s\n' ${MOVED[@]+"${MOVED[@]}"} | OK="$ok" TOOK="$SECONDS" \
@@ -320,9 +241,6 @@ print(json.dumps({
     "note": "\n".join(note),
 }))')" || return 0
 
-  # errorwatch reads this to know when to start counting. Only a tick that
-  # actually installed something goes in it: with no new code there is no
-  # release to compare two windows of errors against.
   if [ ${#DEPLOYED[@]} -gt 0 ]; then
     mkdir -p "$STATE"
     printf '%s\n' "$payload" >> "$STATE/deploys.jsonl"
@@ -332,7 +250,7 @@ print(json.dumps({
     --data "$payload" >/dev/null 2>&1 || warn "the bot was not told about this deploy"
 }
 
-run() {                      # run <label> <function> [args...]
+run() {
   local label="$1"; shift
   if "$@"; then DEPLOYED+=("$label"); else FAILED+=("$label"); fi
 }
@@ -344,12 +262,6 @@ sync_repo() {
   head_now="$(git -C "$dir" rev-parse HEAD)"
   after="$(git -C "$dir" rev-parse origin/main)"
 
-  # Commits sitting in the checkout that are not on main yet. Fast-forwarding to
-  # origin/main is a no-op when the checkout is ahead of it, so the deploy would
-  # go on to build whatever is in the working tree while having asked CI about a
-  # different, older commit — the gate answering for code that is not the code
-  # being deployed. It also renders backwards in the log, "newer -> older",
-  # which is the tell. Wait for the push instead; CI has not seen this yet.
   local ahead; ahead="$(git -C "$dir" rev-list --count "$after..$head_now" 2>/dev/null || echo 0)"
   if [ "${ahead:-0}" -gt 0 ]; then
     warn "$repo: $ahead local commit(s) are not on origin/main, so nothing is deployed."
@@ -357,15 +269,6 @@ sync_repo() {
     return 1
   fi
 
-  # "before" is the last commit this script knows it actually deployed from —
-  # not simply HEAD at the top of this tick. A commit made (and pushed)
-  # straight in this checkout, on the box, leaves HEAD already equal to
-  # origin/main with nothing left for the fetch above to find: comparing
-  # against HEAD alone read that as "nothing new", forever, and a real change
-  # sat undeployed with no failure and nothing to notice. The marker is what
-  # turns that into a catch-up instead of silence. A missing or dangling
-  # marker (first run after adding this, or state wiped) falls back to HEAD,
-  # which reproduces the old behaviour exactly rather than replaying history.
   local marker="$STATE/deployed-$repo.sha" before
   before="$(cat "$marker" 2>/dev/null || true)"
   if [ -z "$before" ] || ! git -C "$dir" cat-file -e "${before}^{commit}" 2>/dev/null; then
@@ -374,7 +277,7 @@ sync_repo() {
 
   if [ "$before" = "$after" ]; then
     [ -n "$DRY" ] || printf '%s\n' "$after" > "$marker"
-    return 1          # nothing new
+    return 1
   fi
 
   local verdict; verdict="$(ci_is_green "$repo" "$after")"
@@ -423,8 +326,6 @@ if [ $SYNC -eq 0 ]; then
     && run api-gateway deploy_api api-gateway amitista-api
   touches "$CHANGED" '^deploy/(ai-relay|contact-relay)/' \
     && warn "ai-relay or contact-relay changed and neither has an install.sh — deploy those by hand"
-  # deploy/autodeploy/ is owned but has no deploy step: the service runs these
-  # files straight out of the checkout, so a fast-forward is the deploy.
   uncovered amitista-web '^(src/|public/|brand/|index\.html|vite\.config\.js|package(-lock)?\.json|scripts/|deploy/autodeploy/|deploy/errorwatch/|deploy/admin-api/|deploy/api-gateway/|deploy/(ai-relay|contact-relay)/)'
 fi
 
@@ -450,8 +351,6 @@ if [ $SYNC -eq 0 ]; then
   uncovered amitista-shield '^(src/|bin/|feed/|evaluator/|index\.js|package(-lock)?\.json)'
 fi
 
-# A deploy that dirties its own checkout has armed the trap for the next commit,
-# not this one, so this is the only moment it is visible before it bites.
 step "scan"
 RESCAN=0
 for pair in "$WEB amitista-web" "$BOTS amitista-bots" "$SHIELD amitista-shield"; do
@@ -465,10 +364,6 @@ else
   warn "files, or the next commit touching one of them will block the deploy"
 fi
 
-# Hand the admin panel what we just learned. It cannot ask GitHub itself: the
-# token is root-only and the admin service runs under ProtectHome, so /root does
-# not exist as far as it is concerned. Never fatal — a panel that cannot be
-# updated is not a reason to fail a deploy that worked.
 if [ -z "$DRY" ]; then
   "$SELF_DIR/github-state.py" "$GITHUB_STATE" \
     "amitista-web=$WEB" "amitista-bots=$BOTS" "amitista-shield=$SHIELD" \
@@ -478,13 +373,6 @@ fi
 step "result"
 [ ${#DEPLOYED[@]} -gt 0 ] && log "deployed: ${DEPLOYED[*]}"
 
-# Failures are checked before the quiet path. A repository that could not be
-# fast-forwarded deploys nothing, which used to render as "nothing to deploy"
-# and exit 0 — indistinguishable from an idle tick, so a wedged deploy could sit
-# unnoticed for as long as it liked. It exits non-zero now, and systemd marks
-# the unit failed.
-# An idle tick says nothing: this fires only when something was installed or
-# something broke, or the channel would carry 1,440 messages a day of silence.
 if [ ${#FAILED[@]} -gt 0 ]; then
   report_deploy no
   die "failed: ${FAILED[*]}"

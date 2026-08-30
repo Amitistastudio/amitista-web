@@ -1,22 +1,4 @@
 #!/usr/bin/env node
-//
-// Reads a range of commits and refuses it if the lines they add look like they
-// carry a credential. Called by .githooks/pre-push, and runnable by hand on any
-// range.
-//
-// It exists for the same reason the hook does: this org is on GitHub's Free
-// plan, where private repositories get no secret scanning server-side. This runs
-// on the machine doing the pushing, which is weaker — anybody can bypass it —
-// and it is what is available.
-//
-//     node scripts/scan-secrets.mjs                 what is unpushed
-//     node scripts/scan-secrets.mjs abc123..def456  a range
-//     node scripts/scan-secrets.mjs --staged        what is about to be committed
-//     node scripts/scan-secrets.mjs --history 20    what previous scans found
-//     node scripts/scan-secrets.mjs --json <range>  the same verdict, for a machine
-//     node scripts/scan-secrets.mjs --rules         what it knows how to spot
-//
-// Exit 0 clean or overridden, 1 blocked, 2 asked wrongly.
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
@@ -35,20 +17,8 @@ const GITDIR = git('rev-parse', '--absolute-git-dir').trim();
 const HISTORY = join(GITDIR, 'secret-scan.log');
 const ALLOWLIST = join(ROOT, '.githooks', 'allowed-secrets');
 
-// How many scans the local history keeps. It is one line each and never holds a
-// secret, so this is about keeping the file readable rather than about size.
 const HISTORY_KEPT = 500;
 
-// ------------------------------------------------------------------ the rules
-//
-// Deliberately narrow, and provider-shaped wherever a provider gives its keys a
-// recognisable prefix. A pattern that matches a real format almost never fires
-// falsely; a generic "secret = ..." rule fires constantly and gets the whole
-// hook turned off, which is worse than not having one. There is exactly one
-// generic rule at the bottom and it is fenced about accordingly.
-//
-// Anthropic before OpenAI, because sk-ant- satisfies both and the first rule to
-// match a given string is the one that names it.
 const RULES = [
   ['aws-access-key-id', 'an AWS access key id', /\bAKIA[0-9A-Z]{16}\b/g],
   ['aws-temporary-key-id', 'a temporary AWS access key id', /\bASIA[0-9A-Z]{16}\b/g],
@@ -101,21 +71,12 @@ const RULES = [
   ],
 ];
 
-// The one generic rule. A name that means "credential", an assignment, and a
-// long quoted value — then every way that shape shows up honestly is taken back
-// out again below, because this is the rule that decides whether anybody trusts
-// the hook.
 const GENERIC =
   /\b(?:api[_-]?key|secret|token|password|passwd|pwd|client[_-]?secret|access[_-]?token|auth[_-]?token|private[_-]?key)\b["'`\s]*[:=]\s*["'`]([^"'`\n]{20,})["'`]/gi;
 
-// What a placeholder looks like: the value people write when they mean "put the
-// real one here". Reading one of these as a leak is how a scanner earns its way
-// into somebody's --no-verify muscle memory.
 const PLACEHOLDER =
   /^(?:x{3,}|\.{3,}|\*{3,}|<|\$\{|%[A-Z_]+%|process\.env|import\.meta|os\.environ|getenv|your[-_. ]|example|changeme|placeholder|redacted|removed|dummy|sample|fake|none|null|undefined|true|false|sk_test_|pk_test_)/i;
 
-// A real key has no spaces in it, mixes cases or digits, and is not simply the
-// name of the environment variable it should have been read from.
 function looksLikeAValue(value) {
   if (PLACEHOLDER.test(value)) return false;
   if (/\s/.test(value)) return false;
@@ -124,13 +85,6 @@ function looksLikeAValue(value) {
   return mixed || value.length >= 32;
 }
 
-// ------------------------------------------------------------- the allowlist
-//
-// Fingerprints rather than the secrets themselves, so allowing a known fixture
-// does not mean writing it down a second time in a tracked file. One per line:
-//
-//     <fingerprint>  why it is allowed
-//
 function allowed() {
   const out = new Map();
   if (!existsSync(ALLOWLIST)) return out;
@@ -143,21 +97,11 @@ function allowed() {
   return out;
 }
 
-// The secret is never written down — not to the history, not to the allowlist,
-// not to the terminal in full. What is kept is a hash of it, which is enough to
-// say "this is the same one you allowed last week" and no use to anybody who
-// reads the file.
 const fingerprint = (text) => createHash('sha256').update(text).digest('hex').slice(0, 12);
 
 const redact = (text) =>
   text.length <= 8 ? `${text.slice(0, 2)}…` : `${text.slice(0, 6)}…${text.slice(-2)}`;
 
-// ---------------------------------------------------------------- the diff
-//
-// Walked rather than grepped, because a hit is only useful with the file and
-// line it is on: "a GitHub token is somewhere in these 40 commits" is not an
-// answer anybody can act on. --unified=0 means every line the parser sees is a
-// line the commits actually add.
 function addedLines(range) {
   let diff;
   try {
@@ -177,7 +121,6 @@ function addedLines(range) {
       continue;
     }
     if (text.startsWith('@@')) {
-      // @@ -old,count +new,count @@
       const at = /^@@ -\S+ \+(\d+)/.exec(text);
       line = at ? Number(at[1]) : 0;
       continue;
@@ -226,11 +169,6 @@ function scan(lines) {
   return found;
 }
 
-// ------------------------------------------------------------------ history
-//
-// Local, in .git, so it is never pushed and never leaves the machine. Every
-// scan is written down, clean ones included: "when did this last run" and "what
-// did we wave through in June" are both questions worth being able to answer.
 function remember(entry) {
   try {
     appendFileSync(HISTORY, `${JSON.stringify(entry)}\n`, 'utf8');
@@ -239,8 +177,6 @@ function remember(entry) {
       writeFileSync(HISTORY, `${lines.slice(-HISTORY_KEPT).join('\n')}\n`, 'utf8');
     }
   } catch {
-    // A history that cannot be written is not a reason to fail a push. The
-    // scan itself already happened and its verdict stands.
   }
 }
 
@@ -278,18 +214,11 @@ function showHistory(limit) {
   return 0;
 }
 
-// --------------------------------------------------------------------- main
 const args = process.argv.slice(2);
 
-// Asked for by the deploy, which runs this over each checkout every time the
-// tip moves and puts the verdict in the panel. It wants the findings, not the
-// telling-off, and it must never have to parse the telling-off to get them.
 const asJson = args.includes('--json');
 const rest = args.filter((arg) => arg !== '--json');
 
-// Asked for by the collector, so the panel can say what the scanner that
-// actually shipped looks for rather than carrying its own copy of the list and
-// drifting from it.
 if (rest[0] === '--rules') {
   const rules = RULES.map(([rule, label]) => ({ rule, label }));
   rules.push({ rule: 'generic-secret', label: 'a hardcoded secret assignment' });
@@ -334,9 +263,6 @@ const all = scan(lines);
 const waved = all.filter((finding) => permitted.has(finding.print));
 const found = all.filter((finding) => !permitted.has(finding.print));
 
-// An override has to say what it is for. ALLOW_SECRETS=1 is somebody getting
-// past a red light, not somebody authorising anything, and it is refused —
-// the reason is the whole point, because it is what the history keeps.
 const claimed = (process.env.ALLOW_SECRETS ?? '').trim();
 const lazy = /^(?:1|y|yes|true|ok|please|force)$/i.test(claimed);
 const override = claimed !== '' && !lazy && claimed.length >= 8 ? claimed : null;

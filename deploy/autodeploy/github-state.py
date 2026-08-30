@@ -1,36 +1,5 @@
 #!/usr/bin/env python3
 
-"""Record what each repository looks like right now, for the admin panel.
-
-The panel cannot gather this itself. The GitHub token lives at /root/.gh-oauth,
-readable only by root, and the admin API runs as amitista-admin under
-ProtectHome=yes — it cannot see /root at all, which is the point. So the deploy,
-which is already root and already holds the token, writes what it knows to a
-file the panel is allowed to read. The token never leaves this process.
-
-Two kinds of question, both asked every tick. The cheap local ones: what is
-checked out, is it dirty, has main moved, did CI pass for the commit at the tip.
-And the ones only GitHub can answer — open issues, open pull requests and what
-is holding each one up, how far each branch has drifted, what the last workflow
-runs actually did, how big the repository has grown.
-
-The second kind used to be rationed to every five minutes to spare the rate
-limit. It is not rationed now, because it does not need to be: every one of
-those is a conditional request, and GitHub does not charge for answering 304.
-An unchanged repository costs round trips and nothing else.
-
-Almost all of it only looks, and every request it makes to read something is a
-GET. The one exception is access: the panel can ask for somebody's permission on
-a repository to be changed, and it leaves that request in a queue directory
-because it has no token to carry it out with. This process drains that queue —
-checking every field of it again from scratch, because the account that wrote it
-is not one this trusts — and records what happened. Nothing here deploys, merges
-or pushes.
-
-    github-state.py OUT_PATH name=/path/to/checkout [name=/path ...]
-    github-state.py --full OUT_PATH name=/path ...   ask GitHub everything now
-"""
-
 import json
 import os
 import re
@@ -49,59 +18,18 @@ GROUP = os.environ.get("ADMIN_GROUP", "amitista-admin")
 BRANCH = "main"
 TIMEOUT = 20
 
-# How often the questions only GitHub can answer are actually asked. Once per
-# deploy tick, which is to say about once a minute.
-#
-# This was five minutes on the reasoning that pull requests and branches do not
-# move on a one-minute timescale. True, and beside the point: somebody opened an
-# issue, went to look for it, and it was not there — and the panel's Refresh
-# button re-reads a file rather than asking GitHub, so there was nothing to do
-# but wait without knowing how long for. Being right about the data changing
-# slowly does not help when the person is standing there.
-#
-# It is affordable because every one of these is a conditional request. GitHub
-# answers an unchanged resource with 304 and does not charge it, so the steady
-# state is about fifteen round trips a minute and nothing at all off the hourly
-# allowance.
 DETAIL_SECONDS = int(os.environ.get("AUTODEPLOY_GITHUB_DETAIL_SECONDS", "60"))
 
-# Ceilings, so one runaway repository cannot bloat the file the panel reads or
-# the number of requests one refresh makes.
 MAX_PULLS = 20
-# Asking after each pull request costs a request or two of its own, so only the
-# most recent handful are looked into. Beyond that the list still shows them;
-# they just do not carry a verdict until one of the others is dealt with.
 MAX_PULL_DETAIL = 10
-# Everything ever raised, not only what is open, so the panel can answer "has
-# this been done before" without anybody leaving it. Shallow rows and one
-# conditional request per repository, which is what makes the depth affordable.
 MAX_PULL_HISTORY = 60
-# How many of the history rows are looked into for their reviews and their
-# workflow verdict. Both are asked once and then never again: a closed pull
-# request cannot gain a review, and a finished run does not change its mind, so
-# after the first tick these cost nothing at all.
 MAX_HISTORY_DETAIL = 15
-# Every review on one pull request. A hundred is GitHub's page ceiling and far
-# past anything three people will produce, so this never has to page.
 MAX_REVIEWS = 100
 MAX_FILES = 40
-# How much of each file's diff is kept, and how much across the whole pull
-# request. Enough for a review to be about the code rather than the file names,
-# and little enough that forty files cannot make the snapshot unreadable.
-#
-# These never reach the panel. The admin API strips them before the snapshot
-# travels, because the browser has no use for a diff it does not display and
-# every reader would pay for it. They are kept so that the one thing that does
-# want them — an on-demand review — has something to read without this process
-# needing to be asked again.
 MAX_PATCH_CHARS = 4000
 MAX_PATCH_TOTAL = 48000
 MAX_ISSUES = 30
-# Enough recent commits to draw a fortnight of activity and say who has been
-# doing it, across all three repositories at once. Still one request each.
 MAX_COMMITS = 40
-# Enough of the body to know what an issue is about without opening GitHub, and
-# little enough that thirty of them do not bloat the file the panel reads.
 MAX_BODY = 1200
 MAX_BRANCHES = 30
 MAX_COMPARES = 8
@@ -109,67 +37,25 @@ MAX_RUNS = 10
 MAX_PEOPLE = 100
 MAX_STAT_WEEKS = 26
 
-# Where the admin panel leaves a permission change it would like carried out.
-#
-# The panel cannot make one itself, and that is not an oversight to be fixed
-# later — the whole arrangement of this file exists so the token stays in root's
-# hands. So the panel writes what it wants into this directory, which it can
-# write and root can read, and this process decides whether to do it.
-#
-# Which means nothing in that directory is trusted. It is written by a service
-# running as a different, less privileged account; if that account were ever
-# taken, the queue is the first thing that would be used, so every field is
-# checked here again from scratch rather than believed.
-# What the performance monitor measured, and what the deploy was serving when it
-# did. Two files written by two things that never speak to each other: the
-# monitor knows the numbers and which release was live, the deploy knows which
-# commit that release is. Joined here because this is the one process that also
-# holds the commits and pull requests to join them to.
 PERF_HISTORY = os.environ.get("AUTODEPLOY_PERF_HISTORY", "/var/lib/amitista/perf/history.jsonl")
 RELEASE_LEDGER = os.environ.get("AUTODEPLOY_RELEASE_LEDGER", "/var/www/amitista.com/releases.jsonl")
-# Only one of the three repositories is the site, so only one of them can have
-# made it slower.
 PERF_REPO = os.environ.get("AUTODEPLOY_PERF_REPO", "amitista-web")
-# Enough releases to see a fortnight of deploys, and enough runs behind them to
-# have several measurements of each. Both are read every tick, so both are
-# ceilings on work as much as on size.
 MAX_PERF_RELEASES = 20
 MAX_PERF_RUNS = 400
-# Core Web Vitals as a headless browser can honestly produce them, plus the ones
-# that explain a change in them. LCP first because it is the one that moves.
-#
-# INP is not here and cannot be: it measures how long the page took to respond
-# to a real interaction, and nobody interacts with this one. TBT is the lab
-# stand-in the field agrees on — the blocking time an interaction would have had
-# to queue behind — and the panel labels it as that rather than passing it off
-# as the third vital.
 PERF_METRICS = ("lcp", "cls", "tbt", "fcp", "ttfb", "longTaskMs", "bytes")
-# What a metric has to move by before the panel calls it a change rather than
-# the box having been busy. Mirrors the monitor's own floors deliberately: it
-# alerts on one run against one run, this compares medians of several, and the
-# two agreeing about what counts as a shift is what stops the panel and the
-# alert telling different stories about the same deploy.
 PERF_FLOOR = {"lcp": 120, "fcp": 120, "ttfb": 120, "tbt": 50, "cls": 0.02, "longTaskMs": 150, "bytes": 20480}
 PERF_FRACTION = 0.1
-# Squash and merge both leave the pull request number at the end of the subject.
 PULL_IN_SUBJECT = re.compile(r"\(#(\d+)\)\s*$")
 
 QUEUE_DIR = os.environ.get("ADMIN_GITHUB_QUEUE", "/var/lib/amitista/admin/github-queue")
 MAX_QUEUE_PER_TICK = 20
 MAX_ACTION_LOG = 25
 
-# The permissions GitHub takes for a repository collaborator, weakest first.
 ROLES = ("pull", "triage", "push", "maintain", "admin")
 
-# GitHub's own rule for a login: alphanumerics and single inner hyphens, up to
-# thirty-nine characters. Checked because the login goes into a URL path.
 LOGIN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$")
 
 
-# A run GitHub has finished with will never change its mind, so its verdict is
-# cached against the commit and never asked for twice. Anything else — queued,
-# in progress, no run at all — is asked again next tick. That is what keeps the
-# per-tick check free: three repositories idling cost nothing.
 TERMINAL = (
     "success",
     "failure",
@@ -228,14 +114,10 @@ def git(path, *args):
         return None
     if done.returncode != 0:
         return None
-    # Only the trailing newline. `status --porcelain` opens with a significant
-    # space — the staged/unstaged column — and stripping it shifts every path
-    # left by one character.
     return done.stdout.rstrip("\n")
 
 
 def commit_facts(path, ref):
-    """Subject, author and date for a ref, in one call rather than three."""
     out = git(path, "--no-pager", "log", "-1", "--format=%s%n%an%n%cI", ref)
     if out is None:
         return {}
@@ -254,11 +136,6 @@ def token():
 
 
 def said_by(failure):
-    """GitHub's own words for why it said no, if it left any.
-
-    Read once, straight off the error body, because urllib hands it over as a
-    stream that can only be read the once.
-    """
     try:
         said = json.loads(failure.read())
     except (ValueError, OSError):
@@ -275,13 +152,6 @@ def said_by(failure):
 
 
 class GitHub:
-    """Just enough of the API, with the rate limit taken seriously.
-
-    Conditional requests are the whole trick: GitHub answers an unchanged
-    resource with 304 and does not charge it against the hourly limit, so
-    re-asking about a repository nobody has touched is free. Every response's
-    ETag is kept in the snapshot and handed back on the next request.
-    """
 
     def __init__(self, auth, etags):
         self.auth = auth
@@ -291,48 +161,12 @@ class GitHub:
         self.reset = None
         self.calls = 0
         self.spent = 0
-        # Two different bad outcomes, kept apart because only one of them means
-        # what is on the page might be old.
-        #
-        # "Unreachable" is GitHub not answering: a timeout, a broken connection,
-        # a 5xx, a rate limit. Whatever that request was for is missing from
-        # this look, so the last one has to stand in and the panel has to say
-        # so. "Refused" is GitHub answering, and the answer being no. That is a
-        # fact about the account, the plan or the token, it will read the same
-        # in a minute, and it makes nothing on the page older than it says.
-        #
-        # Conflating the two is what made the panel claim GitHub could not be
-        # reached, permanently, on a box that was reaching it perfectly well
-        # nine times a minute and being told no.
         self.unreachable = False
         self.refused = []
-        # The status each path last came back with. An error is not one thing:
-        # a 404 on the secret scanning feed means this plan does not offer it
-        # and never will, and a 502 means ask again in a minute. The panel has
-        # to say which, so the code is kept rather than flattened into "error".
         self.codes = {}
-        # What GitHub said about it, when it said no. Its own wording is worth
-        # keeping: "Dependabot alerts are disabled for this repository" and
-        # "Advanced Security must be enabled" are both 403, and guessing from
-        # the code alone gets one of them wrong.
         self.messages = {}
 
     def get(self, path, have_cached=False, expected=()):
-        """Returns (payload, state) where state is ok, unchanged or error.
-
-        Only "ok" carries a body worth projecting. On "unchanged" or "error" the
-        caller keeps whatever it recorded last time, so a GitHub outage leaves
-        the panel showing the last thing known to be true rather than an empty
-        page — clearly marked as such.
-
-        `have_cached` says whether the caller still holds the previous answer.
-        The conditional request is only sent when it does: a 304 with nothing to
-        fall back on would throw away the data instead of saving a request.
-
-        `expected` lists the statuses this caller has a story for — a feed this
-        plan does not offer answers 404 every time and the panel renders that as
-        an answer, so it is not counted as anything having gone wrong.
-        """
         if not self.auth:
             return None, "error"
 
@@ -367,11 +201,6 @@ class GitHub:
                 return None, "unchanged"
             self.messages[path] = said_by(failure)
             self.spent += 1
-            # A 404 (renamed, or no longer visible to this token) and a 500 are
-            # different problems, but neither is worth discarding what we knew.
-            # They differ in whether asking again would help: a 5xx or a rate
-            # limit is GitHub not answering this minute, everything else is
-            # GitHub's answer.
             if failure.code >= 500 or failure.code == 429:
                 self.unreachable = True
             elif failure.code not in expected:
@@ -389,17 +218,6 @@ class GitHub:
         return self.messages.get(path)
 
     def send(self, method, path, body=None):
-        """The only thing in this file that changes anything at GitHub.
-
-        Everything else is a GET, and deliberately so. This exists for one
-        reason: the admin panel has no token and no route to the internet worth
-        the name, so a permission change it wants made has to be carried out by
-        something that does. Returns (payload, status, error).
-
-        Never conditional. A cached ETag has nothing to do with a request that
-        is trying to change something, and sending If-None-Match on a PUT would
-        get it refused rather than skipped.
-        """
         if not self.auth:
             return None, None, "no token on this box"
 
@@ -454,17 +272,7 @@ class GitHub:
             pass
 
 
-# ------------------------------------------------------------------ the tick
-
 def ci_verdict(api, repo, sha, cached_entry):
-    """The workflow verdict for one exact commit.
-
-    The verdict deliberately keeps GitHub's own two words — "completed/success",
-    "queued/pending", "none" when no run has been recorded — because collapsing
-    them to a boolean is what made the last stuck deploy unreadable. "unknown"
-    means the question could not be asked, which is not the same as a commit
-    having failed, and the panel says so.
-    """
     if not sha:
         return "unknown"
     if not api.auth:
@@ -484,8 +292,6 @@ def ci_verdict(api, repo, sha, cached_entry):
     return "%s/%s" % (run.get("status") or "unknown", run.get("conclusion") or "pending")
 
 
-# ----------------------------------------------------------- the slow questions
-
 def repo_facts(api, repo, cached):
     payload, state = api.get("/repos/%s/%s" % (ORG, repo), bool(cached))
     if state != "ok" or not isinstance(payload, dict):
@@ -503,26 +309,6 @@ def repo_facts(api, repo, cached):
 
 
 def pull_extra(api, repo, number, known):
-    """What the list of pull requests does not say.
-
-    How much changed, and whether it can actually go in, are only on the single
-    pull request endpoint — the list leaves out additions, deletions,
-    changed_files, commits and the merge state entirely. So each one is asked
-    after separately, which is why only the newest few are.
-
-    mergeable is computed on demand and comes back null until GitHub has worked
-    it out, which is a real answer and not the same as "no": the panel says it
-    is still being worked out rather than guessing.
-
-    Asked unconditionally, unlike everything else here, and that is deliberate.
-    mergeable and mergeable_state are derived — GitHub recomputes them from the
-    merge and check status rather than storing them — and the resource's ETag
-    does not reliably move when only they change. Caught in the act: a pull
-    request sat at "unstable" through a 304 for minutes after GitHub had settled
-    it to "clean", so the panel was telling the reader a check was unhappy about
-    a pull request that was ready to merge. A wrong verdict is worse than the
-    request it saves, and only the newest few are asked after anyway.
-    """
     payload, state = api.get("/repos/%s/%s/pulls/%d" % (ORG, repo, number))
     if state != "ok" or not isinstance(payload, dict):
         return known or {}
@@ -559,10 +345,6 @@ def pull_files(api, repo, number, cached):
             "added": entry.get("additions"),
             "removed": entry.get("deletions"),
         }
-        # A file with no patch is normal rather than a failure: GitHub leaves it
-        # out for anything it treats as binary, and for a diff too large to
-        # inline. Recorded as clipped either way, so whatever reads this can say
-        # it is working from part of the change rather than all of it.
         patch = entry.get("patch")
         if isinstance(patch, str) and patch and budget > 0:
             room = min(MAX_PATCH_CHARS, budget)
@@ -576,11 +358,6 @@ def pull_files(api, repo, number, cached):
 
 
 def pull_ci(api, repo, sha, known):
-    """The workflow verdict for the head of a pull request.
-
-    Cached against that exact commit, so a pull request nobody has pushed to
-    costs nothing to keep an eye on once its run has finished.
-    """
     if not sha:
         return "unknown"
     settled = (known.get("ci") or "").split("/")[-1] in TERMINAL
@@ -596,18 +373,6 @@ def pull_ci(api, repo, sha, known):
     return "%s/%s" % (run.get("status") or "unknown", run.get("conclusion") or "pending")
 
 
-# The verdicts people have left on a pull request.
-#
-# GitHub keeps every review ever submitted, including the ones since superseded,
-# so the raw list says nothing about where a pull request stands. What counts is
-# each person's latest decisive review: an approval or a request for changes,
-# with a dismissal wiping out whichever it replaced. A review that only left a
-# comment is not a verdict at all and never overrides one — somebody who
-# approved and then commented has still approved.
-#
-# Reduced here rather than in the panel because the reduction is GitHub's rule
-# rather than a display choice, and getting it wrong would have the panel say a
-# pull request was approved when its approval had been dismissed.
 DECISIVE = ("APPROVED", "CHANGES_REQUESTED", "DISMISSED")
 
 
@@ -638,18 +403,6 @@ def pull_reviews(api, repo, number, cached):
 
 
 def pull_history(api, repo, cached):
-    """Every pull request, open or not, as far back as the ceiling allows.
-
-    A separate request from the open list rather than a widening of it, because
-    the two want different things. The open list is asked in the order work
-    arrives and is looked into deeply; this one is asked newest-touched first
-    and stays shallow, so a hundred closed pull requests cost one round trip and
-    a few kilobytes rather than two hundred requests.
-
-    Open pull requests appear in both. That is deliberate: this is the record of
-    what has been raised, and leaving out the ones still in flight would make it
-    lie by omission. The panel shows the detailed copy where it has one.
-    """
     payload, state = api.get(
         "/repos/%s/%s/pulls?state=all&sort=updated&direction=desc&per_page=%d"
         % (ORG, repo, MAX_PULL_HISTORY),
@@ -708,17 +461,6 @@ def pull_history(api, repo, cached):
 
 
 def history_reviews(api, repo, row, was):
-    """The reviews on a pull request in the history, asked once per change.
-
-    GitHub moves updated_at when a review is submitted, so a pull request that
-    has not been touched since the last look cannot have gained one and the
-    cached answer stands without a request being made at all. That is what makes
-    it affordable to keep the review history of closed pull requests: they stop
-    being touched, so they are asked after once and then never again.
-
-    Not the same as a conditional request, which would still cost a round trip
-    per pull request per tick. This costs nothing.
-    """
     held = was.get("reviews")
     if isinstance(held, list) and was.get("updated") == row.get("updated"):
         return held
@@ -734,15 +476,6 @@ def open_pulls(api, repo, cached):
     held = cached if isinstance(cached, list) else []
 
     if state == "unchanged":
-        # Nothing has been opened, closed or pushed to — that is what the list's
-        # own ETag settles, and it is why the titles, authors and branches below
-        # are taken from what was already known.
-        #
-        # It settles nothing about the two things that move on their own. A
-        # workflow finishing does not touch the pull request it ran for, and the
-        # merge state is recomputed rather than stored. Both would otherwise sit
-        # frozen at whatever they were when the list last changed — which is how
-        # a ready pull request came to be reported as having an unhappy check.
         out = []
         for index, entry in enumerate(held):
             row = dict(entry)
@@ -802,12 +535,6 @@ def open_pulls(api, repo, cached):
 
 
 def open_issues(api, repo, cached):
-    """Open issues, and only issues.
-
-    GitHub treats a pull request as an issue, so /issues returns both and every
-    pull request would otherwise show up here a second time wearing a different
-    hat. The ones carrying a pull_request key are dropped.
-    """
     payload, state = api.get(
         "/repos/%s/%s/issues?state=open&sort=updated&direction=desc&per_page=%d"
         % (ORG, repo, MAX_ISSUES),
@@ -818,8 +545,6 @@ def open_issues(api, repo, cached):
 
     out = []
     for entry in payload:
-        # The key's presence is the marker, not its contents. Testing the value
-        # lets an entry through whenever GitHub sends an empty object.
         if not isinstance(entry, dict) or "pull_request" in entry:
             continue
         body = entry.get("body")
@@ -852,12 +577,6 @@ def open_issues(api, repo, cached):
 
 
 def recent_commits(api, repo, cached):
-    """The last few commits on the default branch.
-
-    The workflow runs already carry a commit each, but only for commits a
-    workflow ran on, and only the run's view of them. This is the actual
-    activity: who has been committing, to what, and when.
-    """
     payload, state = api.get(
         "/repos/%s/%s/commits?per_page=%d" % (ORG, repo, MAX_COMMITS),
         isinstance(cached, list),
@@ -871,9 +590,6 @@ def recent_commits(api, repo, cached):
             continue
         commit = entry.get("commit") or {}
         author = commit.get("author") or {}
-        # The account is not always the person: a commit can carry an author
-        # git knows about and no GitHub account at all. Both are kept, and the
-        # panel prefers the name that was actually signed.
         account = entry.get("author") or {}
         out.append(
             {
@@ -889,12 +605,6 @@ def recent_commits(api, repo, cached):
 
 
 def branch_drift(api, repo, default_branch, cached):
-    """Every branch, and how far it has drifted from the default one.
-
-    Branches that never get merged are the quiet kind of mess — the listing
-    alone does not show it, so each one is compared. Bounded, because the
-    comparison is a request each.
-    """
     listing, state = api.get(
         "/repos/%s/%s/branches?per_page=%d" % (ORG, repo, MAX_BRANCHES),
         isinstance(cached, list),
@@ -925,9 +635,6 @@ def branch_drift(api, repo, default_branch, cached):
             continue
 
         was = known.get(name) or {}
-        # Nothing has moved on this branch since the last look, so the drift it
-        # had then is the drift it has now — unless the base moved, which the
-        # base's own sha tells us.
         if was.get("sha") == sha and was.get("baseSha") == _sha_of(listing, base) and "ahead" in was:
             out.append({**row, "ahead": was["ahead"], "behind": was["behind"], "baseSha": was.get("baseSha")})
             continue
@@ -1051,64 +758,28 @@ def punch_card(api, repo, cached):
     return out
 
 
-# ------------------------------------------------------------------ security
-
-# How many of each kind of alert to carry. The panel wants the worst few and a
-# count, not a tracker.
 MAX_ALERTS = 20
 
-# How far back the local scan reads. Far enough to cover anything recent that
-# went in without the hook running, short enough to stay cheap at a tick a
-# minute.
 SCAN_COMMITS = 50
 
-# What GitHub itself has to say, and — where it says nothing — whether that is
-# because there is nothing to say or because this plan does not offer the
-# feature at all.
-#
-# The distinction is the whole point of this block. A private repository on the
-# Free plan gets no secret scanning and no code scanning: the endpoints answer
-# 404, and an empty list drawn from a 404 is not a clean bill of health. Showing
-# it as one would be the most dangerous thing this panel could do, so an
-# unavailable feed says so in as many words and never counts as zero.
 ALERT_FEEDS = (
     ("dependabot", "dependabot/alerts", "dependencies with a known vulnerability"),
     ("secretScanning", "secret-scanning/alerts", "credentials committed to the repository"),
     ("codeScanning", "code-scanning/alerts", "findings from code analysis"),
 )
 
-# GitHub answers an unavailable feed in more than one way, and the wording it
-# deserves differs. These are the fallbacks: GitHub usually says why in the body
-# of the refusal and its own sentence is used in preference, because the status
-# alone is not enough to tell these apart. Both of
-#
-#   403 "Dependabot alerts are disabled for this repository."
-#   403 "Advanced Security must be enabled for this repository to use code scanning."
-#
-# arrive as 403, and only one of them is something this account can switch on;
-# reading either as "the token may not ask" sends somebody to fix the wrong
-# thing.
 ALERT_WHY = {
     404: "not available on this repository — GitHub offers it on paid plans, or it is switched off",
     403: "not available to this repository or this token",
     401: "the deploy's token was refused",
 }
 
-# The statuses that mean "GitHub answered, and the answer was no". Handled here,
-# in as many words, so they are not also counted as GitHub having been out of
-# reach — which would mark the whole snapshot as possibly stale on a box that
-# was reaching GitHub perfectly well.
 ALERT_REFUSALS = (401, 403, 404)
 
-# How long a feed that said no is believed for. A plan does not change between
-# ticks, so asking every minute spends nine charged requests an hour for three
-# answers that are the same every time — while an upgrade or a switch flipped in
-# settings still shows up within the half hour without anyone doing anything.
 ALERT_RECHECK_SECONDS = int(os.environ.get("AUTODEPLOY_ALERT_RECHECK_SECONDS", "1800"))
 
 
 def alert_row(feed, entry):
-    """One alert, flattened to what a panel row needs."""
     if not isinstance(entry, dict):
         return None
     row = {
@@ -1136,16 +807,12 @@ def alert_row(feed, entry):
 
 
 def security_alerts(api, repo, cached):
-    """Every alert feed GitHub offers, each saying whether it is offered."""
     held = cached if isinstance(cached, dict) else {}
     out = {}
     for feed, tail, what in ALERT_FEEDS:
         path = "/repos/%s/%s/%s?state=open&per_page=%d" % (ORG, repo, tail, MAX_ALERTS)
         was = held.get(feed) or {}
 
-        # A feed that answered "no" recently is not asked again yet. Unlike a
-        # 304 this one is charged every time, so re-asking it each tick is the
-        # only thing on this page that costs anything in the steady state.
         asked = age_seconds(was.get("checked"))
         if was.get("available") is False and asked is not None and asked < ALERT_RECHECK_SECONDS:
             out[feed] = was
@@ -1156,10 +823,6 @@ def security_alerts(api, repo, cached):
         )
 
         if condition == "unchanged" or (condition == "error" and api.code_for(path) is None):
-            # Nothing new, or GitHub was unreachable. Either way the last answer
-            # is still the best one available and is kept as it was — including
-            # when it was last asked, which a look that never happened has not
-            # moved on.
             out[feed] = was or {"available": None, "what": what, "items": [], "open": 0}
             continue
 
@@ -1188,7 +851,6 @@ def security_alerts(api, repo, cached):
 
 
 def scan_range(path):
-    """The range the local scan reads: the last SCAN_COMMITS, or all of them."""
     depth = git(path, "rev-list", "--count", "HEAD")
     if depth and depth.isdigit() and int(depth) > SCAN_COMMITS:
         return "HEAD~%d..HEAD" % SCAN_COMMITS
@@ -1198,26 +860,10 @@ def scan_range(path):
 
 
 def local_scan(path, head, was):
-    """Run the repository's own credential scanner over its recent history.
-
-    This is the half that does not depend on anybody's clone being set up
-    properly. The pre-push hook only ever runs on the machine doing the pushing
-    and only if that machine enabled it; this runs on the box, every time the
-    tip moves, over what actually landed. If the two ever disagree, this one is
-    the one that is true.
-
-    A repository that does not carry the scanner is reported as not carrying it
-    rather than as clean, for the same reason an unavailable alert feed is.
-    """
     scanner = os.path.join(path, "scripts", "scan-secrets.mjs")
     if not os.path.exists(scanner):
         return {"ran": False, "why": "this repository does not carry scripts/scan-secrets.mjs"}
 
-    # The tip has not moved, so neither has the answer. The scan is cheap but it
-    # is not free, and this runs once a minute for as long as the box is up.
-    # Checked before node is looked for on purpose: whether node happens to be
-    # installed this minute has no bearing on what a scan of this exact commit
-    # already found.
     if isinstance(was, dict) and was.get("head") == head and was.get("ran"):
         return was
 
@@ -1257,20 +903,11 @@ def local_scan(path, head, was):
         "lines": answer.get("lines"),
         "allowlisted": answer.get("allowlistedCount") or 0,
         "clean": len(findings) == 0,
-        # The findings carry a fingerprint and a place, never the value. This
-        # file is world-readable by the admin group; a list of real credentials
-        # in it would be a worse leak than the one it is reporting.
         "findings": findings[:MAX_ALERTS],
     }
 
 
 def scanner_rules(path, was):
-    """What the scanner in this checkout knows how to spot.
-
-    Asked of the scanner rather than listed here, so the panel names what
-    actually shipped. A list kept in two places is a list that disagrees with
-    itself the first time somebody adds a rule.
-    """
     scanner = os.path.join(path, "scripts", "scan-secrets.mjs")
     node = shutil.which("node")
     if not os.path.exists(scanner) or not node:
@@ -1296,14 +933,6 @@ def count_allowlist(path):
 
 
 def guards(path, head, known):
-    """What is actually standing between a credential and this box.
-
-    Every line here is checked rather than assumed, because the interesting
-    failure is a guard that is present and switched off. The one thing this
-    cannot see is whether the people who push have enabled the hook in their own
-    clones — the hook runs there, not here — so it reports what the repository
-    ships and says plainly that enabling it is per-clone.
-    """
     hook = os.path.join(path, ".githooks", "pre-push")
     scanner = os.path.join(path, "scripts", "scan-secrets.mjs")
     dist = os.path.join(path, "scripts", "check-dist-secrets.mjs")
@@ -1313,9 +942,6 @@ def guards(path, head, known):
         "prePush": {
             "shipped": os.path.exists(hook),
             "executable": os.path.exists(hook) and os.access(hook, os.X_OK),
-            # True only of this box's own checkout, which never pushes. It is
-            # reported because it is checkable and because a developer reading
-            # the panel can compare it against their own clone.
             "hooksPath": hooks_path or None,
             "enabledHere": hooks_path == ".githooks",
         },
@@ -1325,7 +951,6 @@ def guards(path, head, known):
             "rules": scanner_rules(path, ((known or {}).get("guards") or {}).get("scanner", {}).get("rules")),
         },
         "build": {
-            # Runs at postbuild, so nothing reaches the web root without it.
             "distCheck": os.path.exists(dist),
         },
         "scan": local_scan(path, head, (known or {}).get("scan")),
@@ -1361,18 +986,6 @@ def detail_for(api, repo, cached):
     }
 
 
-# ------------------------------------------------------------------- people
-
-# Who can reach the code, and how.
-#
-# Two different things wear the word "permission" here and they are kept apart
-# on purpose. An organisation role — owner or member — is about the
-# organisation. A repository role — read through admin — is about one
-# repository. Somebody can hold a repository at admin without being an owner,
-# and an owner holds every repository whether or not they were ever added to
-# one. The second case is the one that surprises people, so access records where
-# it came from and not only what it is.
-
 
 def person(entry, **extra):
     if not isinstance(entry, dict) or not entry.get("login"):
@@ -1399,12 +1012,6 @@ def people_list(payload, **extra):
 
 
 def actor_login(api, cached):
-    """The account the token belongs to.
-
-    Not decoration. It is the one account a queued change is never allowed to
-    touch: revoking its own admin would lock this box out of the repository, and
-    out of the deploy that would have put it back.
-    """
     payload, state = api.get("/user", bool(cached))
     if state != "ok" or not isinstance(payload, dict):
         return cached
@@ -1412,18 +1019,6 @@ def actor_login(api, cached):
 
 
 def repo_access(api, repo, cached):
-    """Everyone who can reach one repository, and whether they were added to it.
-
-    Two questions, so two requests. `all` is who has access by any route;
-    `direct` is who was added to this repository specifically. Only the second
-    kind can be changed from here — an owner's access comes from the
-    organisation, and taking it away means changing their organisation role,
-    which is a different decision made somewhere else.
-    """
-    # isinstance rather than a truth test, throughout. An empty list is an
-    # answer — "nobody has been added to this repository" — and treating it as
-    # nothing known means asking again in full every tick for the state these
-    # repositories are actually in.
     held = isinstance(cached, list)
     everyone, state = api.get(
         "/repos/%s/%s/collaborators?affiliation=all&per_page=100" % (ORG, repo), held
@@ -1445,9 +1040,6 @@ def repo_access(api, repo, cached):
     if direct_state == "ok" and isinstance(added, list):
         direct = set(e.get("login") for e in added if isinstance(e, dict))
     else:
-        # Carried from last time rather than guessed at. Guessing "not direct"
-        # greys out a control that does work; guessing "direct" offers one that
-        # cannot.
         direct = set(
             e.get("login") for e in (cached or []) if isinstance(e, dict) and e.get("direct")
         )
@@ -1465,12 +1057,6 @@ def repo_access(api, repo, cached):
 
 
 def repo_invites(api, repo, cached):
-    """Invitations sent for this repository that nobody has accepted yet.
-
-    Worth a list of their own. An invitation is access that has been decided on
-    and has not happened, and one that has sat unanswered for weeks usually
-    means it went to the wrong person.
-    """
     payload, state = api.get(
         "/repos/%s/%s/invitations?per_page=100" % (ORG, repo), isinstance(cached, list)
     )
@@ -1487,9 +1073,6 @@ def repo_invites(api, repo, cached):
                 "id": entry.get("id"),
                 "login": invitee.get("login"),
                 "avatar": invitee.get("avatar_url"),
-                # GitHub calls this "permissions" on an invitation and
-                # "role_name" on a collaborator, and spells the same level
-                # differently in each.
                 "permission": entry.get("permissions"),
                 "created": entry.get("created_at"),
                 "expired": bool(entry.get("expired")),
@@ -1501,12 +1084,6 @@ def repo_invites(api, repo, cached):
 
 
 def org_people(api, cached):
-    """The organisation itself: its members, its settings, its open invitations.
-
-    Members come back from two role-filtered requests rather than one list plus
-    a membership lookup per person. That is two requests however many people
-    there are, which matters less today than it will later.
-    """
     held = cached if isinstance(cached, dict) else {}
     out = dict(held)
 
@@ -1521,8 +1098,6 @@ def org_people(api, cached):
             "plan": plan.get("name"),
             "seatsFilled": plan.get("filled_seats"),
             "seats": plan.get("seats"),
-            # The three settings that decide what a new member gets without
-            # anybody deciding it again.
             "twoFactorRequired": bool(facts.get("two_factor_requirement_enabled")),
             "defaultPermission": facts.get("default_repository_permission"),
             "membersCanCreateRepos": facts.get("members_can_create_repositories"),
@@ -1541,8 +1116,6 @@ def org_people(api, cached):
         if state != "ok":
             continue
         answered = True
-        # GitHub's word for it is "admin". Everywhere a person reads it, it is
-        # "owner", so it is translated once here rather than in three places.
         for row in people_list(payload, role="owner" if role == "admin" else "member") or []:
             if row["login"] not in seen:
                 seen.add(row["login"])
@@ -1580,8 +1153,6 @@ def org_people(api, cached):
     return out
 
 
-# ------------------------------------------------------------- carrying it out
-
 def read_intent(path):
     try:
         with open(path, "r", encoding="utf-8") as handle:
@@ -1596,13 +1167,6 @@ def refuse(intent, why):
 
 
 def check_intent(intent, repos, actor):
-    """Whether a queued change is one we are willing to make.
-
-    Checked here in full, and not because the panel did not check it — it did.
-    The panel is not what this trusts. The queue is a directory written by a
-    service running as another account; if that account were ever taken, this
-    function is the whole of what stands between it and handing somebody admin.
-    """
     if intent.get("action") not in ("grant", "revoke", "uninvite"):
         return "not something this knows how to do"
 
@@ -1620,8 +1184,6 @@ def check_intent(intent, repos, actor):
     if not isinstance(login, str) or not LOGIN.match(login):
         return "%r is not a GitHub login" % (login,)
     if actor and login.lower() == actor.lower():
-        # The rail that matters. Revoking this account's own admin locks the box
-        # out of the repository, and out of the deploy that would undo it.
         return "that is the account this box deploys with — change it on GitHub if you mean it"
 
     if intent["action"] == "grant" and intent.get("permission") not in ROLES:
@@ -1639,9 +1201,6 @@ def carry_out(api, intent):
             "/repos/%s/%s/collaborators/%s" % (ORG, repo, intent["login"]),
             {"permission": intent["permission"]},
         )
-        # 201 with a body means an invitation was created and is waiting to be
-        # accepted. 204 and no body means they already had access and only the
-        # level moved. Worth telling apart: one of them is not access yet.
         result = None
         if error is None:
             result = "invited" if isinstance(payload, dict) and payload.get("id") else "changed"
@@ -1664,14 +1223,6 @@ def carry_out(api, intent):
 
 
 def drain_queue(api, repos, actor, previous):
-    """Carry out what the panel has asked for, then record what happened.
-
-    Every intent leaves the queue whether it worked or not. A failure is not
-    retried on its own: a login that does not exist, or a permission GitHub will
-    not take, fails identically every minute, and a loop nobody can see is worse
-    than a refusal somebody can read. What happened goes into the snapshot
-    instead, where the person who asked for it will be looking.
-    """
     done = []
     try:
         names = sorted(name for name in os.listdir(QUEUE_DIR) if name.endswith(".json"))
@@ -1698,19 +1249,7 @@ def drain_queue(api, repos, actor, previous):
     return (list(reversed(done)) + kept)[:MAX_ACTION_LOG]
 
 
-# ---------------------------------------------------------------- assembling
-
-# ------------------------------------------------------- which commit did it
-
 def read_jsonl(path, limit):
-    """The last `limit` records of a JSON-lines file, oldest first.
-
-    Read whole and sliced rather than seeked from the end: both files are
-    written by replacing them atomically, so what is open here is a consistent
-    snapshot for as long as it is held, and neither is large enough for the
-    difference to matter. An unreadable line is dropped rather than fatal —
-    losing one measurement is not a reason to leave the panel with none.
-    """
     out = []
     try:
         with open(path, "r", encoding="utf-8") as handle:
@@ -1730,12 +1269,6 @@ def read_jsonl(path, limit):
 
 
 def middle(values):
-    """The median, because one slow run should not redraw a release.
-
-    A measurement taken while the box was doing something else is not a wrong
-    reading — the page really did take that long — but it is not the release's
-    doing either, and a mean lets one of them speak for all of them.
-    """
     ordered = sorted(values)
     if not ordered:
         return None
@@ -1759,12 +1292,6 @@ def pull_from_subject(subject):
 
 
 def measured_pages(runs):
-    """Every route these runs touched, each metric the middle of what was seen.
-
-    Kept per route rather than averaged into one number for the site. "The site
-    got slower" is not something anybody can act on; "/ got slower and /work did
-    not" points at what changed.
-    """
     by_path = {}
     for run in runs:
         for page in run.get("pages") or []:
@@ -1788,32 +1315,15 @@ def measured_pages(runs):
     return out
 
 
-# How many measurements each side of a comparison needs before the panel will
-# put a name to it. One pass against one pass is not a comparison: six passes of
-# one unchanged build measured 52, 62, 117, 131, 194 and 1534ms of long tasks on
-# /, and the deploy takes its pass in the busiest minute the box has. A move
-# under this is still shown — it is what there is to see — but as something
-# measured once, not as something a commit did.
 PERF_CONFIRM_RUNS = 2
 
 
 def run_samples(run):
-    """How many passes one history line is the middle of. Older lines are one."""
     count = run.get("samples")
     return count if isinstance(count, int) and count > 0 else 1
 
 
 def metric_moves(now, before, now_runs=None, before_runs=None):
-    """What moved between two releases, per route and metric, both directions.
-
-    Improvements are kept alongside regressions. The question the panel exists
-    to answer cuts both ways — a release that was supposed to make the site
-    faster and did nothing is worth seeing, and so is the fix that worked.
-
-    Each move carries how many measurements stand behind either end of it, and
-    whether that is enough to say a commit did it. The numbers are the same
-    either way; what changes is whether the panel is willing to name somebody.
-    """
     was = {page["path"]: page for page in before}
     out = []
     for page in now:
@@ -1824,11 +1334,6 @@ def metric_moves(now, before, now_runs=None, before_runs=None):
             start, end = previous.get(name), page.get(name)
             if not isinstance(start, (int, float)) or not isinstance(end, (int, float)):
                 continue
-            # A zero is a real reading for the metrics that count something the
-            # page may simply not have done — blocking time, bytes past a
-            # budget. For a paint timing it means the measurement did not
-            # happen, and reporting that as an infinite improvement would be a
-            # lie in the flattering direction.
             if name in ("lcp", "fcp", "ttfb") and (not start or not end):
                 continue
             change = end - start
@@ -1843,15 +1348,6 @@ def metric_moves(now, before, now_runs=None, before_runs=None):
                     "from": round_metric(name, start),
                     "to": round_metric(name, end),
                     "delta": round_metric(name, change),
-                    # How bad it is, in noise floors, so that 340 of
-                    # milliseconds and 0.05 of layout shift can be compared at
-                    # all — sorting on the raw number would put every
-                    # millisecond metric above every CLS one for ever.
-                    #
-                    # Worked out here and carried rather than left for the panel
-                    # to derive, so that the order of a release's own list and
-                    # the headline picked out across all of them cannot end up
-                    # disagreeing about which was the worst thing that happened.
                     "weight": round(change / (PERF_FLOOR.get(name) or 1), 2),
                     "runs": {"now": now_runs, "before": before_runs},
                     "confirmed": (
@@ -1862,29 +1358,11 @@ def metric_moves(now, before, now_runs=None, before_runs=None):
                     ),
                 }
             )
-    # Regressions first, worst of them at the front, then the improvements with
-    # the biggest of those at the front. Sorting on the signed weight alone put
-    # the *smallest* improvement first on a release that only made things
-    # better, which reads as the least interesting thing it did.
     out.sort(key=lambda move: (move["weight"] <= 0, -abs(move["weight"])))
     return out
 
 
 def site_performance(repositories):
-    """Join what was measured to the commit that was live when it was measured.
-
-    Three files and none of them alone can answer the question. The monitor
-    records numbers and the release that was serving. The deploy records which
-    commit each release is. This process is already holding the commits and the
-    pull requests they arrived in. Nothing new is asked of GitHub for any of it.
-
-    What comes out is a release at a time, newest measurement first, each with
-    the middle of every reading taken while it was live and what that moved
-    against the release measured before it. A release with no measurement is not
-    listed: it was deployed and replaced inside a measurement's reach, and
-    inventing a reading for it would put a commit's name against numbers that
-    belong to its neighbour.
-    """
     runs = read_jsonl(PERF_HISTORY, MAX_PERF_RUNS)
     if not runs:
         return {
@@ -1893,10 +1371,6 @@ def site_performance(repositories):
             "note": "no measurement has been taken on this box yet",
         }
 
-    # One profile at a time. A throttled run against an unthrottled one compares
-    # the emulation rather than the code, and the difference between them is far
-    # larger than any regression worth finding. The newest run's profile wins,
-    # because that is the one the timer is set to.
     profile = runs[-1].get("profile")
     runs = [run for run in runs if run.get("profile") == profile]
 
@@ -1912,16 +1386,10 @@ def site_performance(repositories):
         release = run.get("release")
         name = release.get("release") if isinstance(release, dict) else None
         if not isinstance(name, str) or not name:
-            # Measured before any of this existed, or while the symlink could
-            # not be read. Counted so the panel can say why its history is
-            # shorter than the monitor's.
             dateless += 1
             continue
         by_release.setdefault(name, []).append(run)
 
-    # Newest last measurement first. Not by release name, which is the time it
-    # was built: a rollback re-points the symlink at an older release, and it is
-    # what is serving now that belongs at the top.
     order = sorted(
         by_release,
         key=lambda name: max(str(run.get("at") or "") for run in by_release[name]),
@@ -1960,20 +1428,11 @@ def site_performance(repositories):
             "login": (commit or {}).get("login"),
             "committed": recorded.get("committed"),
             "commitUrl": (commit or {}).get("url"),
-            # A release built from a checkout with uncommitted changes in it is
-            # not the commit it names. Carried through so the panel can decline
-            # to blame anybody for it rather than blaming the wrong person.
             "dirty": bool(recorded.get("dirty")),
-            # Passes, not history lines: the monitor writes one line for a run
-            # it measured several times and says how many in `samples`, so
-            # counting lines would undercount exactly the runs that were taken
-            # carefully enough to be worth trusting.
             "runs": sum(run_samples(run) for run in group),
             "first": group[0].get("at"),
             "last": group[-1].get("at"),
             "pages": measured_pages(group),
-            # The newest run's verdict, not every run's: the older ones were
-            # answering about a site that has since been redeployed.
             "problems": [p for p in (group[-1].get("problems") or []) if isinstance(p, str)],
         }
         if pull is not None:
@@ -1985,14 +1444,9 @@ def site_performance(repositories):
                 "url": pull.get("url"),
             }
         elif number is not None:
-            # The subject names a pull request the collector's window no longer
-            # reaches back to. The number is still the useful half.
             entry["pull"] = {"number": number}
         entries.append(entry)
 
-    # The chain, walked after the fact: each release against the one measured
-    # before it. Done here rather than in the loop because "the previous one"
-    # only means anything once the order is settled.
     for index, entry in enumerate(entries):
         older = entries[index + 1] if index + 1 < len(entries) else None
         if older is None:
@@ -2037,9 +1491,6 @@ def inspect(name, path, api, known, want_detail):
 
     head = git(path, "rev-parse", "HEAD")
     if head is None:
-        # No checkout, or not a repository. Worth reporting rather than
-        # dropping: a repository that should be on this box and is not is
-        # exactly the kind of thing this panel exists to show.
         entry.update(
             {
                 "present": False,
@@ -2073,20 +1524,12 @@ def inspect(name, path, api, known, want_detail):
                 "green": verdict == "completed/success",
                 "synced": bool(remote) and head == remote,
                 "head": commit_facts(path, "HEAD"),
-                # Local, so it is worked out every tick rather than only on a
-                # detail round: it costs a few stats and a scan that skips
-                # itself when the tip has not moved.
                 "guards": guards(path, head, known),
             }
         )
         if remote and remote != head:
             entry["tip"] = commit_facts(path, "origin/%s" % BRANCH)
 
-    # Everything GitHub answered for last time. Two jobs, and the second is the
-    # one that bites: it is what a conditional request falls back on, so a key
-    # missing from this list is re-asked in full every tick and thrown away
-    # whenever GitHub cannot be reached. Anything detail_for returns belongs
-    # here.
     carried = {
         key: known[key]
         for key in (
@@ -2131,8 +1574,6 @@ def write_atomic(path, payload):
         try:
             shutil.chown(handle.name, group=GROUP)
         except (LookupError, PermissionError, OSError):
-            # No such group on this box — better readable than unreadable, the
-            # snapshot holds no secret.
             os.chmod(handle.name, 0o644)
         os.replace(handle.name, path)
     except BaseException:
@@ -2174,11 +1615,6 @@ def main():
     held_people = previous.get("people") if isinstance(previous.get("people"), dict) else {}
     actor = actor_login(api, held_people.get("actor")) if auth else held_people.get("actor")
 
-    # Whatever the panel asked for is carried out before anything is read, so
-    # the snapshot written at the end of this tick shows the result rather than
-    # the state it replaced. Having carried something out is also reason enough
-    # to ask GitHub everything again however recently it was last asked: the
-    # person who asked for it is watching the page.
     actions = held_people.get("actions")
     carried = 0
     if auth:
@@ -2208,10 +1644,6 @@ def main():
         "etags": api.etags,
     }
 
-    # Read from disk rather than asked of GitHub, so it costs nothing off the
-    # rate limit and is redone every tick regardless of whether the detail pass
-    # ran. Never fatal: a box with no performance monitor on it still has three
-    # repositories worth reporting.
     try:
         payload["performance"] = site_performance(repositories)
     except (OSError, ValueError, TypeError, KeyError) as failure:
@@ -2220,11 +1652,6 @@ def main():
             "releases": [],
             "note": "could not read the performance history: %s" % failure,
         }
-    # Only GitHub being out of reach holds this stamp back, and only because it
-    # is the one case where part of this snapshot really did come from an
-    # earlier look. A refusal is an answer: it arrived just now, and pinning the
-    # stamp for it left the panel reporting a ten-minute-old look every minute,
-    # for ever, on a box that was asking GitHub and being told no on schedule.
     payload["detail"] = now() if want_detail and not api.unreachable else previous.get("detail")
     if api.remaining is not None:
         payload["rate"] = {"remaining": api.remaining, "limit": api.limit, "reset": api.reset}
@@ -2233,9 +1660,6 @@ def main():
     elif api.unreachable:
         payload["note"] = "GitHub could not be reached in full; some of this may be from an earlier look"
     elif api.refused:
-        # Everything asked for was answered; some of the answers were no, and
-        # not a no the caller was expecting. Named rather than counted, because
-        # one path refused is a thing to go and look at and "3 requests" is not.
         paths = ", ".join("%s (%d)" % (path, code) for path, code in api.refused[:3])
         payload["note"] = "GitHub refused %d request(s) this look: %s%s" % (
             len(api.refused), paths, " …" if len(api.refused) > 3 else ""

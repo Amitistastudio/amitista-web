@@ -31,12 +31,6 @@ SERVICES = [
     ("amitista-shield-demo.service", "Shield evaluator"),
     ("amitista-shield-feed.service", "Shield rules feed"),
     ("amitista-ai.service", "AI relay"),
-    # amitista-bot.service — the old role-less unit — was stopped and disabled on
-    # 26 Aug 2026: it ran every module on the same token as the Support bot, so it
-    # was a second gateway session for one identity. Watching a retired unit means
-    # a permanent "Discord bot has failed" in the panel, because a unit that was
-    # SIGKILLed on its way out stays in `failed` until someone resets it. The three
-    # role units below cover its whole module set; see runbooks/bot-restart.sh.
     ("amitista-bot-security.service", "Discord bot — Security"),
     ("amitista-bot-support.service", "Discord bot — Support"),
     ("amitista-bot-website.service", "Discord bot — Website"),
@@ -215,23 +209,6 @@ def read_timers():
         )
     return out
 
-# The reference rows in the developer group of the panel. This list used to be
-# written out by hand in the API, which is how it came to claim /root/bot still
-# existed for a day after the bot moved to /opt. Every row is resolved against
-# the box on each run instead, so a row that stops being true reads as missing
-# rather than reading as fact.
-#
-# check says how to resolve the row:
-#   dir  file  log  — lstat it, and carry the size or the entry count
-#   link            — read the symlink and check what it points at is there
-#   glob            — count the matches and take the newest
-#   repo            — branch, last commit and whether the tree is dirty
-#   releases        — how many are kept and which one is live
-#   script          — has to exist and be executable
-#   install         — compares a source directory against the installed copy
-#   none            — a command with nothing on disk to verify
-# path overrides value when the row prints a command rather than a path, and
-# unit/units name the services worth showing next to where they run from.
 REFERENCE = [
     (
         "Where the code lives",
@@ -488,8 +465,6 @@ def git_facts(path):
             return None
         return result.stdout if result.returncode == 0 else None
 
-    # --porcelain=v1 --branch answers both questions in one call: the first line
-    # carries the branch, every line after it is a file the tree is dirty by.
     status = run(["status", "--porcelain=v1", "--branch"])
     if status is None:
         return None
@@ -519,11 +494,6 @@ def git_facts(path):
 UNREADABLE = (errno.EACCES, errno.EPERM)
 
 def unreachable(error):
-    # This unit is sandboxed, and ProtectHome=yes turns /root into an empty
-    # directory it cannot traverse. A row under there is not gone — it simply
-    # is not visible from in here, and saying "missing" would be a worse lie
-    # than the hand-written list this replaced. EACCES is reported as its own
-    # state so the panel can say which it is.
     return getattr(error, "errno", None) in UNREADABLE
 
 def hidden_row(out, note="not visible from the collector's sandbox"):
@@ -542,10 +512,6 @@ def file_digest(path):
         return None
 
 def install_drift(source, installed):
-    # "Is what I edited actually what is running" is the question this row is
-    # really asked, and it is the one the panel could never answer before. Only
-    # the modules the service loads are compared — tests and one-shot migrations
-    # are not part of the install, so drift in one of those is not news here.
     try:
         names = sorted(
             name for name in os.listdir(source)
@@ -914,12 +880,6 @@ def read_api_stats():
                 slot["notFound"] += 1
                 missing[request_path] = missing.get(request_path, 0) + 1
             elif status < 400:
-                # Counted for every path, not only the ones that 404, because
-                # which paths will turn up in `missing` is not known until the
-                # whole window has been read. A path in both is a route that
-                # works and answers 404 on purpose — /boards/face does it for
-                # somebody who has not set a picture — and the panel needs to
-                # tell that apart from a route we actually broke.
                 answered[request_path] = answered.get(request_path, 0) + 1
 
             visits.observe(
@@ -1849,18 +1809,11 @@ PERF_STATE = os.environ.get("AMITISTA_PERF_STATE", "/var/lib/amitista/perf")
 PERF_HISTORY = os.path.join(PERF_STATE, "history.jsonl")
 PERF_BASELINE = os.path.join(PERF_STATE, "baseline.json")
 
-# Mirrors BUDGETS in deploy/perf-monitor/perf-monitor.mjs. The monitor stays the
-# authority on whether a run passed — its own problems list is what the panel
-# shows — but the meters need the numbers to draw a bar against, and a budget
-# the panel cannot see is a bar with no end.
 PERF_BUDGETS = {
     "broadband": {"lcp": 1200, "fcp": 900, "ttfb": 400, "cls": 0.1, "longTaskMs": 400, "bytes": 400000},
     "slow-4g-4x-cpu": {"lcp": 2500, "fcp": 1800, "ttfb": 900, "cls": 0.1, "longTaskMs": 3000, "bytes": 400000},
 }
 
-# The table shows a run in full; the trend only charts what can be plotted
-# against a budget line, so bytes and long tasks are carried for the latest run
-# and left out of the series.
 PERF_FULL = ("ttfb", "fcp", "lcp", "cls", "longTaskMs", "bytes")
 PERF_TRENDED = ("ttfb", "fcp", "lcp", "cls")
 PERF_KEEP = 24
@@ -1875,9 +1828,6 @@ def parse_iso(value):
         return None
 
 def release_at(releases, moment):
-    # Which release was serving when the run happened. Only the releases still on
-    # disk can be named — the deploy prunes past five — so an older run simply
-    # carries no release rather than a guess.
     when = parse_iso(moment)
     if when is None:
         return None
@@ -1899,8 +1849,6 @@ def perf_page(page, keys):
     return out
 
 def over_budget(page, budget):
-    # The same comparisons the monitor makes, so the panel and the alert it sent
-    # to Discord never disagree about whether a page is inside budget.
     if not budget:
         return []
     out = []
@@ -1949,8 +1897,6 @@ def read_perf(releases):
         entry["over"] = over_budget(entry, budget)
         pages.append(entry)
 
-    # Only runs of the same profile can share a chart: a slow-4g run next to a
-    # broadband one on one axis would invent a regression that never happened.
     same = [run for run in runs if run.get("profile") == profile][-PERF_KEEP:]
     series = []
     for run in same:
@@ -2056,11 +2002,6 @@ def main():
     write_atomic(out_path, payload, owner)
     write_atomic(history_path, merge_history(history_path, buckets), owner)
 
-    # The perf monitor keeps its own state under /var/lib/amitista/perf, which
-    # the admin API cannot read: it is 0750 root:root and the API runs as
-    # amitista-admin. Projecting it here is the only way the panel sees it, and
-    # it goes in its own file rather than the overview so the dashboard payload
-    # does not carry a chart nothing on it draws.
     perf = read_perf(releases)
     if perf is not None:
         write_atomic(perf_path, perf, owner)

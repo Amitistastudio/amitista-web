@@ -129,13 +129,6 @@ class GoogleVault:
 
 class LocalVault:
 
-    # AES-256-GCM from `cryptography`, keyed from a root-only file that lives
-    # outside the database it protects. This is the fallback for when there is no
-    # Cloud KMS project: it defends the at-rest and backup cases, where the data
-    # travels without the key. It does NOT defend a live host compromise the way
-    # GoogleVault does, because anything that can read the key file can decrypt.
-    # Prefer GoogleVault once a GCP project exists.
-
     name = "local"
 
     def __init__(self, path=None):
@@ -194,15 +187,9 @@ class LocalVault:
                 % (len(raw), SEAL_LIMIT),
                 500,
             )
-        # A fresh random nonce per seal. Reusing one under the same key would
-        # break GCM's confidentiality and its authentication both.
         nonce = os.urandom(LOCAL_NONCE_BYTES)
         cipher = self._aesgcm(self.keys[self.active])
-        # The purpose is bound in as additional authenticated data, so a sealed
-        # users blob cannot be moved into the tokens slot and still open.
         body = cipher.encrypt(nonce, raw, context(purpose))
-        # The key id travels with the ciphertext so a rotated-away key can still
-        # be identified and used to open older blobs.
         marker = self.active.encode("utf-8")
         return base64.b64encode(bytes([len(marker)]) + marker + nonce + body).decode("ascii")
 
@@ -225,8 +212,6 @@ class LocalVault:
 
         material = self.keys.get(key_id)
         if material is None:
-            # Fail closed and name the key rather than guessing: a missing key
-            # means the key file was rotated without keeping the old version.
             raise VaultError(
                 "The sealed store was written with key %r, which is not in the key file." % key_id,
                 500,
@@ -238,13 +223,9 @@ class LocalVault:
         try:
             return cipher.decrypt(nonce, body, context(purpose))
         except Exception:
-            # GCM authentication failed: wrong key, wrong purpose, or the blob
-            # was altered. Never fall back to returning the ciphertext.
             raise VaultError("The sealed store failed authentication and was not opened.", 500)
 
     def secret(self, name, version="latest"):
-        # Secret Manager has no local equivalent. Secrets stay in the root-only
-        # env files; saying so is better than pretending to serve them.
         raise VaultError("The local vault stores no secrets — use the env files.", 500)
 
 

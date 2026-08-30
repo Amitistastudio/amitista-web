@@ -530,10 +530,6 @@ check("claiming without a linked Discord is refused", status == 403)
 status, raw = request("POST", "/support/queue/reply", {"id": CHANNEL_ID, "body": "hello"}, cookie=desk)
 check("answering needs no link", status == 200)
 
-# Project stages are per-ticket and defined bot-side, so the panel cannot know
-# which keys are real and delegates that to the bot. What it can still refuse on
-# its own is a value of the wrong shape, and it must, so that garbage never
-# reaches a bot call at all.
 calls_before = len([1 for route, _ in calls if route == "/support/all/status"])
 status, raw = request("POST", "/support/queue/status", {"id": CHANNEL_ID, "status": "Sandwich!"}, cookie=owner)
 check("a malformed status is refused before the bot", status == 400)

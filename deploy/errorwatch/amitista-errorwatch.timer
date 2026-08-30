@@ -2,9 +2,6 @@
 Description=Count errors every few minutes, and report what a deploy did to them
 
 [Timer]
-# Five minutes is the compromise: a deploy's fifteen-minute window is only
-# reported once it has fully elapsed, so a finer tick would not report anything
-# sooner, and a coarser one would let a spike sit unmentioned.
 OnBootSec=3min
 OnUnitActiveSec=5min
 AccuracySec=15s

@@ -19,11 +19,6 @@ import {
 } from '../lib/exchangeFees';
 import { relativeTime } from '../lib/status';
 
-/**
- * The figures the page falls back to when no live snapshot can be read —
- * a real measurement, kept in the markup so the page is never blank and so a
- * crawler that runs no JavaScript still sees honest numbers.
- */
 const FALLBACK = {
   measuredAt: '2026-08-23T23:12:31.153Z',
   currency: 'EUR',
@@ -41,7 +36,6 @@ const FALLBACK = {
 
 const AMOUNTS = [25, 50, 100, 250, 500, 1000, 2500];
 
-/** The amount the board and the "cheapest" badge are judged at. */
 const BENCHMARK = 250;
 
 function cheapestPair(pairs) {
@@ -79,10 +73,6 @@ function LiveDot({ live }) {
 function Checker({ data, currency }) {
   const [pairIndex, setPairIndex] = React.useState(0);
   const [amount, setAmount] = React.useState(250);
-  // The breakdown bar sizes its two segments with a style attribute, and the
-  // site's CSP (style-src 'self') blocks those — so the prerender must not
-  // emit one. Widths are applied only once the client has mounted; before
-  // that the track renders empty, which costs a decoration, not information.
   const [mounted, setMounted] = React.useState(false);
   React.useEffect(() => setMounted(true), []);
 
@@ -342,8 +332,6 @@ export default function ExchangeFeesPage() {
       setData(result);
       setState(READY);
     } else {
-      // Keep whatever is on screen. The baked-in measurement is real, just
-      // older — a blank panel would be a worse answer than a dated one.
       setState(UNAVAILABLE);
     }
     setNow(Date.now());
@@ -361,9 +349,6 @@ export default function ExchangeFeesPage() {
     };
   }, [load]);
 
-  // Only once the client has actually looked. Rendered during prerender this
-  // would bake "23 minutes ago" into the markup and it would still say that
-  // tomorrow, which is worse than saying nothing.
   const measuredAgo = state === LOADING ? null : relativeTime(data.measuredAt, now);
   const live = state === READY;
   const cheapest = cheapestPair(data.pairs);

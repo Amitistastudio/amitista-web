@@ -16,17 +16,9 @@ SERVER_TIMEOUT_MS = 5000
 MAX_WRITE_ATTEMPTS = 8
 MISSING = -1
 
-# A socket that never answers is worse than one that fails: without this a
-# half-open connection parks a request thread until the OS gives up.
 SOCKET_TIMEOUT_MS = 10000
-# A ceiling on server-side execution. Without it one pathological query can hold
-# a connection, and the pool, for as long as the server is willing to run it.
 MAX_TIME_MS = 5000
-# The admin API is a small threaded server; an unbounded pool lets a burst of
-# requests open far more connections than mongod should have to carry.
 MAX_POOL_SIZE = 20
-# The JSON log keeps a bounded file on disk; the Mongo one needs the same
-# ceiling applied to the read side.
 MAX_TAIL = 1000
 
 DB_FACTORY = None
@@ -72,15 +64,9 @@ def _connect():
         "socketTimeoutMS": SOCKET_TIMEOUT_MS,
         "maxPoolSize": MAX_POOL_SIZE,
         "tz_aware": False,
-        # An account store must not silently lose a write that the caller was
-        # told succeeded, so acknowledge from a majority and let retryable
-        # writes cover a stepdown rather than surfacing it as a failed save.
         "retryWrites": True,
         "w": "majority",
     }
-    # TLS is opt-in because the supported deployment is loopback-only, where it
-    # buys nothing. The moment mongod moves to another host this must be set:
-    # ADMIN_MONGO_TLS=1, with ADMIN_MONGO_CA pointing at the CA bundle.
     if _flag("ADMIN_MONGO_TLS"):
         options["tls"] = True
         authority = os.environ.get(CA_ENV, "").strip()
@@ -96,9 +82,6 @@ def _flag(name):
 
 
 def _key(name):
-    # Every _id this module uses is an internal constant, but coercing to str
-    # means a name that ever became caller-controlled still lands as a literal
-    # rather than as a dict pymongo would read as query operators.
     return {"_id": str(name)}
 
 
@@ -281,9 +264,6 @@ class MongoLog:
             return []
         if count <= 0:
             return []
-        # The audit log is the one collection a signed-in reader can ask for by
-        # size. Capping it here means a large ?limit cannot turn a panel request
-        # into a full-collection scan held in memory.
         count = min(count, MAX_TAIL)
         try:
             cursor = (

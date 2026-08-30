@@ -30,14 +30,6 @@ function Mention({ id }) {
   return <span className="text-purple-300/90 tabular-nums">@{id}</span>;
 }
 
-/**
- * One entry.
- *
- * Collapsed to a single line by default and opened on click. A log where every
- * row is four lines tall shows eight events on a screen, which is the wrong
- * shape for the question people actually bring to one — "what happened, in
- * order, around then".
- */
 function Entry({ entry, open, onToggle }) {
   const tone = C2C_SEVERITY_TONE[entry.severity] ?? 'neutral';
   const detail = entry.detail || '';
@@ -171,8 +163,6 @@ export default function LogsPanel() {
     load(false);
   }, [load]);
 
-  // Live, like the support queue. A log page that is stale by the time it is
-  // read is a log page people refresh by hand and then stop trusting.
   React.useEffect(() => {
     const timer = setInterval(() => load(true), REFRESH_MS);
     return () => clearInterval(timer);
@@ -206,8 +196,6 @@ export default function LogsPanel() {
   const channels = categories.flatMap((category) => category.channels ?? []);
   const wired = channels.filter((entry) => entry.channelId).length;
   const guilds = summary.guilds ?? [];
-  // Which server the channels actually landed in, once they exist. The bot is
-  // in several, and "they were created" is not an answer to "created where".
   const homeId = channels.find((entry) => entry.guildId)?.guildId ?? null;
   const home = guilds.find((guild) => guild.id === homeId)?.name ?? null;
 

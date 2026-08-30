@@ -1,45 +1,5 @@
 #!/usr/bin/env python3
 
-"""Count what goes wrong on this box, and say whether a deploy made it worse.
-
-Nothing here acts. It reads, it counts, it posts a card into Discord and it
-stops — no restart, no rollback, no ban. A deploy that doubled the 500s is
-reported in the same words as a quiet afternoon, and what to do about it is a
-person's decision.
-
-It runs as root because that is the only account that can see all of it: nginx
-writes its logs to the `adm` group, the Shield and API feeds belong to
-`amitista-admin`, and the journal belongs to root. The bot cannot read any of
-those (it holds `adm` and nothing else), which is why this exists as a separate
-process that hands the bot finished numbers over the loopback rather than the
-bot growing the privilege to gather them.
-
-Six sources, counted into one-minute buckets so any window can be summed after
-the fact:
-
-    nginx5xx     a 5xx in the site's access log — the site itself failing
-    nginxError   nginx's own error log, at error level or worse
-    app          the amitista services' own error lines in the journal
-    nginx4xx     4xx: scanners move this and nothing else
-    rateLimit    requests nginx turned away, and 429s
-    shield       Shield flags on the API
-    api          the API gateway refusing a key
-    csp          Content-Security-Policy violations reported by browsers
-
-Only the first three are "errors" — the site or a service failing, ours to fix,
-and what a release is judged against. The rest is the internet arriving. It is
-counted, shown beside a release for context and summarised into the website's
-own channel, but it never inflates an error rate and never raises a spike.
-
-Three kinds of card:
-
-    release   a deploy has settled, so here is before against after
-    spike     errors jumped without a deploy to blame
-    digest    every few hours, what the period held, quiet or not
-
-    errorwatch.py [--once] [--dry-run] [--digest] [--state DIR]
-"""
-
 import argparse
 import json
 import os
@@ -77,16 +37,10 @@ UNITS = [
     "amitista-shield-demo",
 ]
 
-# What a window is measured over, and how long after a deploy to start looking.
-# The grace covers the restarts the deploy itself causes: a service coming back
-# refuses connections for a second or two, and counting that as the release's
-# fault would make every deploy look like a regression.
 WINDOW_MINUTES = 15
 GRACE_SECONDS = 120
 BUCKET_TTL_MINUTES = 6 * 60
 
-# A spike has to be both a multiple of the baseline and worth waking up for, or
-# one error against a background of zero reads as an infinite increase.
 SPIKE_MULTIPLE = 3.0
 SPIKE_FLOOR = 6
 SPIKE_QUIET_SECONDS = 30 * 60
@@ -97,11 +51,6 @@ MAX_SIGS = 60
 TOP_SIGS = 5
 OUTBOX_MAX = 40
 
-# Two audiences, and the split is deliberate. The first three are the site or a
-# service failing — ours to fix, and what a release is judged against. The rest
-# is the internet arriving: scanners, refused keys, browsers reporting a policy,
-# nginx turning a flood away. That is counted and shown, and it never inflates an
-# error rate or raises a spike.
 ERROR_SOURCES = ("nginx5xx", "nginxError", "app")
 WEB_SOURCES = ("nginx4xx", "rateLimit", "shield", "api", "csp")
 ALL_SOURCES = ERROR_SOURCES + WEB_SOURCES
@@ -135,7 +84,6 @@ def minute_of(epoch):
 
 
 def signature(text, limit=110):
-    """Collapse the parts that differ between two of the same error."""
     flat = " ".join(str(text or "").split())
     flat = HEX.sub("«id»", flat)
     flat = NUM.sub("N", flat)
@@ -204,7 +152,6 @@ def save_state(path, state):
 
 
 def read_new(state, name, path):
-    """New whole lines since last time, following the file across a rotation."""
     saved = state["files"].get(name) or {}
     try:
         stat = os.stat(path)
@@ -212,7 +159,6 @@ def read_new(state, name, path):
         return []
 
     start = saved.get("offset")
-    # First sight of a file is a starting line, not a backlog to report.
     if start is None:
         state["files"][name] = {"offset": stat.st_size, "ino": stat.st_ino}
         return []
@@ -263,16 +209,12 @@ def scan_access(state):
             continue
         at = parse_access_time(match.group(2))
         status = int(match.group(4))
-        # A request line of "-" or a single word is a client that sent nonsense.
-        # Grouping every one of those under "? ?" reads like a parser bug.
         request = match.group(3).split()
         if len(request) < 2:
             add(state, at, "nginx5xx" if status >= 500 else "nginx4xx", f"{status} (malformed request)")
             continue
         path = request[1].split("?")[0]
         method = request[0]
-        # The status is the one number in the line worth keeping whole, so it is
-        # put back after normalising rather than passed through it.
         if status >= 500:
             add(state, at, "nginx5xx", f"{status} {method} {signature(path)}")
         elif status == 429:
@@ -287,7 +229,6 @@ def scan_nginx_error(state):
         if not match or match.group(2) not in ("error", "crit", "alert", "emerg"):
             continue
         message = match.group(3).split(", client:")[0]
-        # A request turned away by limit_req is nginx working, not failing.
         source = "rateLimit" if "limiting requests" in message else "nginxError"
         add(state, parse_nginx_time(match.group(1)), source, signature(message))
 
@@ -332,7 +273,6 @@ def scan_api(state):
 
 
 def journal(state, dry_run=False):
-    """The services' own error lines, read forward from the last cursor."""
     command = ["journalctl", "--no-pager", "-o", "json", "--output-fields=MESSAGE,_SYSTEMD_UNIT,__REALTIME_TIMESTAMP"]
     for unit in UNITS:
         command += ["-u", unit]
@@ -358,7 +298,6 @@ def journal(state, dry_run=False):
         if isinstance(message, list):
             message = "".join(chr(c) for c in message if isinstance(c, int))
         message = str(message or "")
-        # A stack frame is part of the error above it, not another error.
         if not message.strip() or CONTINUATION.match(message) or not APP_ERROR.search(message):
             continue
         stamp = entry.get("__REALTIME_TIMESTAMP")
@@ -366,14 +305,11 @@ def journal(state, dry_run=False):
         unit = str(entry.get("_SYSTEMD_UNIT") or "?").replace(".service", "")
         add(state, at, "app", signature(f"{unit}: {message}"))
 
-    # The cursor is only moved once the batch is counted, so a crash re-reads
-    # rather than skips.
     if cursor:
         state["cursor"] = cursor
 
 
 def window(state, start, end):
-    """Counts and top signatures for [start, end), both epoch seconds."""
     counts = {source: 0 for source in ALL_SOURCES}
     sigs = {source: {} for source in ALL_SOURCES}
     for key, bucket in state["buckets"].items():
@@ -414,7 +350,6 @@ def token():
 
 
 def post(state, payload, dry_run=False):
-    """Hand one card to the bot. A card that cannot be delivered is kept."""
     if dry_run:
         print(json.dumps(payload, indent=2))
         return True
@@ -422,8 +357,6 @@ def post(state, payload, dry_run=False):
     if not secret:
         print("errorwatch: no DEPLOYHOOK_TOKEN in the bot's .env — nothing was sent", file=sys.stderr)
         return False
-    # allow_nan=False so a stray infinity fails here, loudly, rather than going
-    # out as a body the bot cannot parse.
     try:
         body = json.dumps(payload, allow_nan=False).encode("utf-8")
     except ValueError as err:
@@ -460,7 +393,6 @@ def drain(state, dry_run=False):
 
 
 def read_deploys(state):
-    """New deploy reports from the autodeploy timer."""
     fresh = []
     for line in read_new(state, "deploys", DEPLOY_LOG):
         try:
@@ -476,7 +408,6 @@ def read_deploys(state):
 
 
 def change(before, after):
-    """Percentage change, and None where there is nothing to compare against."""
     if before == 0:
         return None if after == 0 else float("inf")
     return (after - before) / before * 100.0
@@ -490,9 +421,6 @@ def release_card(deploy, before, after):
         if not was and not is_now:
             continue
         pct = change(was, is_now)
-        # An increase from nothing has no percentage, and json.dumps would spell
-        # the infinity `Infinity`, which is not JSON and which JSON.parse at the
-        # other end refuses. The card says "new" from before and after instead.
         rows.append({"source": source, "label": LABELS[source], "before": was, "after": is_now, "pct": None if pct is None or pct == float("inf") else round(pct, 1)})
     worse = [row for row in rows if row["source"] in ERROR_SOURCES and row["after"] > row["before"]]
     verdict = "worse" if worse else ("clean" if after["errors"] == 0 else "steady")
@@ -512,7 +440,6 @@ def release_card(deploy, before, after):
 
 
 def settle(state, dry_run=False):
-    """Report every deploy whose after-window has finished."""
     kept = []
     for deploy in state["pending"]:
         if deploy.get("due", 0) > now():
@@ -530,7 +457,6 @@ def settling(state):
 
 
 def check_spike(state, dry_run=False):
-    """A jump with no deploy behind it. A settling deploy owns its own window."""
     if settling(state) or now() - int(state.get("lastSpike") or 0) < SPIKE_QUIET_SECONDS:
         return
     end = minute_of(now()) * 60
@@ -563,9 +489,6 @@ def maybe_digest(state, force=False, dry_run=False):
     hours = DIGEST_SECONDS // 3600
     period = window(state, now() - DIGEST_SECONDS, now())
     state["lastDigest"] = now()
-    # Two summaries, because they are read by different eyes: what broke goes to
-    # the development channel, what the internet did to the website goes to the
-    # website one.
     ours = {source: period["counts"][source] for source in ERROR_SOURCES}
     theirs = {source: period["counts"][source] for source in WEB_SOURCES}
     send(state, {"kind": "digest", "hours": hours, "errors": period["errors"], "counts": ours,
@@ -600,8 +523,6 @@ def main(argv=None):
     path = os.path.join(args.state, "state.json")
     fresh = not os.path.exists(path)
     state = load_state(path)
-    # A first run has counted nothing yet, so the period summary would be a
-    # summary of no period. Start the clock instead of reporting an empty one.
     if fresh and not state["lastDigest"]:
         state["lastDigest"] = now()
     tick(state, dry_run=args.dry_run, force_digest=args.digest)

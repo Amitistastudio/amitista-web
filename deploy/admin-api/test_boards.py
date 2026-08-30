@@ -1586,12 +1586,6 @@ check("creating a board is audited", "board.created" in actions)
 check("adding a member is audited", "board.member" in actions)
 check("card churn is not audited", not any(name.startswith("card.") for name in actions))
 
-# ---------------------------------------------------------------- /boards/mine
-# The My Work section is a view over this route and nothing else. The store's
-# assigned() is exercised above; what is checked here is that the route hands it
-# out under the right name, refuses an account with no board access at all, and
-# never lets one person see another's work.
-
 status, _, raw, _ = request("GET", "/boards/mine", cookie=owner_session)
 mine = json.loads(raw)
 check("my work can be read over the api", status == 200)

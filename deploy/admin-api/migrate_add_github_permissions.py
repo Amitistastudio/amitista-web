@@ -1,23 +1,5 @@
 #!/usr/bin/env python3
 
-"""Give the stored `dev` role the github.read permission.
-
-Adding a permission to DEFAULT_ROLES only reaches a role that has never been
-retuned in the panel: role_table() lets a stored override replace the shipped
-default outright, so an owner who has edited `dev` once keeps the exact list
-they saved and never picks up anything added later.
-
-This walks the stored roles and adds github.read to any that should have it,
-leaving every other permission alone. It is idempotent — running it twice
-changes nothing the second time — and it touches only roles that already exist.
-
-github.security is deliberately not handed out here. It is the owner's alone,
-and owner resolves to every permission at read time, so it needs no migration.
-
-    python3 migrate_add_github_permissions.py --dry-run
-    python3 migrate_add_github_permissions.py
-"""
-
 import json
 import os
 import shutil
@@ -30,8 +12,6 @@ USERS_JSON = os.environ.get("ADMIN_USERS_JSON", "/var/lib/amitista/admin/session
 
 PERMISSION = "github.read"
 
-# Only roles named here are touched. Owner needs nothing: it resolves to every
-# permission at read time, so it already has this one.
 WANTED = ("dev",)
 
 
@@ -75,8 +55,6 @@ def main():
         changed.append(name)
         print("· %s gains %s." % (name, PERMISSION))
 
-    # Stored per-user permission lists are a cache: _merge() re-resolves them
-    # from the role table on every read, so the role is the only thing to fix.
     if not changed:
         print("Nothing to change.")
         return 0

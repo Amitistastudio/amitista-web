@@ -1,26 +1,4 @@
 #!/usr/bin/env bash
-#
-# Runs before every push. It exists because this org is on GitHub's Free plan,
-# where private repositories get no branch protection, no rulesets and no secret
-# scanning — the three things that would otherwise stop a bad push server-side.
-# Enforcing here is weaker: it is on the machine doing the pushing and anyone
-# can bypass it. It is not nothing, and it is what is available.
-#
-# Enable it once per clone:
-#
-#     git config core.hooksPath .githooks
-#
-# Bypass a single push deliberately:
-#
-#     ALLOW_MAIN=1 git push        # push straight to main
-#     SKIP_TESTS=1 git push        # skip the suites
-#     git push --no-verify         # skip this hook entirely
-#
-# The credential scan takes an override too, but it has to say what it is for,
-# and what it is for is written to the local scan history:
-#
-#     ALLOW_SECRETS="a fixture, not a real key" git push
-#
 set -uo pipefail
 
 ROOT_DIR="$(git rev-parse --show-toplevel)"
@@ -32,14 +10,10 @@ note() { printf '%s          %s%s\n' "$DIM" "$*" "$OFF" >&2; }
 REMOTE_REF_MAIN=0
 RANGE=""
 
-# stdin gives: <local ref> <local sha> <remote ref> <remote sha>
 while read -r localref localsha remoteref remotesha; do
   [ "$localsha" = "0000000000000000000000000000000000000000" ] && continue
   case "$remoteref" in refs/heads/main) REMOTE_REF_MAIN=1 ;; esac
   if [ "$remotesha" = "0000000000000000000000000000000000000000" ]; then
-    # A new branch has no remote sha. `git diff <sha>` would compare the working
-    # tree to that commit and find nothing added, so the scan would pass on a
-    # branch that does carry a key. Diff from where this branch left the remote.
     base="$(git rev-list "$localsha" --not --remotes=origin 2>/dev/null | tail -1)"
     if [ -n "$base" ]; then
       RANGE="${base}^..${localsha}"
@@ -51,16 +25,6 @@ while read -r localref localsha remoteref remotesha; do
   fi
 done
 
-# ------------------------------------------------------- main is for merges
-# The lead works straight on main and that is fine: what gates a deploy is CI
-# going green on the commit, not a pull request, and a lone maintainer approving
-# their own diff catches nothing a passing suite does not. Everyone else pushes
-# a branch, so the guard stays on by default and is turned off per clone:
-#
-#     git config amitista.allowMainPush true
-#
-# The suites and the credential scan below still run either way. Those are what
-# actually stop a bad push, and nobody should be turning them off.
 if [ "$REMOTE_REF_MAIN" = "1" ] && [ "${ALLOW_MAIN:-}" != "1" ] \
    && [ "$(git config --bool amitista.allowMainPush 2>/dev/null)" != "true" ]; then
   fail "refusing to push straight to main."
@@ -76,12 +40,6 @@ if [ "$REMOTE_REF_MAIN" = "1" ] && [ "${ALLOW_MAIN:-}" != "1" ] \
   exit 1
 fi
 
-# ------------------------------------------------------------ secret scan
-# Handed to scripts/scan-secrets.mjs, which walks the diff hunk by hunk so that
-# a finding comes back with the file and the line it is on rather than just the
-# string it matched, keeps a local record of every scan in .git/secret-scan.log,
-# and takes an override that has to say what it is for. The rules, the
-# allowlist and the reasoning behind both are at the top of that file.
 if [ -n "$RANGE" ]; then
   if ! command -v node >/dev/null 2>&1; then
     fail "node is not on PATH, so the credential scan cannot run."
@@ -94,7 +52,6 @@ if [ -n "$RANGE" ]; then
   node "$ROOT_DIR/scripts/scan-secrets.mjs" "$RANGE" || exit 1
 fi
 
-# ------------------------------------------------------------------ tests
 if [ "${SKIP_TESTS:-}" = "1" ]; then
   note "tests skipped by SKIP_TESTS=1"
   exit 0

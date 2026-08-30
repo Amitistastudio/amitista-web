@@ -1045,9 +1045,6 @@ PICTURE_TYPES = {
     "image/webp": (".webp", (b"RIFF",)),
     "image/gif": (".gif", (b"GIF87a", b"GIF89a")),
 }
-# Projects an account has hidden from its own "Your projects" list. Personal to
-# the holder, not a state on the project: staff still see everything, and the
-# same person sees the same list on any machine they sign in from.
 HIDDEN_PROJECTS_MAX = 300
 HIDDEN_PROJECT_ID = re.compile(r"^\d{17,20}$")
 

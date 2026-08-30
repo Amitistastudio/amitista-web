@@ -12,10 +12,6 @@ const ISSUE_STALE_DAYS = 14;
 
 const ageDays = (at) => (at ? Math.floor((Date.now() - Date.parse(at)) / DAY) : null);
 
-// Two people or one? A commit carries a git name and, separately, the GitHub
-// account it was matched to. On these repositories one person appears under
-// four different git names and a single account, so the account wins wherever
-// there is one — counting the names would report a team that does not exist.
 const who = (commit) => commit.login || commit.author || 'unknown';
 
 function everything(repositories) {
@@ -39,14 +35,8 @@ function everything(repositories) {
   };
 }
 
-// The point of the section. Everything else here describes; this decides —
-// one ranked list of what is actually waiting on somebody, worst first, each
-// saying what would clear it. An empty list is the answer worth having.
 function attention(repositories, all) {
   const out = [];
-  // id, not title, is what React keys on below: two findings can legitimately
-  // describe the same repository in the same words once a new rule is added,
-  // and a duplicate key silently drops a row instead of failing loudly.
   const add = (rank, tone, title, detail, url) =>
     out.push({ id: out.length, rank, tone, title, detail, url });
 
@@ -115,9 +105,6 @@ function attention(repositories, all) {
   return out.sort((a, b) => a.rank - b.rank);
 }
 
-// Commits a day for the last fortnight, from the commits that were read. Says
-// so, because the window is however far back those reach rather than a promise
-// about all of history.
 function cadence(commits) {
   const start = new Date();
   start.setHours(0, 0, 0, 0);

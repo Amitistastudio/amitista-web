@@ -1,15 +1,4 @@
 #!/bin/bash
-# Add or remove an address from the nginx-level ban list, then reload nginx.
-#
-# Usage: amitista-nginx-ban.sh add|del <ip>
-#        amitista-nginx-ban.sh flush
-#
-# Called by the fail2ban action amitista-nginx-deny. See
-# /etc/nginx/conf.d/20-amitista-bans.conf for why nginx and not just iptables.
-#
-# The config is tested before every reload and the list is rolled back if the
-# test fails. A ban that cannot be applied must never be allowed to take the
-# site down with it.
 
 set -uo pipefail
 
@@ -22,8 +11,6 @@ usage() { echo "usage: $0 add|del <ip> | flush" >&2; exit 2; }
 ACTION=$1
 
 valid_ip() {
-  # ipv4 dotted quad, or anything with a colon that is a plausible ipv6.
-  # Deliberately strict: this string is written into a config file nginx parses.
   [[ $1 =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] && return 0
   [[ $1 =~ ^[0-9a-fA-F:]+$ && $1 == *:* ]] && return 0
   return 1

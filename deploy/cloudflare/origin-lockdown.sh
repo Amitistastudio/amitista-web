@@ -1,30 +1,4 @@
 #!/bin/bash
-# Restrict ports 80 and 443 to Cloudflare's published ranges, so the origin
-# cannot be reached except through the edge.
-#
-# Usage: origin-lockdown.sh status | apply | revert
-#
-# WHY THIS IS THE LAST STEP AND NOT THE FIRST. Every domain-scoped protection
-# at the edge — WAF rules, rate limiting, bot filtering, the challenge pages —
-# applies only to traffic that goes through the edge. An attacker who learns
-# the origin address can skip all of it by connecting here directly. The
-# catch-all `return 444` in the site conf makes that unrewarding, but it still
-# accepts the connection and still terminates TLS. This closes the socket
-# instead.
-#
-# It is genuinely dangerous to apply at the wrong moment, in one specific way:
-# if a hostname is not proxied, or a recursive resolver is still handing out
-# the pre-migration origin address from cache, then visitors are arriving here
-# directly and this change severs them. Hence the precondition below, which
-# refuses to run while any published record still points at the origin. It
-# cannot see resolver caches, though — after a nameserver move, give the old
-# records' TTL time to expire before applying.
-#
-# SSH is untouched: it is on its own ports and its own rules. A mistake here
-# takes the website off the internet, not the box.
-#
-# revert restores the blanket allows, and is the first thing to try if the site
-# becomes unreachable after apply.
 
 set -uo pipefail
 
@@ -75,18 +49,12 @@ case "${1:-status}" in
     done <<<"$RANGES"
     echo "added $COUNT allow rules."
 
-    # Only now remove the blanket allows, so there is never a window with no
-    # rule permitting the edge.
     ufw delete allow 80/tcp  >/dev/null 2>&1
     ufw delete allow 443/tcp >/dev/null 2>&1
     echo "removed the blanket 80/443 allows."
 
     echo
     echo "verifying the site still serves through the edge..."
-    # Retried, because the check makes its own outbound HTTPS calls and a
-    # single one failing in the seconds after the rules change is not evidence
-    # that the site is down. The first run of this script reported failure on
-    # exactly that, while the site was serving 200s throughout.
     VERIFIED=1
     for attempt in 1 2 3; do
       sleep 5

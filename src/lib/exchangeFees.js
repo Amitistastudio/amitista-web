@@ -104,11 +104,6 @@ export async function fetchFees() {
   }
 }
 
-/**
- * The published model is `fee = fixed + proportional × amount`, where `fixed`
- * is the network fee and does not scale. Costing an amount is that line, and
- * the percentage falls as the amount rises entirely because of the first term.
- */
 export function costOf(pair, amount) {
   if (!pair || !Number.isFinite(amount) || amount <= 0) return null;
   const fee = pair.fixed + pair.proportional * amount;
@@ -123,7 +118,6 @@ export function money(value, currency) {
   return `${symbol}${value.toFixed(2)}`;
 }
 
-/** Enough places to be exact at these prices, few enough to read at a glance. */
 const PLACES = { BTC: 6, ETH: 5, LTC: 4, SOL: 3, DOGE: 1, XMR: 4, TRX: 1 };
 
 export function coin(value, assetId, prices) {
@@ -134,11 +128,6 @@ export function coin(value, assetId, prices) {
   return `${units.toFixed(places)} ${assetLabel(assetId)}`;
 }
 
-/**
- * The fee split into the two things it is actually made of. The network share
- * is flat, so on a small amount it is most of the bar and on a large one it is
- * a sliver — which is the whole explanation for why the percentage moves.
- */
 export function feeParts(pair, amount) {
   if (!pair || !Number.isFinite(amount) || amount <= 0) return null;
   const network = Math.min(pair.fixed, amount);

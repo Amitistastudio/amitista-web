@@ -4,9 +4,6 @@ import { formatAgo } from '../../../lib/admin';
 import { Empty, Panel, Pill } from '../ui';
 import { GithubLink, listOf, repositoriesIn } from './shared';
 
-// GitHub hands label colours back as bare hex. Painting text on them means
-// guessing at contrast for every colour someone invents, so the colour goes on
-// a dot and the text stays legible.
 function Label({ label }) {
   const colour = /^[0-9a-f]{6}$/i.test(label.colour ?? '') ? `#${label.colour}` : '#6b7280';
   return (
@@ -92,9 +89,6 @@ function Issue({ issue, repo }) {
 
 export default function Issues({ data }) {
   const repositories = repositoriesIn(data);
-  // Deliberately the length of the list, not facts.openIssues: GitHub's count
-  // includes pull requests, so a repository with no issues at all can report
-  // dozens of them.
   const total = repositories.reduce((sum, repo) => sum + listOf(repo, 'issues').length, 0);
 
   if (repositories.length === 0) {

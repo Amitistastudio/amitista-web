@@ -5,15 +5,6 @@ import { ROUTE_PATHS } from '../../../content/routeMeta';
 import { Empty, Figure, Notice, Panel, Sparkline } from '../ui';
 import { Scroller, Td, Th } from './shared';
 
-// A 404 on a path we ship is usually a route we broke. A 404 on
-// /wp-admin/install.php is somebody else's scanner. Sorting those apart is most
-// of why this list is worth showing a developer at all — the third case, a path
-// of ours whose 404 is deliberate, is sorted out further down.
-//
-// The prefixes come from ROUTE_PATHS rather than a list written out here, so a
-// route added to the site starts being recognised without anyone remembering
-// to update this file. /api is added by hand: it is served by the gateway, so
-// it never appears in the front-end route table.
 const OUR_PREFIXES = [
   ...new Set([
     '/api',
@@ -32,12 +23,6 @@ function looksOurs(path) {
   return OUR_PREFIXES.some((prefix) => path === prefix || path.startsWith(`${prefix}/`));
 }
 
-// A path of ours that also answered requests in the same window is not broken:
-// its 404 is the answer. /api/admin/boards/face gives one for somebody who has
-// never set a picture, and the board draws their initials instead. The
-// snapshot counts what each path served alongside what it refused, so those
-// belong in the list without the alarm. A snapshot old enough not to carry the
-// count reads as 0, which is the cautious way round.
 const READINGS = {
   broken: 'ours — likely broken',
   answering: 'ours — also answering',

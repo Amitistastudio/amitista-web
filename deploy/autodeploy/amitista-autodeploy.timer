@@ -2,20 +2,10 @@
 Description=Check main for something to deploy
 
 [Timer]
-# Every minute. An idle tick is three SSH git fetches and a SHA comparison —
-# no GitHub API call is made unless a repository has actually moved — so polling
-# this often costs essentially nothing, and it takes the wait between a green CI
-# run and a live site down to under a minute and a half. The jitter still keeps
-# the fetch off the exact minute boundary, where the healthcheck, the snapshot
-# timer and the perf monitor already sit.
 OnBootSec=1min
 OnUnitActiveSec=1min
 RandomizedDelaySec=15
-# systemd is free to slide a wakeup by up to AccuracySec to batch it with other
-# timers, which at the old 30s turned a one-minute period into 80-100s in
-# practice. There is nothing to batch with on this box worth 40 seconds of lag.
 AccuracySec=1s
-# A deploy missed because the box was down still happens on the next boot.
 Persistent=true
 
 [Install]

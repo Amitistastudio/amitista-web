@@ -4,17 +4,6 @@ import { formatAgo } from '../../../lib/admin';
 import { Empty, Figure, Notice, Panel, Pill, RankedBar } from '../ui';
 import { GithubLink, count, short } from './shared';
 
-// What each metric is called, what it is measured in, and where the line is
-// between a good reading and a bad one.
-//
-// The boundaries are the published Core Web Vitals thresholds rather than this
-// site's own budgets. The two are not the same thing and both are shown: the
-// budgets are far stricter — they are a promise about a site that renders in
-// under a second — and a release that breaks one is reported in its own words,
-// under `problems`, by the monitor that holds them. These thresholds answer the
-// separate question of whether a page is still good by the standard everybody
-// else is measured against, which is what somebody reading a regression wants
-// to know before deciding how urgent it is.
 const METRICS = {
   lcp: {
     label: 'LCP',
@@ -38,9 +27,6 @@ const METRICS = {
     unit: 'ms',
     good: 200,
     poor: 600,
-    // Said plainly rather than labelled INP, which is what a lab measurement is
-    // usually passed off as. Nothing interacts with this page, so there is no
-    // interaction to time; this is how long one would have had to wait.
     blurb: 'the lab stand-in for INP — how long an interaction would have queued',
   },
   fcp: {
@@ -77,9 +63,6 @@ const METRICS = {
   },
 };
 
-// The three that are actually Core Web Vitals, or stand in for one. Everything
-// else in METRICS explains a change in these rather than being one, so it is
-// shown against a release and not at the top of the page.
 const HEADLINE = ['lcp', 'cls', 'tbt'];
 
 const isNumber = (value) => typeof value === 'number' && Number.isFinite(value);
@@ -92,13 +75,9 @@ function say(metric, value) {
     return value >= 1024 ? `${Math.round(value / 1024)}kB` : `${value}B`;
   }
   if (spec.unit === 'ms') return `${Math.round(value)}ms`;
-  // CLS is the one metric with no unit, and rounding it to a whole number would
-  // throw the entire measurement away.
   return value.toFixed(3);
 }
 
-// A shift, said with its sign, because "+340ms" and "340ms" mean opposite
-// things to somebody scanning a column of them.
 function sayDelta(metric, delta) {
   if (!isNumber(delta)) return '—';
   return `${delta > 0 ? '+' : '−'}${say(metric, Math.abs(delta))}`;
@@ -133,8 +112,6 @@ const releasesIn = (data) =>
 const pageOf = (release, path) =>
   (release.pages ?? []).find((page) => page.path === path) ?? null;
 
-// Every route any measured release covered, in the order the collector emitted
-// them, so the columns do not reshuffle when a route is added or missed once.
 function routesIn(releases) {
   const seen = [];
   for (const release of releases) {
@@ -145,23 +122,6 @@ function routesIn(releases) {
   return seen;
 }
 
-// The worst thing any release did, and which release did it. This is the whole
-// question the section is named after, so it is answered once at the top in a
-// sentence rather than left to be assembled out of the rows.
-//
-// Ranked on the weight the collector worked out, not on a rule of its own. A
-// second opinion about which regression was worst would sooner or later put one
-// metric at the top of this sentence and a different one at the front of that
-// release's own row, and there would be no way to tell which was right.
-//
-// A move only gets to name a commit once both ends of it were measured more
-// than once. The deploy takes its measurement in the minute it deploys, while
-// installers are finishing and units are restarting, and the page with the
-// animated hero reads twelve times worse on a busy box than a quiet one for the
-// same build. That is the weather, not a commit, and the sentence at the top of
-// this section is the last place it should be stated as fact. An unconfirmed
-// move is still shown — it is what there is to see — in the words of something
-// measured once.
 function worstRegression(releases) {
   let worst = null;
   let unconfirmed = null;
@@ -180,9 +140,6 @@ function worstRegression(releases) {
   return worst ?? unconfirmed;
 }
 
-// "PR #184 increased LCP by 340ms on /" — or the commit, when the subject
-// carried no pull request number, or the release itself when the deploy that
-// published it wrote no commit down.
 function blame(release, move) {
   const who = release.pull?.number
     ? `PR #${release.pull.number}`
@@ -195,9 +152,6 @@ function blame(release, move) {
   )} on ${move.path}`;
 }
 
-// The same fact as blame(), for a move that has not been measured enough times
-// to stand behind. It says what was read and when, and stops short of saying
-// what caused it.
 function looksSlower(release, move) {
   const when = release.short ? `The release at ${release.short}` : `Release ${release.release}`;
   return `${when} reads ${say(move.metric, Math.abs(move.delta))} worse on ${
@@ -238,9 +192,6 @@ function Move({ move }) {
   );
 }
 
-// One release: the commit it is, what it moved, and what it currently measures.
-// The commit comes first because that is what somebody is here to find; the
-// numbers underneath are the evidence for it.
 function ReleaseRow({ release, routes, expanded, onToggle }) {
   const moves = release.moves ?? [];
   const worse = moves.filter((move) => move.delta > 0);
@@ -413,9 +364,6 @@ export default function Vitals({ data }) {
     <div className="space-y-6">
       {performance.note && <Notice tone="amber">{performance.note}</Notice>}
 
-      {/* The answer to the question the section is named after, before any of
-          the evidence for it. If nothing regressed, that is the answer and it
-          is worth saying in as many words rather than leaving an absence. */}
       {worst ? (
         <Notice tone={worst.confirmed ? 'rose' : 'amber'} icon={TrendingUp}>
           <span>
@@ -469,9 +417,6 @@ export default function Vitals({ data }) {
         />
       </div>
 
-      {/* Which release is live is not a detail: everything above is a
-          measurement of it, and a rollback can make the newest reading belong
-          to an older commit than the newest one deployed. */}
       <Panel
         title="Live now"
         icon={Rocket}
@@ -497,10 +442,6 @@ export default function Vitals({ data }) {
                   page?.bytes,
                 )}`}
                 value={say('lcp', value)}
-                // Against the poor line rather than the good one, so a page can
-                // fill the bar and still have somewhere worse to go. A reading
-                // past poor pins at full width and is red, which is the correct
-                // reading of it.
                 percent={isNumber(value) ? Math.min(100, (value / METRICS.lcp.poor) * 100) : 0}
                 tone={VERDICT_BAR[state]}
               />
@@ -513,9 +454,6 @@ export default function Vitals({ data }) {
         title="Release by release"
         icon={GitCommitHorizontal}
         action={
-          // Worth saying once: every metric on this page counts time, movement
-          // or bytes, so up is worse in all of them. The day one of them is a
-          // score out of a hundred, this line stops being true.
           <span className="text-[11px] text-neutral-600">newest first · up is worse</span>
         }
       >

@@ -1,17 +1,5 @@
 #!/usr/bin/env python3
 
-"""Reading a model's answer about a pull request.
-
-The model is the untrusted part here. It is asked for JSON and does not always
-answer with JSON; it names files it was not shown; it invents severities. None
-of that may reach the panel as though it were established, because a finding
-printed against a file that is not in the pull request is worse than no review
-at all — somebody goes looking for it.
-
-So everything below is about what happens to a bad answer rather than a good
-one. The good case is one check; the rest is the model misbehaving.
-"""
-
 import os
 import sys
 import tempfile
@@ -43,8 +31,6 @@ PATHS = ["src/app.py", "src/util.py"]
 def parse(text, paths=PATHS):
     return review.parse(text, paths)
 
-
-# ------------------------------------------------ reading the model's answer
 
 good = parse(
     '{"summary": "Adds a retry.", "findings": '
@@ -78,10 +64,6 @@ check("so is broken JSON", refuses('{"summary": "oops"'))
 check("and so is one with no summary", refuses('{"summary": "", "findings": []}'))
 
 
-# --------------------------------------------- a model naming what it invents
-
-# The failure this exists to stop: a finding pinned to a file that is not in the
-# pull request sends somebody looking for code that is not there.
 invented = parse(
     '{"summary": "Ok.", "findings": [{"file": "src/nowhere.py", "severity": "high", '
     '"note": "Something."}]}'
@@ -126,8 +108,6 @@ long_note = parse(
 )
 check("a runaway note is cut", len(long_note["findings"][0]["note"]) == review.MAX_NOTE_CHARS)
 
-
-# ------------------------------------------------------ what the model is sent
 
 pull = {
     "number": 4,
@@ -176,16 +156,12 @@ except review.ReviewError as error:
 check("and refuses with a 503 rather than pretending", unconfigured == 503)
 
 
-# ------------------------------------------------------------ what is cached
-
 answer = {"summary": "Ok.", "findings": [], "sha": "abc123", "generated": 10}
 review.remember("amitista-web", 4, answer)
 check("a review is found again at the same commit", review.cached("amitista-web", 4, "abc123") == answer)
 check("and not at a different one", review.cached("amitista-web", 4, "def456") is None)
 check("nor for a pull request that has none", review.cached("amitista-web", 9, "abc123") is None)
 
-# A review of the previous commit is worse than no review, so pushing to a pull
-# request has to throw the old one away rather than leave it standing.
 review.remember("amitista-web", 4, {"summary": "Newer.", "findings": [], "sha": "def456", "generated": 20})
 check("a new commit replaces the review of the old one", review.cached("amitista-web", 4, "abc123") is None)
 check("and the new one is found", review.cached("amitista-web", 4, "def456")["summary"] == "Newer.")

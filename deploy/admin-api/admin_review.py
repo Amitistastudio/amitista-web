@@ -1,27 +1,3 @@
-"""Ask a model what a pull request does, and what looks wrong with it.
-
-Two questions rather than one, because they want different answers and mixing
-them produces a worse version of both. The first is a summary: what changed and
-why, in a paragraph somebody can read before deciding whether to open the diff
-at all. The second is a review: specific things that look wrong, each pinned to
-a file and a line, so it can be checked rather than believed.
-
-What it is not: an approval. Nothing here writes to GitHub, nothing here merges,
-and the panel says so. A model reading a truncated diff with no way to run the
-code is a reader with an opinion, and the section is worded as one — findings
-are things to look at, not defects that have been established.
-
-The diff comes out of the snapshot the deploy already writes. This service holds
-no GitHub token and cannot ask for a patch itself, which is the whole point of
-that arrangement, so a pull request the collector has not looked into deeply
-cannot be reviewed here and says so plainly.
-
-Answers are cached against the exact head commit. Re-asking about a pull request
-nobody has pushed to costs nothing and gives everybody the same answer; pushing
-to it invalidates the review, because a review of the previous commit is worse
-than no review at all.
-"""
-
 import json
 import logging
 import os
@@ -38,8 +14,6 @@ MODEL = os.environ.get("ADMIN_AI_MODEL", "nvidia/nemotron-3-nano-30b-a3b").strip
 TIMEOUT = int(os.environ.get("ADMIN_AI_TIMEOUT", "60"))
 CACHE_PATH = os.environ.get("ADMIN_GITHUB_REVIEWS", "/var/lib/amitista/admin/github-reviews.json")
 
-# Enough room for a paragraph and a handful of findings, and a hard stop well
-# short of anything that could be used to run up a bill.
 MAX_TOKENS = int(os.environ.get("ADMIN_AI_MAX_TOKENS", "1400"))
 MAX_PROMPT_CHARS = 60000
 MAX_FINDINGS = 12
@@ -98,12 +72,6 @@ def _read_cache():
 
 
 def _write_cache(held):
-    """Keep the newest few and replace the file in one step.
-
-    Rewritten whole rather than appended because the cap has to be applied
-    somewhere, and replaced atomically so a concurrent reader sees the old file
-    or the new one and never half of either.
-    """
     rows = sorted(held.items(), key=lambda pair: pair[1].get("generated") or 0, reverse=True)
     trimmed = dict(rows[:MAX_CACHED])
     try:
@@ -129,9 +97,6 @@ def _write_cache(held):
                 pass
             raise
     except OSError:
-        # A review that cannot be cached is still a review. Losing it costs one
-        # repeated request the next time somebody asks, which is not worth
-        # failing the answer that is already in hand.
         log.warning("could not write the review cache at %s", CACHE_PATH)
 
 
@@ -149,12 +114,6 @@ def remember(repo, number, review):
 
 
 def prompt_for(pull, repo):
-    """The pull request as the model sees it.
-
-    Files with a diff come first, because a file GitHub would not give a patch
-    for — anything binary, anything too large to inline — contributes nothing to
-    a review and would otherwise push a file that does out of the budget.
-    """
     changed = [entry for entry in (pull.get("changed") or []) if isinstance(entry, dict)]
     lines = [
         "Repository: %s" % repo,
@@ -200,17 +159,6 @@ def _clean(value, ceiling):
 
 
 def parse(payload, paths):
-    """Pull the answer out of whatever the model actually said.
-
-    Models wrap JSON in prose and in code fences often enough that refusing
-    those would mean failing on a good answer. Anything that is not an object
-    with a summary is a failure, though, rather than something to guess at.
-
-    Every finding is pinned to a file that is genuinely in the pull request.
-    A model naming a file it was not shown is either confused or has invented
-    the finding, and either way the panel must not print a location that does
-    not exist.
-    """
     text = payload if isinstance(payload, str) else ""
     fenced = re.search(r"```(?:json)?\s*(.+?)```", text, re.S)
     if fenced:

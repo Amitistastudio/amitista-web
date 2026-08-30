@@ -196,18 +196,7 @@ HISTORY_PATH = os.environ.get("ADMIN_HISTORY", "/var/lib/amitista/admin/history.
 SECURITY_PATH = os.environ.get("ADMIN_SECURITY", "/var/lib/amitista/admin/security.json")
 ANALYTICS_PATH = os.environ.get("ADMIN_ANALYTICS", "/var/lib/amitista/admin/analytics.json")
 PERF_PATH = os.environ.get("ADMIN_PERF", "/var/lib/amitista/admin/perf.json")
-# Groups handed out by account rather than by permission. A permission cannot
-# express this: an owner resolves to every permission at read time, so any owner
-# would hold whatever we invented. The account name is the one thing an owner
-# cannot grant themselves from inside the panel.
-#
-# Only one half of the GitHub group needs that, and it is people and access —
-# who may reach a repository, and at what level. Everything else in the group
-# reads, and reading is what permissions are for, so the rest of it is gated on
-# github.read and github.security like any other screen.
-#
-# Worth being plain about what this is not — it is a gate against panel users.
-# Anyone with root on this box can read this file and edit the list.
+
 PRIVATE_GROUPS = {
     "github": ("blxr",),
 }
@@ -217,9 +206,7 @@ def private_groups_for(name):
     return sorted(group for group, allowed in PRIVATE_GROUPS.items() if key in allowed)
 
 GITHUB_PATH = os.environ.get("ADMIN_GITHUB", "/var/lib/amitista/admin/github.json")
-# The deploy ticks about once a minute. Ten minutes without a refresh means
-# the timer is not running, which is worth saying out loud rather than
-# quietly showing an hour-old commit as if it were current.
+
 GITHUB_STALE_AFTER = env_int("ADMIN_GITHUB_STALE", 600)
 
 INSTALLS_PATH = os.environ.get("ADMIN_SHIELD_INSTALLS", "/var/lib/amitista/shield-feed/state/installs.json")
@@ -283,9 +270,6 @@ DISCORD_ART_TYPES = ("image/png", "image/jpeg", "image/gif", "image/webp")
 DISCORD_ART_AGENT = "Amitista-Panel/1.0 (+https://amitista.com)"
 DM_EVENTS_MAX = 8
 
-# Hosted ticket transcripts. The bot owns the store (SQLite under
-# /var/lib/amitista/transcripts); the panel and the public page both read it
-# through botctl, so nothing here touches that file directly.
 TRANSCRIPT_LIMIT = 40
 TRANSCRIPT_LIMIT_MAX = 200
 TRANSCRIPT_QUERY_MAX = 200
@@ -293,8 +277,6 @@ TRANSCRIPT_KINDS = ("ticket", "project", "application", "channel")
 TRANSCRIPT_CODE = re.compile(r"^[a-z0-9][a-z0-9-]{4,79}$")
 TRANSCRIPT_ID = re.compile(r"^[0-9a-f]{32}$")
 TRANSCRIPT_FILE = re.compile(r"^[A-Za-z0-9._-]{1,80}$")
-# A transcript is one JSON document with every message in it, so the 2 MB
-# ceiling the rest of the bot bridge uses is too small by an order of magnitude.
 TRANSCRIPT_BYTES = 16 * 1024 * 1024
 
 SUPPORT_STAGES = ("new", "active", "waiting", "resolved")
@@ -314,9 +296,6 @@ if BOT_URL and not loopback_only(BOT_URL):
     log.error("ADMIN_BOT_URL must be an http loopback address; ignoring it")
     BOT_URL = ""
 
-# The enchange (c2c) exchange bot's read-only control port. Its database is
-# 0700 to the `enchange` user, so the panel asks the bot rather than reading
-# the file — see /opt/enchange/src/web/control.ts.
 ENCHANGE_URL = os.environ.get("ADMIN_ENCHANGE_URL", "http://127.0.0.1:8796").strip().rstrip("/")
 ENCHANGE_TOKEN = os.environ.get("ENCHANGE_TOKEN", "").strip()
 ENCHANGE_TIMEOUT = 10
@@ -1179,47 +1158,15 @@ def build_overview(granted=None):
 
     return narrow_overview(payload, granted)
 
-# The GitHub group of the panel.
-#
-# Reads the snapshot the deploy writes each tick and says nothing the deploy did
-# not already establish. It cannot ask GitHub itself: the token is root-only and
-# this service runs under ProtectHome, so /root does not exist as far as it is
-# concerned. That is the arrangement, not a limitation to be worked around.
-#
-# One thing here does ask for a change to be made — who may reach a repository,
-# and at what level. It still does not talk to GitHub. It writes what it wants
-# into a queue directory, and the collector, which is root and does hold the
-# token, decides each tick whether to carry it out. The collector re-checks
-# every field rather than trusting this file, because this service is the less
-# privileged of the two and a queue is exactly what an attacker who had it would
-# reach for. So the worst this service can do on its own is fill a directory
-# with requests that get refused.
-
 GITHUB_QUEUE = os.environ.get("ADMIN_GITHUB_QUEUE", "/var/lib/amitista/admin/github-queue")
 
-# What GitHub takes for a repository collaborator, weakest first.
 GITHUB_ROLES = ("pull", "triage", "push", "maintain", "admin")
 
-# GitHub's own rule for a login: alphanumerics and single inner hyphens, up to
-# thirty-nine characters. Checked because the login ends up in a URL path.
 GITHUB_LOGIN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$")
 
-# Enough that nobody hits it by working, few enough that a stuck collector
-# cannot be used to fill the disk a request at a time.
 GITHUB_QUEUE_LIMIT = 50
 
 def age_of(generated):
-    """How long ago a collector wrote a snapshot, in seconds.
-
-    The stamp is UTC and says so with its Z, so it is converted with
-    calendar.timegm rather than time.mktime. mktime reads a struct as local
-    time, and the correction that used to follow it — time.timezone — is the
-    standard offset and takes no account of summer time. So for the half of the
-    year this box is on summer time every snapshot read an hour older than it
-    was, which is past every staleness ceiling here: the panel spent the summer
-    reporting a snapshot written seconds ago as stale, and telling the reader
-    the deploy timer had stopped when it had not.
-    """
     if not isinstance(generated, str):
         return None
     try:
@@ -1227,26 +1174,11 @@ def age_of(generated):
     except ValueError:
         return None
 
-
-# One route feeds every section of the group, because every section reads the
-# same snapshot and fetching it once is the point. That makes the trimming here
-# the only real gate between them: hiding a section in the nav would otherwise
-# leave its data in the payload of anybody who opened any other one.
-#
-# Two things are held back, and only two, because only two of the sections are
-# narrower than the rest.
 GITHUB_SECURITY_KEYS = ("guards", "alerts")
 
 GITHUB_ACCESS_KEYS = ("access", "invites")
 
 def narrow_github(payload, granted, insider):
-    """Take out what this account is not to see.
-
-    Security is a permission, so an owner has it and a developer does not.
-    People and access is the private group, so it is by account name — an owner
-    who is not named does not get it either, which is the whole reason that
-    group exists.
-    """
     if "github.security" not in set(granted or ()):
         for repo in payload["repositories"]:
             if isinstance(repo, dict):
@@ -1282,8 +1214,6 @@ def build_github(granted=None, insider=False):
 
     payload = dict(snapshot)
     payload["collected"] = True
-    # Conditional-request bookkeeping for the collector. Of no use to the panel,
-    # and it grows with every path ever asked for, so it does not travel.
     payload.pop("etags", None)
     repositories = payload.get("repositories")
     payload["repositories"] = repositories if isinstance(repositories, list) else []
@@ -1298,14 +1228,6 @@ def build_github(granted=None, insider=False):
 
 
 def github_strip_patches(repo):
-    """Take the diffs back out before the snapshot travels.
-
-    The collector keeps a patch per changed file so that a review has something
-    to read. The panel does not display one, and there can be tens of kilobytes
-    of them, so every reader of the snapshot would be paying for something none
-    of them use. Whether it was clipped stays, because that is the one thing the
-    panel does say out loud.
-    """
     for pull in repo.get("pulls") or []:
         if not isinstance(pull, dict):
             continue
@@ -1314,13 +1236,6 @@ def github_strip_patches(repo):
                 entry.pop("patch", None)
 
 def github_avatar_for(login):
-    """The avatar the collector last saw for a login.
-
-    Resolved out of the same snapshot the panel is already drawing rather than
-    from a URL the browser hands over, so the panel can only ever ask for an
-    image of somebody it is showing, and this service still needs no GitHub
-    token of its own.
-    """
     wanted = str(login or "").strip().lower()
     if not wanted:
         return None
@@ -1357,11 +1272,6 @@ def github_avatar_for(login):
 
 
 def github_pull_for(repo, number):
-    """One open pull request out of the snapshot, diff and all.
-
-    Read from the file rather than from build_github, which strips the patches
-    that are the only reason to look it up here.
-    """
     snapshot = read_json_file(GITHUB_PATH)
     if not isinstance(snapshot, dict):
         return None
@@ -1375,13 +1285,6 @@ def github_pull_for(repo, number):
 
 
 def github_queued():
-    """Access changes that have been asked for and not yet carried out.
-
-    Read back out of the queue directory rather than remembered, because the
-    collector is what empties it: a request is pending exactly as long as its
-    file is still there, and no bookkeeping on this side could say so as
-    truthfully.
-    """
     out = []
     try:
         names = sorted(name for name in os.listdir(GITHUB_QUEUE) if name.endswith(".json"))
@@ -1394,13 +1297,6 @@ def github_queued():
     return out
 
 def github_queue(session, intent):
-    """Leave a request for the collector, and say nothing about the outcome.
-
-    Everything checked here is checked again by the collector, which is the
-    side that matters. This copy exists so that a mistake comes back as an
-    answer to the request that made it, instead of surfacing a minute later as
-    a line in a log.
-    """
     if intent["action"] != "uninvite":
         login = intent.get("login")
         if not isinstance(login, str) or not GITHUB_LOGIN.match(login):
@@ -1421,8 +1317,8 @@ def github_queue(session, intent):
     if len(github_queued()) >= GITHUB_QUEUE_LIMIT:
         raise Rejected(
             429,
-            "There are already %d access changes waiting. The deploy carries them out about "
-            "once a minute — if they are not clearing, it has stopped." % GITHUB_QUEUE_LIMIT,
+            "There are already %d access changes waiting. They are normally carried out within "
+            "seconds — if they are not clearing, the collector has stopped." % GITHUB_QUEUE_LIMIT,
         )
 
     intent = dict(intent)
@@ -1442,10 +1338,6 @@ def github_queue(session, intent):
             os.fsync(handle.fileno())
             handle.close()
             os.chmod(handle.name, 0o640)
-            # Named after the moment it was asked for, so the collector drains
-            # them in the order they were made — two changes to one person's
-            # access have to land the way they were asked for or the second
-            # undoes the first.
             os.replace(handle.name, os.path.join(GITHUB_QUEUE, "%f-%s.json" % (time.time(), intent["id"])))
         except BaseException:
             try:
@@ -1463,21 +1355,10 @@ def github_queue(session, intent):
     )
     return {"queued": intent, "waiting": len(github_queued())}
 
-# The developer group of the panel. Everything below is a projection of the
-# snapshot the admin-snapshot timer already writes — nothing here collects
-# anything of its own, so it costs a file read and cannot wedge the box.
-#
-# It is a separate route from /overview on purpose: the group is gated on
-# developer.read alone, so an owner can take overview.read off a developer
-# without the group going dark, and can take developer.read off without
-# touching the dashboard.
 
 PERF_PAGE_FIELDS = ("path", "ttfb", "fcp", "lcp", "cls", "longTaskMs", "bytes", "lcpElement", "injected", "over")
 
 def developer_perf():
-    # /var/lib/amitista/perf is 0750 root:root and this service runs as
-    # amitista-admin, so the numbers arrive the same way the reference does:
-    # collected by the snapshot timer, read back here as a file.
     snapshot = read_json_file(PERF_PATH)
     if not isinstance(snapshot, dict):
         return None
@@ -1525,13 +1406,6 @@ def developer_perf():
 REFERENCE_FIELDS = ("label", "value", "hint", "state", "detail", "bytes", "changed", "unit")
 
 def developer_reference(snapshot):
-    # The rows are resolved against the box by the snapshot collector, which
-    # runs as root and can see every path in them. This service cannot: it runs
-    # as amitista-admin under ProtectHome, so /root does not exist inside its
-    # namespace and half the list would read as missing if it looked for itself.
-    # So it only projects what the collector saw, and says nothing when the
-    # collector has not run yet rather than falling back to a written-out list
-    # that nothing keeps honest.
     sections = snapshot.get("reference")
     if not isinstance(sections, list):
         return []
@@ -1559,9 +1433,6 @@ def developer_reference(snapshot):
     return out
 
 def developer_releases(snapshot):
-    # overview.json lists releases newest first, so the build before entry n is
-    # entry n+1. The delta is what that deploy actually changed in size, which
-    # is the cheapest available answer to "did that build do anything".
     releases = snapshot.get("releases")
     if not isinstance(releases, list):
         releases = []
@@ -2360,11 +2231,6 @@ ENCHANGE_REASONS = {
 
 
 def enchange_fetch(path):
-    """Read-only GET against the exchange bot's control port.
-
-    Deliberately has no payload argument. Nothing the panel does to the logs
-    changes them, and an endpoint that cannot POST cannot be talked into it.
-    """
     if not ENCHANGE_URL:
         raise EnchangeDown("not-configured")
     if not ENCHANGE_TOKEN:
@@ -2424,12 +2290,6 @@ def github_art(value):
 
 
 def remote_art(value):
-    """The two content CDNs this service will fetch an image from.
-
-    fetch_art is reachable from a request, so the host is the whole of the
-    defence: anything not on this list is not fetched at all, whatever the
-    panel asked for.
-    """
     return discord_art(value) or github_art(value)
 
 
@@ -2558,8 +2418,6 @@ def support_ticket(value):
         "channelGone": bool(value.get("channelGone")),
         "lastMessageAt": support_stamp(value.get("lastMessageAt")),
         "lastMessageMine": bool(value.get("lastMessageMine")) if value.get("lastMessageMine") is not None else None,
-        # One flattened line of whatever was said last, so the inbox can be
-        # triaged without opening every ticket. The bot trims it to 160 already.
         "preview": str(value.get("preview") or "")[:160] or None,
     }
 
@@ -3155,7 +3013,6 @@ def track_event(value):
 
 
 def transcript_row(value):
-    """One archived transcript, as the panel's global search shows it."""
     if not isinstance(value, dict):
         return None
     code = str(value.get("code") or "")
@@ -3847,13 +3704,6 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def send_transcript_file(self, name, data, kind="text/html; charset=utf-8"):
-        """Hands back a transcript the browser saves rather than renders.
-
-        A transcript is other people's words in a document served from this
-        origin, so it must never be rendered here: `attachment` plus a sandbox
-        CSP keeps it out of the site's origin even if a browser ignores the
-        disposition.
-        """
         safe = name if TRANSCRIPT_FILE.match(name or "") else "transcript.html"
         self.send_response(200)
         self.send_header("Content-Type", kind)
@@ -3998,30 +3848,12 @@ class Handler(BaseHTTPRequestHandler):
         return session
 
     def require_private(self, group):
-        """A group handed out by account name rather than by permission.
-
-        Deliberately not a permission: an owner resolves to every permission at
-        read time, so any permission invented for this would be held by every
-        owner the moment it existed. The account list is the one thing an owner
-        cannot grant themselves from inside the panel.
-        """
         session = self.require_session()
         if group not in private_groups_for(session["record"]["name"]):
             raise Rejected(403, "You do not have access to that.")
         return session
 
     def require_github(self):
-        """The read half of the GitHub group: the permission, or the account.
-
-        More than one way in, because the named account has to be able to open
-        the group whatever role it holds — people and access is drawn from the
-        same snapshot as every other section, so being shut out of the read
-        route would shut it out of the one section it is named for. Security
-        counts on its own for the same reason from the other end: a role
-        hand-tuned to it alone would otherwise be offered a screen this route
-        then refuses to fill. What each of them gets to see once inside is
-        narrow_github's business, not this one's.
-        """
         session = self.require_session()
         record = session["record"]
         granted = record.get("permissions") or []
@@ -4171,12 +4003,6 @@ class Handler(BaseHTTPRequestHandler):
                 self.close_connection = True
 
     def c2c_reply(self, path):
-        """Answers with the exchange bot's payload, or with why it could not.
-
-        A 503 with a reason, never an empty list: "no entries" and "the bot is
-        not running" look identical in a table, and the second one is the
-        answer someone opening a log page at 3am actually needs.
-        """
         try:
             return enchange_fetch(path)
         except EnchangeDown as failure:
@@ -4217,19 +4043,7 @@ class Handler(BaseHTTPRequestHandler):
 
         self.reply(200, self.c2c_reply("/logs?" + urllib.parse.urlencode(wanted)))
 
-    # Access changes. Each one is written down and answered; none of them is
-    # carried out here. What comes back says what was asked for, not what
-    # happened — the panel is careful to word it that way too, because a change
-    # that GitHub goes on to refuse would otherwise have been reported as done.
-
     def handle_github_avatar(self):
-        """Re-serve a GitHub avatar from this origin.
-
-        The panel cannot hot-link avatars.githubusercontent.com: the site is
-        served under img-src 'self' data:, so the browser refuses the image.
-        Same answer as the Discord artwork above — fetch it here, cache it, and
-        hand it back same-origin.
-        """
         self.require_github()
         url = github_avatar_for(self.query("login", 64))
         if url is None:
@@ -4242,17 +4056,6 @@ class Handler(BaseHTTPRequestHandler):
         self.send_blob(fetched[0], fetched[1])
 
     def handle_github_review(self):
-        """What a model makes of one pull request.
-
-        A GET rather than a POST, and deliberately: asking costs a model call
-        the first time and nothing afterwards, and nothing about the pull
-        request changes either way. Nothing here writes to GitHub.
-
-        The diff is read out of the snapshot the deploy writes, because this
-        service holds no GitHub token and could not fetch one. So a pull request
-        the collector has not looked into deeply cannot be reviewed, and says so
-        rather than being reviewed on its file names alone.
-        """
         session = self.require_github()
         repo = self.query("repo", 100)
         raw = self.query("number", 12)
@@ -5525,13 +5328,6 @@ class Handler(BaseHTTPRequestHandler):
         if len(user) > USER_LIMIT or len(password) > PASSWORD_LIMIT:
             raise Rejected(400, "Those credentials are not right.")
 
-        # Sign-in matches the stored name without caring about case: someone whose
-        # account is "Blxr" gets in typing "blxr" or "BLXR". Everything after this
-        # line uses the *stored* spelling, so the session, the audit line and the
-        # alert all read the same as the account itself. The account lockout key
-        # was already lowercased, so a case-flipping attacker never had a fresh
-        # allowance of attempts. Creation refuses a name that differs from an
-        # existing one only by case, which is what keeps this lookup unambiguous.
         canonical = users.canonical(user)
         if canonical is not None:
             user = canonical
@@ -5927,18 +5723,6 @@ class Handler(BaseHTTPRequestHandler):
         log.info("%s unlinked Google sign-in", record["name"])
         self.reply(200, {"google": users.google_state(record["name"])})
 
-    # Roles are stored, not hard-coded, since 17 Aug 2026 — an owner can retune
-    # admin/dev/viewer and invent new ones. Two rules are enforced in the store
-    # rather than here, because they are the ones that would lock the panel out
-    # of its own administration: the owner role always resolves to every
-    # permission, and saving a role rewrites the permission list of everyone who
-    # holds it, so a change takes effect on their next request instead of
-    # waiting for each account to be edited by hand.
-    #
-    # Deleting a built-in role does not delete it: it drops the stored override
-    # and puts the shipped default back. Only invented roles are really removed,
-    # and only when nobody holds one.
-
     def handle_role_save(self):
         session = self.require("users.manage")
         if not self.is_owner_session(session):
@@ -6122,18 +5906,6 @@ class Handler(BaseHTTPRequestHandler):
         if not state.get("linked"):
             raise Rejected(400, "Link a Discord account first.")
         return state
-
-    # The two handlers below are the users.read view of somebody else's Discord
-    # link. They deliberately mirror the /account/discord/* pair rather than
-    # sharing code with it: those run as "whoever is signed in", these run as
-    # "an operator looking at another account", and collapsing the two would
-    # make it far too easy to lose the permission check on one path. Nothing
-    # here can change anything — no nickname, no unlink — it is read-only.
-    #
-    # The artwork cache is keyed by panel account name, which is why the image
-    # handler can hand back a portrait it never fetched itself: the profile
-    # call above remembers the URLs first, and a cold image request falls back
-    # to fetching the profile again.
 
     def users_discord_or_refuse(self, wanted):
         name = str(wanted or "").strip()
@@ -6797,19 +6569,11 @@ class Handler(BaseHTTPRequestHandler):
         }
 
     def owns_channel(self, discord_id, channel_id):
-        """Is that project record the caller's own? Asked by channel id.
-
-        `owns_project` answers the same question for a PRJ- code; hiding works
-        off the record id instead, because a project opened before the ID
-        upgrade has no PRJ- code and would otherwise be unhideable.
-        """
         if not re.match(r"^\d{17,20}$", str(channel_id or "")):
             return False
         try:
             answer = self.bot_or_refuse("/orders/order?id=%s" % urllib.parse.quote(str(channel_id)))
         except Rejected as refusal:
-            # "The bot is unreachable" is not "that is not your project" — say so,
-            # or hiding silently reports a missing project every time it is down.
             if refusal.status >= 500:
                 raise
             return False
@@ -7285,8 +7049,6 @@ class Handler(BaseHTTPRequestHandler):
             if row["visibility"] == "private":
                 continue
             project = client_project(row)
-            # Hiding is the holder's own view, so the row still ships — the
-            # panel decides whether to draw it, and can unhide without a reload.
             project["hidden"] = project["id"] in hidden
             mine.append(project)
 

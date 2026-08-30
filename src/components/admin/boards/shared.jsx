@@ -539,9 +539,6 @@ export function GeneralTag({ short, className = '' }) {
   );
 }
 
-// Same membership check as isGeneral, named for what boards.manage actually
-// means here: this account can already reach (and manage) this board from
-// its panel role alone, seat on it or not.
 export const isStaff = isGeneral;
 
 export function StaffTag({ className = '' }) {

@@ -4,10 +4,6 @@ import { formatAgo, formatStamp } from '../../../lib/admin';
 import { Empty, Figure, Panel, Pill, Row } from '../ui';
 import { GithubLink, count, listOf, repositoriesIn, short } from './shared';
 
-// The one question this view answers: is what is on GitHub actually running on
-// this box, and if not, what is holding it up? Every branch below ends in a
-// plain sentence saying so, because "behind by 2" on its own does not tell you
-// whether to wait or to go and fix something.
 function verdict(repo) {
   if (!repo.present) {
     return {
@@ -28,13 +24,6 @@ function verdict(repo) {
     };
   }
 
-  // Diverged is checked before unpushed, and the order is the whole point. Both
-  // states have commits on the box that GitHub has not got, so an `ahead > 0`
-  // test on its own answers "unpushed" to both and never mentions the branch has
-  // moved as well. That reads as a thing to get round to. It is not: the two
-  // have different history, the deploy fast-forwards and a fast-forward is
-  // exactly what cannot happen here, so nothing new goes live until somebody
-  // puts the checkout back on the branch.
   if (repo.ahead > 0 && repo.behind > 0) {
     return {
       tone: 'rose',
@@ -113,22 +102,11 @@ function verdict(repo) {
   };
 }
 
-// Where a commit lives on GitHub. Built rather than collected: the snapshot
-// carries html_url for the commits GitHub listed, but not for the one sitting
-// in the checkout, which is the one most worth opening.
 const commitUrl = (repoUrl, sha) => (repoUrl && sha ? `${repoUrl}/commit/${sha}` : null);
 
-// Where a SHA sits in the listing GitHub gave us. The listing carries seven
-// characters and the checkout carries all forty, so the comparison only works
-// this way round. -1 means the checkout is older than the listing reaches, which
-// is a different answer from "nothing is waiting" and is said as one.
 const positionOf = (commits, sha) =>
   typeof sha === 'string' && sha ? commits.findIndex((commit) => sha.startsWith(commit.sha)) : -1;
 
-// One commit, said in full and in one place: what it changed, who wrote it,
-// when, and a way to go and read it. This is the thing the page exists to show
-// and it used to be spread over two rows with four unrelated ones between them,
-// so neither half told you anything on its own.
 function Commit({ title, sha, facts = {}, url, tone = 'text-white', note }) {
   const at = facts.committed;
   const href = url ?? null;
@@ -166,10 +144,6 @@ function Commit({ title, sha, facts = {}, url, tone = 'text-white', note }) {
   );
 }
 
-// The commits that have landed on the branch and are not on the box yet, named
-// rather than counted. "Behind by 2" tells you to wait; these two lines tell you
-// what you are waiting for, which is the difference between the page being
-// worth opening and not.
 function Waiting({ commits, behind, branch, diverged }) {
   return (
     <div className="px-4 sm:px-6 py-4 border-b border-[#17171d]">
@@ -217,9 +191,6 @@ function Waiting({ commits, behind, branch, diverged }) {
   );
 }
 
-// The small print, kept small. These were one joined sentence in a row that read
-// "public · JavaScript · 4.2 MB · 3 open PRs" and could not be scanned for any
-// one of them; separated and labelled, each is findable.
 function Facts({ items }) {
   const shown = items.filter((item) => item.value !== null && item.value !== undefined);
   if (shown.length === 0) return null;
@@ -244,13 +215,9 @@ function Repository({ repo }) {
   const facts = repo.facts ?? {};
   const commits = listOf(repo, 'commits');
   const pulls = listOf(repo, 'pulls').length;
-  // The real count. facts.openIssues is GitHub's, and GitHub counts pull
-  // requests as issues, so it reads far too high on a busy repository.
   const issues = listOf(repo, 'issues').length;
   const others = listOf(repo, 'branches').filter((branch) => !branch.default).length;
 
-  // Only when the two have actually diverged. Naming them as waiting when the
-  // box is on the tip would be a list of commits that already deployed.
   const at = positionOf(commits, repo.local);
   const pending = !repo.synced && repo.behind > 0 && at > 0 ? commits.slice(0, at) : [];
 
@@ -363,13 +330,7 @@ function Repository({ repo }) {
   );
 }
 
-// The answer before the detail. Three panels of prose is fine once you know
-// something is wrong, and no use at all for finding out whether anything is.
 function Summary({ repositories }) {
-  // Diverged counts as broken here rather than as "behind". It is behind, but
-  // saying so puts it in the same sentence as a checkout that is merely a tick
-  // out of date, and the two want opposite things from the reader: one resolves
-  // itself in a minute, the other resolves itself never.
   const broken = repositories.filter(
     (repo) =>
       !repo.present ||

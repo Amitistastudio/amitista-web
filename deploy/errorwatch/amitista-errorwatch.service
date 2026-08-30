@@ -6,17 +6,12 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-# It reads nginx's logs (group adm), the Shield and API feeds (group
-# amitista-admin) and the journal. No one account below root can see all three,
-# which is the reason this is not part of the bot.
 ExecStart=/usr/bin/python3 /root/website/deploy/errorwatch/errorwatch.py
 StateDirectory=amitista/errorwatch
 StateDirectoryMode=0700
 TimeoutStartSec=120
 Nice=10
 
-# It only ever reads and posts to the loopback. Nothing it finds leads to an
-# action, so it needs no capability to take one.
 NoNewPrivileges=yes
 ProtectHome=read-only
 ProtectKernelTunables=yes
