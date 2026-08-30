@@ -24,7 +24,6 @@ import {
   HeartPulse,
   Gauge,
   Rocket,
-  BookMarked,
   Zap,
   FolderGit2,
   CircleDot,
@@ -204,14 +203,6 @@ const SECTIONS = [
     needs: 'developer.read',
     group: 'developer',
     blurb: 'what is serving, what each deploy changed, and what you can roll back to',
-  },
-  {
-    id: 'dev-reference',
-    label: 'Reference',
-    icon: BookMarked,
-    needs: 'developer.read',
-    group: 'developer',
-    blurb: 'where everything lives on the box, the unit names, the logs and the commands',
   },
   {
     // Kept as 'github' rather than renamed to 'github-repositories': it is the
