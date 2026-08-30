@@ -1166,6 +1166,12 @@ GITHUB_LOGIN = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$"
 
 GITHUB_QUEUE_LIMIT = 50
 
+GITHUB_CARRY_WAIT = float(os.environ.get("ADMIN_GITHUB_WAIT", "8"))
+
+GITHUB_CARRY_GRACE = 3.0
+
+GITHUB_CARRY_STEP = 0.15
+
 def age_of(generated):
     if not isinstance(generated, str):
         return None
@@ -1296,6 +1302,45 @@ def github_queued():
             out.append(intent)
     return out
 
+def github_carried(want):
+    snapshot = read_json_file(GITHUB_PATH)
+    people = (snapshot or {}).get("people")
+    actions = people.get("actions") if isinstance(people, dict) else None
+    for entry in actions if isinstance(actions, list) else []:
+        if isinstance(entry, dict) and entry.get("id") == want:
+            return entry
+    return None
+
+def github_watch(want, path):
+    if GITHUB_CARRY_WAIT <= 0:
+        return None
+
+    deadline = time.monotonic() + GITHUB_CARRY_WAIT
+    grace = time.monotonic() + GITHUB_CARRY_GRACE
+    taken = False
+    seen = None
+
+    while time.monotonic() < deadline:
+        time.sleep(GITHUB_CARRY_STEP)
+        if not taken:
+            if os.path.exists(path):
+                if time.monotonic() > grace:
+                    return None
+                continue
+            taken = True
+        try:
+            written = os.stat(GITHUB_PATH).st_mtime_ns
+        except OSError:
+            continue
+        if written == seen:
+            continue
+        seen = written
+        carried = github_carried(want)
+        if carried is not None:
+            return carried
+
+    return None
+
 def github_queue(session, intent):
     if intent["action"] != "uninvite":
         login = intent.get("login")
@@ -1326,6 +1371,8 @@ def github_queue(session, intent):
     intent["at"] = stamp()
     intent["by"] = session["record"]["name"]
 
+    target = os.path.join(GITHUB_QUEUE, "%f-%s.json" % (time.time(), intent["id"]))
+
     try:
         os.makedirs(GITHUB_QUEUE, exist_ok=True)
         handle = tempfile.NamedTemporaryFile(
@@ -1338,7 +1385,7 @@ def github_queue(session, intent):
             os.fsync(handle.fileno())
             handle.close()
             os.chmod(handle.name, 0o640)
-            os.replace(handle.name, os.path.join(GITHUB_QUEUE, "%f-%s.json" % (time.time(), intent["id"])))
+            os.replace(handle.name, target)
         except BaseException:
             try:
                 os.unlink(handle.name)
@@ -1349,11 +1396,20 @@ def github_queue(session, intent):
         log.warning("github queue write failed: %s", failure)
         raise Rejected(503, "The request could not be written down. Nothing has been changed.")
 
+    carried = github_watch(intent["id"], target)
+
     log.info(
-        "github access queued by %s: %s %s %s",
-        intent["by"], intent["action"], intent.get("repo"), intent.get("login") or intent.get("invite"),
+        "github access %s by %s: %s %s %s%s",
+        "queued" if carried is None else ("carried out" if carried.get("ok") else "refused"),
+        intent["by"], intent["action"], intent.get("repo"),
+        intent.get("login") or intent.get("invite"),
+        "" if carried is None or carried.get("ok") else " — %s" % carried.get("error"),
     )
-    return {"queued": intent, "waiting": len(github_queued())}
+
+    answer = {"queued": intent, "waiting": len(github_queued())}
+    if carried is not None:
+        answer["carried"] = carried
+    return answer
 
 
 PERF_PAGE_FIELDS = ("path", "ttfb", "fcp", "lcp", "cls", "longTaskMs", "bytes", "lcpElement", "injected", "over")

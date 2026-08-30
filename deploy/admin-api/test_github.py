@@ -21,6 +21,7 @@ os.environ["ADMIN_SECRET"] = "7" * 64
 os.environ["ADMIN_REVOKED"] = os.path.join(workspace, "revoked-before")
 os.environ["ADMIN_ORIGIN"] = "https://amitista.com"
 os.environ["ADMIN_GITHUB"] = SNAPSHOT
+os.environ["ADMIN_GITHUB_WAIT"] = "0"
 os.environ["ADMIN_RATE_PER_IP"] = "5000"
 os.environ["ADMIN_LOCKOUT_AFTER"] = "500"
 os.environ["ADMIN_ACCOUNT_LOCKOUT_AFTER"] = "500"
@@ -491,6 +492,75 @@ for name in queued():
     os.unlink(os.path.join(QUEUE, name))
 status, body = read(insider)
 check("an empty queue is an empty list, not a missing key", body["queued"] == [])
+
+
+def collect_one(outcome, wait=5.0):
+    limit = time.monotonic() + wait
+    while time.monotonic() < limit:
+        names = queued()
+        if not names:
+            time.sleep(0.02)
+            continue
+        path = os.path.join(QUEUE, names[0])
+        with open(path, "r", encoding="utf-8") as handle:
+            intent = json.load(handle)
+        os.unlink(path)
+        with open(SNAPSHOT, "r", encoding="utf-8") as handle:
+            snapshot = json.load(handle)
+        people = snapshot.setdefault("people", {})
+        people.setdefault("actions", []).insert(0, dict(intent, done=stamp(0), **outcome))
+        spare = SNAPSHOT + ".collecting"
+        with open(spare, "w", encoding="utf-8") as handle:
+            json.dump(snapshot, handle)
+        os.replace(spare, SNAPSHOT)
+        return
+
+
+def alongside(outcome, path, body):
+    hand = threading.Thread(target=collect_one, args=(outcome,), daemon=True)
+    hand.start()
+    started = time.monotonic()
+    status, answer = ask(path, body)
+    hand.join(10)
+    return status, answer, time.monotonic() - started
+
+
+admin_api.GITHUB_CARRY_WAIT = 5.0
+
+status, body, spent = alongside(
+    {"ok": True, "status": 201, "error": None, "result": "changed"},
+    "/github/access",
+    {"repo": "amitista-web", "login": "octocat", "permission": "maintain"},
+)
+check("a change that lands comes back done, not queued", status == 200 and "carried" in body)
+check("and says it worked", body["carried"]["ok"] is True)
+check("and what became of it", body["carried"]["result"] == "changed")
+check("and it is the same request that was asked for", body["carried"]["id"] == body["queued"]["id"])
+check("and nothing is left waiting", body["waiting"] == 0 and queued() == [])
+check("and it did not sit on the full wait", spent < admin_api.GITHUB_CARRY_WAIT)
+
+status, body, _ = alongside(
+    {"ok": False, "status": 404, "error": "Not Found", "result": None},
+    "/github/access/remove",
+    {"repo": "amitista-web", "login": "ghost"},
+)
+check("a change GitHub refuses still comes back", status == 200 and "carried" in body)
+check("saying it did not work", body["carried"]["ok"] is False)
+check("and why", body["carried"]["error"] == "Not Found")
+
+held = admin_api.GITHUB_CARRY_GRACE
+admin_api.GITHUB_CARRY_GRACE = 0.4
+started = time.monotonic()
+status, body = ask("/github/access", {"repo": "amitista-web", "login": "octocat", "permission": "pull"})
+spent = time.monotonic() - started
+admin_api.GITHUB_CARRY_GRACE = held
+check("with nothing collecting, it comes back as queued", status == 200 and "carried" not in body)
+check("and gives up rather than holding the request open", spent < admin_api.GITHUB_CARRY_WAIT)
+check("and what was asked for is still waiting to be carried out", len(queued()) == 1)
+
+admin_api.GITHUB_CARRY_WAIT = 0.0
+for name in queued():
+    os.unlink(os.path.join(QUEUE, name))
 
 for method in ("POST", "DELETE", "PUT"):
     status, _, _ = request(method, "/github/repositories", {} if method != "DELETE" else None, cookie=insider)

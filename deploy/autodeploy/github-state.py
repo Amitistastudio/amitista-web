@@ -1222,12 +1222,20 @@ def carry_out(api, intent):
     )
 
 
+def forget_access_etags(api, repo):
+    prefix = "/repos/%s/%s/" % (ORG, repo)
+    for path in list(api.etags):
+        if path.startswith(prefix) and ("collaborators" in path or "invitations" in path):
+            api.etags.pop(path, None)
+
+
 def drain_queue(api, repos, actor, previous):
     done = []
+    touched = set()
     try:
         names = sorted(name for name in os.listdir(QUEUE_DIR) if name.endswith(".json"))
     except OSError:
-        return previous
+        return previous, touched
 
     for name in names[:MAX_QUEUE_PER_TICK]:
         path = os.path.join(QUEUE_DIR, name)
@@ -1240,13 +1248,83 @@ def drain_queue(api, repos, actor, previous):
             continue
 
         why = check_intent(intent, repos, actor)
-        done.append(refuse(intent, why) if why else carry_out(api, intent))
+        outcome = refuse(intent, why) if why else carry_out(api, intent)
+        if outcome.get("ok") and outcome.get("repo"):
+            forget_access_etags(api, outcome["repo"])
+            touched.add(outcome["repo"])
+        done.append(outcome)
 
     if not done:
-        return previous
+        return previous, touched
 
     kept = previous if isinstance(previous, list) else []
-    return (list(reversed(done)) + kept)[:MAX_ACTION_LOG]
+    return (list(reversed(done)) + kept)[:MAX_ACTION_LOG], touched
+
+
+def queue_waiting():
+    try:
+        return any(name.endswith(".json") for name in os.listdir(QUEUE_DIR))
+    except OSError:
+        return False
+
+
+def drain_now(out_path, pairs):
+    if not queue_waiting():
+        print("nothing was waiting")
+        return 0
+
+    auth = token()
+    if not auth:
+        print("no GitHub token on this box — nothing could be asked of GitHub", file=sys.stderr)
+        return 1
+
+    previous = read_previous(out_path)
+    api = GitHub(auth, previous.get("etags"))
+    held_people = previous.get("people") if isinstance(previous.get("people"), dict) else {}
+    actor = actor_login(api, held_people.get("actor"))
+
+    actions = held_people.get("actions")
+    after, touched = drain_queue(api, set(name for name, _ in pairs), actor, actions)
+    if after is actions:
+        print("nothing could be read from the queue")
+        return 0
+
+    repositories = previous.get("repositories")
+    repositories = repositories if isinstance(repositories, list) else []
+    for entry in repositories:
+        if not isinstance(entry, dict) or entry.get("name") not in touched:
+            continue
+        if isinstance(entry.get("access"), list):
+            entry["access"] = repo_access(api, entry["name"], entry["access"])
+        if isinstance(entry.get("invites"), list):
+            entry["invites"] = repo_invites(api, entry["name"], entry["invites"])
+
+    people = dict(held_people)
+    people["actor"] = actor
+    if after:
+        people["actions"] = after
+    else:
+        people.pop("actions", None)
+
+    payload = dict(previous)
+    payload["repositories"] = repositories
+    payload["people"] = people
+    payload["etags"] = api.etags
+    if api.remaining is not None:
+        payload["rate"] = {"remaining": api.remaining, "limit": api.limit, "reset": api.reset}
+
+    try:
+        write_atomic(out_path, payload)
+    except OSError as failure:
+        print("could not write %s: %s" % (out_path, failure), file=sys.stderr)
+        return 1
+
+    carried = len(after or []) - len(actions or [])
+    print(
+        "%d access change(s) carried out; %d request(s)%s"
+        % (carried, api.calls, "" if api.remaining is None else ", %d left this hour" % api.remaining)
+    )
+    return 0
 
 
 def read_jsonl(path, limit):
@@ -1587,12 +1665,19 @@ def write_atomic(path, payload):
 def main():
     arguments = sys.argv[1:]
     force = False
+    drain = False
     if arguments and arguments[0] == "--full":
         force = True
         arguments = arguments[1:]
+    elif arguments and arguments[0] == "--drain":
+        drain = True
+        arguments = arguments[1:]
 
     if len(arguments) < 2:
-        print("usage: github-state.py [--full] OUT_PATH name=/path [name=/path ...]", file=sys.stderr)
+        print(
+            "usage: github-state.py [--full|--drain] OUT_PATH name=/path [name=/path ...]",
+            file=sys.stderr,
+        )
         return 2
 
     out_path = arguments[0]
@@ -1603,6 +1688,9 @@ def main():
             print("expected name=path, got %r" % argument, file=sys.stderr)
             return 2
         pairs.append((name, path))
+
+    if drain:
+        return drain_now(out_path, pairs)
 
     auth = token()
     previous = read_previous(out_path)
@@ -1618,7 +1706,7 @@ def main():
     actions = held_people.get("actions")
     carried = 0
     if auth:
-        after = drain_queue(api, set(name for name, _ in pairs), actor, actions)
+        after, _touched = drain_queue(api, set(name for name, _ in pairs), actor, actions)
         if after is not actions:
             carried = len(after or []) - len(actions or [])
             want_detail = True

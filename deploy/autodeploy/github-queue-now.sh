@@ -35,7 +35,7 @@ fi
 rounds=0
 while waiting && [ "$rounds" -lt "$MAX_ROUNDS" ]; do
   rounds=$((rounds + 1))
-  if ! "$SELF_DIR/github-state.py" "$GITHUB_STATE" \
+  if ! "$SELF_DIR/github-state.py" --drain "$GITHUB_STATE" \
       "amitista-web=$WEB" "amitista-bots=$BOTS" "amitista-shield=$SHIELD" \
       | sed 's/^/       /'; then
     warn "the collector failed; what is left in the queue waits for the next deploy tick"

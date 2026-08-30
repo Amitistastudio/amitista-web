@@ -37,6 +37,7 @@ class FakeGitHub:
         self.sent = []
         self.expected = []
         self.messages = {}
+        self.etags = {}
 
     def get(self, path, have_cached=False, expected=()):
         self.asked.append(path)
@@ -616,39 +617,56 @@ def waiting():
 queue("1.json", {"id": "a", "action": "grant", "repo": "amitista-web", "login": "octocat", "permission": "push"})
 queue("2.json", {"id": "b", "action": "grant", "repo": "amitista-web", "login": "octocat", "permission": "admin"})
 api = FakeGitHub([], sends=[(None, 204, None), (None, 204, None)])
-log = state.drain_queue(api, REPOS, ACTOR, None)
+api.etags = {
+    "/repos/%s/amitista-web/collaborators?affiliation=all&per_page=100" % state.ORG: "old",
+    "/repos/%s/amitista-web/invitations?per_page=100" % state.ORG: "old",
+    "/repos/%s/amitista-web/pulls?state=open" % state.ORG: "keep-me",
+    "/repos/%s/amitista-bots/collaborators?affiliation=all&per_page=100" % state.ORG: "keep-me",
+}
+log, touched = state.drain_queue(api, REPOS, ACTOR, None)
 check("everything queued is carried out", len(api.sent) == 2)
 check("in the order it was queued", [call[2]["permission"] for call in api.sent] == ["push", "admin"])
 check("the queue is emptied", waiting() == [])
 check("and what happened is written down", len(log) == 2)
 check("newest first, so the panel reads top-down", log[0]["permission"] == "admin")
+check("the repository that changed is named", touched == {"amitista-web"})
+check(
+    "and its access is no longer taken from the cache",
+    not any("amitista-web" in path and "collaborators" in path for path in api.etags),
+)
+check(
+    "nor are its invitations",
+    not any("amitista-web" in path and "invitations" in path for path in api.etags),
+)
+check("but the rest of what it knows is kept", len(api.etags) == 2)
 
 queue("3.json", {"id": "c", "action": "grant", "repo": "not-ours", "login": "octocat", "permission": "admin"})
 api = FakeGitHub([], sends=[])
-log = state.drain_queue(api, REPOS, ACTOR, log)
+log, touched = state.drain_queue(api, REPOS, ACTOR, log)
 check("a request that fails the check reaches GitHub not at all", api.sent == [])
 check("but is still recorded", log[0]["ok"] is False)
 check("with the reason", "not a repository on this box" in log[0]["error"])
 check("and is not left to be tried again", waiting() == [])
+check("and no repository is named as changed", touched == set())
 
 queue("4.json", {"id": "d", "action": "revoke", "repo": "amitista-web", "login": ACTOR})
 api = FakeGitHub([], sends=[])
-log = state.drain_queue(api, REPOS, ACTOR, log)
+log, touched = state.drain_queue(api, REPOS, ACTOR, log)
 check("this box's own access cannot be revoked from the panel", api.sent == [])
 
 with open(os.path.join(state.QUEUE_DIR, "5.json"), "w", encoding="utf-8") as handle:
     handle.write("{not json")
 api = FakeGitHub([], sends=[])
 before = len(log)
-log = state.drain_queue(api, REPOS, ACTOR, log)
+log, touched = state.drain_queue(api, REPOS, ACTOR, log)
 check("a corrupt queue file is thrown away, not acted on", api.sent == [] and waiting() == [])
 check("and adds nothing to the log", len(log) == before)
 
 api = FakeGitHub([], sends=[])
-check("an empty queue leaves the log exactly as it was", state.drain_queue(api, REPOS, ACTOR, log) is log)
+check("an empty queue leaves the log exactly as it was", state.drain_queue(api, REPOS, ACTOR, log)[0] is log)
 
 state.QUEUE_DIR = os.path.join(state.QUEUE_DIR, "gone")
-check("a queue directory that does not exist is not an error", state.drain_queue(api, REPOS, ACTOR, log) is log)
+check("a queue directory that does not exist is not an error", state.drain_queue(api, REPOS, ACTOR, log)[0] is log)
 
 print("\n-- performance, joined to the commit that caused it")
 
@@ -1040,6 +1058,154 @@ check("GitHub's own reason is kept",
 
 api, _ = asking(FakeError(304))
 check("a 304 is not a failure of any kind", not api.refused and not api.unreachable)
+
+
+print("\n-- the panel's changes, carried out the moment they are asked for")
+
+live_dir = tempfile.mkdtemp(prefix="github-drain-test-")
+state.QUEUE_DIR = os.path.join(live_dir, "queue")
+state.TOKEN_FILE = os.path.join(live_dir, "token")
+os.makedirs(state.QUEUE_DIR)
+
+SNAPSHOT = os.path.join(live_dir, "github.json")
+PAIRS = [("amitista-web", "/root/website"), ("amitista-studio-bot", "/opt/amitista/studio-bot")]
+
+read_back = []
+carried_out = []
+
+
+class LiveGitHub:
+
+    def __init__(self, auth, etags):
+        self.auth = auth
+        self.etags = dict(etags or {})
+        self.calls = 0
+        self.spent = 0
+        self.remaining = None
+        self.limit = None
+        self.reset = None
+
+    def get(self, path, have_cached=False, expected=()):
+        self.calls += 1
+        read_back.append((path, bool(have_cached and self.etags.get(path))))
+        if path == "/user":
+            return {"login": ACTOR}, "ok"
+        if "collaborators" in path:
+            self.etags[path] = "fresh"
+            return [
+                {
+                    "login": "octocat",
+                    "avatar_url": "https://avatars.githubusercontent.com/u/1",
+                    "html_url": "https://github.com/octocat",
+                    "type": "User",
+                    "role_name": "maintain",
+                }
+            ], "ok"
+        if "invitations" in path:
+            self.etags[path] = "fresh"
+            return [], "ok"
+        return None, "error"
+
+    def send(self, method, path, body=None):
+        self.calls += 1
+        carried_out.append((method, path, body))
+        return ({"id": 77}, 201, None) if method == "PUT" else (None, 204, None)
+
+
+state.GitHub = LiveGitHub
+
+
+def write_token():
+    with open(state.TOKEN_FILE, "w", encoding="utf-8") as handle:
+        handle.write("ghp_stand_in\n")
+
+
+def write_state():
+    payload = {
+        "generated": "2026-08-30T10:00:00Z",
+        "org": state.ORG,
+        "branch": "main",
+        "repositories": [
+            {
+                "name": "amitista-web",
+                "path": "/root/website",
+                "access": [{"login": "someone", "role": "push", "direct": True}],
+                "invites": [],
+                "pulls": [{"number": 3}],
+            },
+            {"name": "amitista-studio-bot", "path": "/opt/amitista/studio-bot"},
+        ],
+        "people": {"actor": ACTOR, "members": [{"login": ACTOR}]},
+        "etags": {
+            "/repos/%s/amitista-web/collaborators?affiliation=all&per_page=100" % state.ORG: "old",
+            "/repos/%s/amitista-web/pulls?state=open" % state.ORG: "keep-me",
+        },
+        "performance": {"measured": "yesterday"},
+    }
+    with open(SNAPSHOT, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle)
+
+
+def written():
+    with open(SNAPSHOT, "r", encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+write_token()
+write_state()
+check("an empty queue is a quiet success", state.drain_now(SNAPSHOT, PAIRS) == 0)
+check("and costs nothing at GitHub", read_back == [] and carried_out == [])
+check("and leaves the snapshot alone", written()["generated"] == "2026-08-30T10:00:00Z")
+
+write_state()
+queue("a.json", {
+    "id": "aaaa1111", "action": "grant", "repo": "amitista-web",
+    "login": "octocat", "permission": "maintain", "by": "blxr",
+})
+check("a change asked for is carried out at once", state.drain_now(SNAPSHOT, PAIRS) == 0)
+check("nothing is left waiting for the next tick", waiting() == [])
+check("it reached GitHub", carried_out[0][0] == "PUT" and "octocat" in carried_out[0][1])
+
+out = written()
+done = out["people"]["actions"][0]
+check("and what happened is written down", done["id"] == "aaaa1111" and done["ok"] is True)
+check("with what became of it", done["result"] == "invited")
+check("and who asked for it", done["by"] == "blxr")
+
+web = [entry for entry in out["repositories"] if entry["name"] == "amitista-web"][0]
+check("the access list is read back from GitHub, not guessed at",
+      [row["login"] for row in web["access"]] == ["octocat"])
+check("with the level it now holds", web["access"][0]["role"] == "maintain")
+check("and read fresh, never from a cached etag",
+      all(not cached for path, cached in read_back if "collaborators" in path))
+check("the invitations are read back too", any("invitations" in path for path, _ in read_back))
+check("the rest of the repository is untouched", web["pulls"][0]["number"] == 3)
+check("a repository the panel did not touch is not given an access list",
+      "access" not in out["repositories"][1])
+check("an etag for anything else is kept",
+      out["etags"]["/repos/%s/amitista-web/pulls?state=open" % state.ORG] == "keep-me")
+check("the snapshot's own age is not moved", out["generated"] == "2026-08-30T10:00:00Z")
+check("and nothing else in it is lost", out["performance"]["measured"] == "yesterday")
+
+read_back.clear()
+carried_out.clear()
+write_state()
+queue("b.json", {"id": "bbbb2222", "action": "grant", "repo": "amitista-web",
+                 "login": ACTOR, "permission": "admin", "by": "blxr"})
+check("a request that fails the check is still answered", state.drain_now(SNAPSHOT, PAIRS) == 0)
+refused = written()["people"]["actions"][0]
+check("and written down as refused", refused["ok"] is False)
+check("and never reached GitHub", carried_out == [])
+check("and nothing was read back for it",
+      not any("collaborators" in path for path, _ in read_back))
+
+write_state()
+queue("c.json", {"id": "cccc3333", "action": "revoke", "repo": "amitista-web",
+                 "login": "octocat", "by": "blxr"})
+os.unlink(state.TOKEN_FILE)
+check("with no token it refuses to start", state.drain_now(SNAPSHOT, PAIRS) == 1)
+check("and leaves what was asked for where it is", waiting() == ["c.json"])
+check("and does not touch the snapshot", "actions" not in written()["people"])
 
 
 if failures:

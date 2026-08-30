@@ -644,19 +644,32 @@ export default function People({ data, onRefresh }) {
     return () => clearInterval(timer);
   }, [waiting, onRefresh]);
 
-  const ask = React.useCallback(async (what, run) => {
-    setBusy(true);
-    setFailure(null);
-    try {
-      await run();
-      setAsked(what);
-    } catch (problem) {
-      setFailure(problem.message);
-      setAsked(null);
-    } finally {
-      setBusy(false);
-    }
-  }, []);
+  const ask = React.useCallback(
+    async (what, run) => {
+      setBusy(true);
+      setFailure(null);
+      try {
+        const carried = (await run())?.carried ?? null;
+        if (carried && carried.ok === false) {
+          setFailure(
+            carried.error
+              ? `Could not ${what.doing}: ${carried.error}`
+              : `Could not ${what.doing}.`,
+          );
+          setAsked(null);
+        } else {
+          setAsked({ done: carried !== null, text: carried !== null ? what.done : what.doing });
+        }
+      } catch (problem) {
+        setFailure(problem.message);
+        setAsked(null);
+      } finally {
+        setBusy(false);
+        if (onRefresh) onRefresh();
+      }
+    },
+    [onRefresh],
+  );
 
   const grant = async (repos, login, permission) => {
     const wanted = Array.isArray(repos) ? repos : [repos];
@@ -666,33 +679,61 @@ export default function People({ data, onRefresh }) {
     );
     setBusy(false);
 
-    const landed = wanted.filter((unused, index) => results[index].status === 'fulfilled');
+    const answers = results.map((result, index) => ({
+      repo: wanted[index],
+      carried: result.status === 'fulfilled' ? (result.value?.carried ?? null) : null,
+      why: result.status === 'rejected' ? (result.reason?.message ?? 'It was refused.') : null,
+    }));
+
+    const landed = answers.filter((answer) => answer.why === null && answer.carried?.ok !== false);
     const refused = [
       ...new Set(
-        results
-          .filter((result) => result.status === 'rejected')
-          .map((result) => result.reason?.message ?? 'It was refused.'),
+        answers
+          .filter((answer) => answer.why !== null || answer.carried?.ok === false)
+          .map((answer) => answer.why ?? answer.carried?.error ?? 'GitHub would not have it.'),
       ),
     ];
 
+    const settled = landed.every((answer) => answer.carried !== null);
+    const invited = landed.some((answer) => answer.carried?.result === 'invited');
+    const where = listSentence(landed.map((answer) => answer.repo));
+
     setAsked(
-      landed.length > 0
-        ? `${login} · ${roleLabel(permission)} on ${listSentence(landed)}`
-        : null,
+      landed.length === 0
+        ? null
+        : {
+            done: settled,
+            text: !settled
+              ? `${login} · ${roleLabel(permission)} on ${where}`
+              : invited
+                ? `${login} has been invited to ${where} as ${roleLabel(permission)}`
+                : `${login} is now ${roleLabel(permission)} on ${where}`,
+          },
     );
     setFailure(
       refused.length === 0
         ? null
         : wanted.length === 1
           ? refused[0]
-          : `${wanted.length - landed.length} of ${wanted.length} could not be asked for: ${refused.join(' ')}`,
+          : `${wanted.length - landed.length} of ${wanted.length} did not go through: ${refused.join(' ')}`,
     );
+    if (onRefresh) onRefresh();
   };
   const revoke = (repo, login) =>
-    ask(`remove ${login} from ${repo}`, () => queueGithubRevoke(repo, login));
+    ask(
+      {
+        doing: `remove ${login} from ${repo}`,
+        done: `${login} no longer has access to ${repo}`,
+      },
+      () => queueGithubRevoke(repo, login),
+    );
   const uninvite = (repo, invite, login) =>
-    ask(`cancel the invitation to ${login} on ${repo}`, () =>
-      queueGithubInviteCancel(repo, invite),
+    ask(
+      {
+        doing: `cancel the invitation to ${login} on ${repo}`,
+        done: `the invitation to ${login} on ${repo} has been cancelled`,
+      },
+      () => queueGithubInviteCancel(repo, invite),
     );
 
   if (repositories.length === 0) {
@@ -749,10 +790,15 @@ export default function People({ data, onRefresh }) {
 
       {failure && <Notice tone="rose">{failure}</Notice>}
       {asked && (
-        <Notice tone="amber" icon={Clock}>
-          Asked for: {asked}. It is being carried out at GitHub now — a second or two, and a
-          little longer if a deploy is mid-flight. This page is watching for it and will show what
-          happened under “Changes asked for” by itself.
+        <Notice tone={asked.done ? 'emerald' : 'amber'} icon={asked.done ? Check : Clock}>
+          {asked.done ? (
+            `Done at GitHub: ${asked.text}.`
+          ) : (
+            <>
+              Asked for: {asked.text}. It has not landed yet — this page shows it under “Changes
+              asked for” the moment it does.
+            </>
+          )}
         </Notice>
       )}
 
