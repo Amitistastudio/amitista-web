@@ -75,6 +75,8 @@ export async function fetchSession() {
       user: null,
       configured: result.body.configured !== false,
       google: Boolean(result.body.google),
+      gate: Boolean(result.body.gate),
+      gated: Boolean(result.body.gated),
       permissions: [],
     };
   }
@@ -93,9 +95,14 @@ export async function fetchSession() {
   };
 }
 
-export async function signIn(username, password, code, verification) {
+export async function passGate(verification) {
+  const result = await send('/gate', { 'cf-turnstile-response': verification });
+  if (result.ok) return true;
+  throw new Error(message(result, 'That check could not be confirmed. Try it once more.'));
+}
+
+export async function signIn(username, password, code) {
   const payload = code ? { username, password, code } : { username, password };
-  if (verification) payload['cf-turnstile-response'] = verification;
   const result = await send('/login', payload);
   if (result.ok) {
     return {
@@ -111,6 +118,11 @@ export async function signIn(username, password, code, verification) {
     const pending = new Error(message(result, 'Enter the code from your authenticator app.'));
     pending.needsCode = true;
     throw pending;
+  }
+  if (result.body.needs === 'gate') {
+    const stale = new Error(message(result, 'That verification has expired.'));
+    stale.needsGate = true;
+    throw stale;
   }
   throw new Error(message(result, `Sign-in failed (${result.status}).`));
 }
@@ -131,6 +143,7 @@ export function readSignInNotice(search) {
   if (!value) return null;
   if (value === 'code') return { step: 'google-code' };
   if (value === 'ok') return { step: 'done' };
+  if (value === 'gate') return { step: 'gate' };
   return { step: 'error', message: SIGNIN_NOTICES[value] ?? SIGNIN_NOTICES.failed };
 }
 

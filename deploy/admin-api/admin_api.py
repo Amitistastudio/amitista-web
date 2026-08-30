@@ -119,6 +119,8 @@ from admin_store import (
     verify_password,
 )
 
+import admin_turnstile
+
 try:
     import admin_google
 except ImportError as failure:
@@ -152,12 +154,14 @@ PROJECT_FILE_BODY_MAX = 48 * 1024 * 1024
 COOKIE_NAME = "amitista_admin"
 PENDING_COOKIE = "amitista_admin_step"
 PENDING_SECONDS = 300
+GATE_COOKIE = "amitista_admin_gate"
 PREFIX = "/api/admin"
 
 PASSWORD_CHANGE_ROUTES = frozenset(
     (
         "/healthz",
         "/session",
+        "/gate",
         "/account",
         "/account/password",
         "/login",
@@ -170,6 +174,9 @@ PASSWORD_CHANGE_ROUTES = frozenset(
 
 USER_LIMIT = 128
 PASSWORD_LIMIT = 512
+
+GATE_STALE = "That verification has expired. Confirm you are a person once more."
+GATE_SPENT = "That verification has been used up. Confirm you are a person once more."
 
 log = logging.getLogger("admin-api")
 
@@ -328,6 +335,11 @@ RATE_WINDOW = env_int("ADMIN_RATE_WINDOW", 900)
 LOCKOUT_AFTER = env_int("ADMIN_LOCKOUT_AFTER", 5)
 LOCKOUT_SECONDS = env_int("ADMIN_LOCKOUT_SECONDS", 900)
 ACCOUNT_LOCKOUT_AFTER = env_int("ADMIN_ACCOUNT_LOCKOUT_AFTER", 12)
+
+GATE_SECONDS = env_int("ADMIN_GATE_SECONDS", 1800)
+GATE_ATTEMPTS = env_int("ADMIN_GATE_ATTEMPTS", 20)
+GATE_WINDOW = env_int("ADMIN_GATE_WINDOW", 900)
+GATE_SIGNINS = env_int("ADMIN_GATE_SIGNINS", 5)
 
 INSECURE_COOKIE = env_flag("ADMIN_INSECURE_COOKIE")
 
@@ -803,6 +815,55 @@ def read_pending(token, now):
     return payload
 
 
+def gate_live():
+    return admin_turnstile.live()
+
+
+def sign_gate(body):
+    return b64encode(hmac.new(secret_bytes(), ("gate." + body).encode("ascii"), hashlib.sha256).digest())
+
+
+def issue_gate(now, ip):
+    payload = {
+        "ip": str(ip or ""),
+        "id": secrets.token_urlsafe(9),
+        "iat": round(now, 6),
+        "exp": int(now + GATE_SECONDS),
+    }
+    body = b64encode(json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8"))
+    return "%s.%s" % (body, sign_gate(body))
+
+
+def read_gate(token, now, ip):
+    if not token or token.count(".") != 1:
+        return None
+    body, signature = token.split(".")
+    try:
+        if not hmac.compare_digest(sign_gate(body), signature):
+            return None
+        payload = json.loads(b64decode(body).decode("utf-8"))
+    except (ValueError, TypeError, UnicodeDecodeError, base64.binascii.Error):
+        return None
+    if not isinstance(payload, dict):
+        return None
+
+    expires = payload.get("exp")
+    if not isinstance(expires, int) or expires <= now:
+        return None
+
+    issued = payload.get("iat")
+    if not isinstance(issued, (int, float)) or issued < revocations.cutoff():
+        return None
+
+    if payload.get("ip") != str(ip or ""):
+        return None
+
+    if not isinstance(payload.get("id"), str) or not payload["id"]:
+        return None
+
+    return payload
+
+
 def google_ready():
     return admin_google is not None and admin_google.enabled()
 
@@ -900,6 +961,33 @@ class Lockout:
             out.sort(key=lambda entry: (-entry["lockedFor"], -entry["failures"]))
             return out[:25]
 
+class Passes:
+
+    def __init__(self, allowance, seconds):
+        self.allowance = allowance
+        self.seconds = seconds
+        self.used = {}
+        self.lock = threading.Lock()
+
+    def _sweep(self, now):
+        for key in [key for key, (_, seen) in self.used.items() if seen < now - self.seconds]:
+            del self.used[key]
+
+    def charge(self, key):
+        now = time.monotonic()
+        with self.lock:
+            self._sweep(now)
+            count, _ = self.used.get(key, (0, now))
+            if count >= self.allowance:
+                return False
+            self.used[key] = (count + 1, now)
+            return True
+
+    def spend(self, key):
+        with self.lock:
+            self.used[key] = (self.allowance, time.monotonic())
+
+
 class LinkCodes:
 
     def __init__(self, seconds, alphabet, length):
@@ -977,6 +1065,8 @@ class Artwork:
             self.by_account.pop(account, None)
 
 limiter = RateLimit(RATE_PER_IP, RATE_WINDOW)
+gate_limiter = RateLimit(GATE_ATTEMPTS, GATE_WINDOW)
+gate_passes = Passes(GATE_SIGNINS, GATE_SECONDS)
 lockout = Lockout(LOCKOUT_AFTER, LOCKOUT_SECONDS)
 account_lockout = Lockout(ACCOUNT_LOCKOUT_AFTER, LOCKOUT_SECONDS)
 link_codes = LinkCodes(DISCORD_LINK_SECONDS, DISCORD_CODE_ALPHABET, DISCORD_CODE_LENGTH)
@@ -993,10 +1083,17 @@ transcript_lookups = RateLimit(TRANSCRIPT_LOOKUPS, TRANSCRIPT_WINDOW)
 
 class Rejected(Exception):
 
-    def __init__(self, status, message):
+    def __init__(self, status, message, needs=None):
         super().__init__(message)
         self.status = status
         self.message = message
+        self.needs = needs
+
+    def payload(self):
+        body = {"message": self.message}
+        if self.needs:
+            body["needs"] = self.needs
+        return body
 
 def read_json_file(path):
     try:
@@ -3736,6 +3833,18 @@ class Handler(BaseHTTPRequestHandler):
             parts.append("Secure")
         return "; ".join(parts)
 
+    def gate_cookie(self, token, max_age):
+        parts = [
+            "%s=%s" % (GATE_COOKIE, token),
+            "Path=/",
+            "HttpOnly",
+            "SameSite=Strict",
+            "Max-Age=%d" % max_age,
+        ]
+        if not INSECURE_COOKIE:
+            parts.append("Secure")
+        return "; ".join(parts)
+
     def pending_cookie(self, token, max_age):
         parts = [
             "%s=%s" % (PENDING_COOKIE, token),
@@ -3803,6 +3912,34 @@ class Handler(BaseHTTPRequestHandler):
         if session is not None:
             self.held_session = session
         return session
+
+    def current_gate(self):
+        header = self.headers.get("Cookie")
+        if not header:
+            return None
+        try:
+            jar = SimpleCookie()
+            jar.load(header)
+        except Exception:
+            return None
+        morsel = jar.get(GATE_COOKIE)
+        if morsel is None:
+            return None
+        return read_gate(morsel.value, int(time.time()), self.client_ip())
+
+    def require_gate(self):
+        if not gate_live():
+            return None
+
+        pass_held = self.current_gate()
+        if pass_held is None:
+            raise Rejected(403, GATE_STALE, needs="gate")
+
+        if not gate_passes.charge(pass_held["id"]):
+            log.warning("a front-door pass ran out of sign-ins at %s", self.client_ip())
+            raise Rejected(403, GATE_SPENT, needs="gate")
+
+        return pass_held
 
     def require_session(self):
         session = self.current_session()
@@ -3902,6 +4039,7 @@ class Handler(BaseHTTPRequestHandler):
             raw = self.rfile.read(length)
         except socket.timeout:
             raise Rejected(408, "The request took too long.")
+        self.body_read = True
         if len(raw) != length:
             raise Rejected(400, "Malformed request.")
 
@@ -3929,7 +4067,7 @@ class Handler(BaseHTTPRequestHandler):
             self.guard_firewall()
             self.handle_get()
         except Rejected as rejected:
-            self.reply(rejected.status, {"message": rejected.message})
+            self.reply(rejected.status, rejected.payload())
         except VaultError as failure:
             log.error("vault unreachable on GET: %s", failure.message)
             self.reply(failure.status, {"message": "The panel cannot reach its vault."})
@@ -3943,11 +4081,16 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         self.held_session = None
+        self.body_read = False
+        try:
+            pending = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            pending = -1
         try:
             self.guard_firewall()
             self.handle_post()
         except Rejected as rejected:
-            self.reply(rejected.status, {"message": rejected.message})
+            self.reply(rejected.status, rejected.payload())
         except VaultError as failure:
             log.error("vault unreachable on POST: %s", failure.message)
             self.reply(failure.status, {"message": "The panel cannot reach its vault."})
@@ -3958,6 +4101,9 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             log.exception("unhandled error on POST")
             self.reply(500, {"message": "Something went wrong at our end."})
+        finally:
+            if pending != 0 and not self.body_read:
+                self.close_connection = True
 
     def c2c_reply(self, path):
         """Answers with the exchange bot's payload, or with why it could not.
@@ -4253,7 +4399,16 @@ class Handler(BaseHTTPRequestHandler):
         if route == "/session":
             session = self.current_session()
             if session is None:
-                self.reply(200, {"signedIn": False, "configured": configured(), "google": google_ready()})
+                self.reply(
+                    200,
+                    {
+                        "signedIn": False,
+                        "configured": configured(),
+                        "google": google_ready(),
+                        "gate": gate_live(),
+                        "gated": gate_live() and self.current_gate() is not None,
+                    },
+                )
             else:
                 self.reply(200, self.session_payload(session))
             return
@@ -4705,6 +4860,10 @@ class Handler(BaseHTTPRequestHandler):
                     pass
                 log.info("%s signed out from %s", name, self.client_ip())
             self.reply(204, None, self.session_cookie("", 0))
+            return
+
+        if route == "/gate":
+            self.handle_gate()
             return
 
         if route == "/login":
@@ -5242,8 +5401,35 @@ class Handler(BaseHTTPRequestHandler):
 
         raise Rejected(404, "Not found.")
 
+    def handle_gate(self):
+        self.check_origin()
+
+        if not gate_live():
+            self.reply(200, {"gate": False, "passed": True})
+            return
+
+        ip = self.client_ip()
+        if gate_limiter.check(ip):
+            log.warning("front-door check from %s — rate limited", ip)
+            raise Rejected(429, "Too many verification attempts. Try again later.")
+
+        data = self.read_body()
+
+        try:
+            admin_turnstile.verify(data.get(admin_turnstile.FIELD), ip, admin_turnstile.ACTION)
+        except admin_turnstile.VerificationError as failure:
+            raise Rejected(failure.status, failure.message, needs="gate")
+
+        log.info("front-door check passed from %s", ip)
+        self.reply(
+            200,
+            {"gate": True, "passed": True},
+            self.gate_cookie(issue_gate(time.time(), ip), GATE_SECONDS),
+        )
+
     def handle_login(self):
         self.check_origin()
+        pass_held = self.require_gate()
 
         if not configured():
             raise Rejected(503, "The admin panel is not set up yet.")
@@ -5383,6 +5569,9 @@ class Handler(BaseHTTPRequestHandler):
             [("User", user), ("Role", record.get("role") or "—"), ("Address", ip), ("When", stamp())],
         )
 
+        if pass_held is not None:
+            gate_passes.spend(pass_held["id"])
+
         fresh = users.find(user) or record
         token = issue_token(user, fresh.get("tokenVersion") or 1, time.time())
         self.reply(
@@ -5446,6 +5635,10 @@ class Handler(BaseHTTPRequestHandler):
     def handle_google_start(self):
         if not google_ready():
             raise Rejected(404, "Not found.")
+
+        if gate_live() and self.current_gate() is None:
+            self.land("/admin?signin=gate")
+            return
 
         ip = self.client_ip()
         if limiter.check(ip):

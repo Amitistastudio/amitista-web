@@ -141,6 +141,29 @@ finally:
     urllib.request.urlopen = saved
 check("it omits remoteip when there is no address", "remoteip" not in capture[0].data.decode("utf-8"))
 
+print("\nCloudflare's testing keys")
+
+configure()
+TESTING = dict(GOOD, metadata={"result_with_testing_key": True})
+
+os.environ.pop("TURNSTILE_ALLOW_TEST_KEYS", None)
+outcome = refused("token", TESTING)
+check("a verdict reached with a testing key is refused by default", outcome is not None)
+check("  as a failure rather than an outage", outcome is not None and outcome.status == 403)
+
+os.environ["TURNSTILE_ALLOW_TEST_KEYS"] = "on"
+check("  unless the box says out loud that it is a development one", refused("token", TESTING) is None)
+os.environ.pop("TURNSTILE_ALLOW_TEST_KEYS", None)
+
+check(
+    "a genuine verdict carrying unrelated metadata still passes",
+    refused("token", dict(GOOD, metadata={"ephemeral_id": "abc"})) is None,
+)
+check(
+    "metadata that is not an object is ignored rather than fatal",
+    refused("token", dict(GOOD, metadata="nonsense")) is None,
+)
+
 configure(secret=None, hostnames=None)
 
 if failures:

@@ -46,7 +46,7 @@ function loadScript() {
   return loader;
 }
 
-export function useTurnstile(action) {
+export function useTurnstile(action, { size = 'normal' } = {}) {
   const containerRef = React.useRef(null);
   const widgetRef = React.useRef(null);
   const [token, setToken] = React.useState('');
@@ -63,6 +63,8 @@ export function useTurnstile(action) {
         widgetRef.current = turnstile.render(containerRef.current, {
           sitekey: TURNSTILE_SITEKEY,
           action,
+          theme: 'dark',
+          size,
           callback: (value) => {
             setToken(value);
             setState('ready');
@@ -97,7 +99,7 @@ export function useTurnstile(action) {
         }
       }
     };
-  }, [action]);
+  }, [action, size]);
 
   const reset = React.useCallback(() => {
     setToken('');

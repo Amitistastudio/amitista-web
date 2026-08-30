@@ -68,6 +68,7 @@ import FirewallPanel from '../components/admin/FirewallPanel';
 import LogsPanel from '../components/admin/LogsPanel';
 import TranscriptsPanel from '../components/admin/TranscriptsPanel';
 import SignIn from '../components/admin/SignIn';
+import Gate from '../components/admin/Gate';
 import { Notice } from '../components/admin/ui';
 import GlobalSearch from '../components/admin/GlobalSearch';
 import DeveloperPanel, { DEVELOPER_VIEWS } from '../components/admin/DeveloperPanel';
@@ -833,6 +834,7 @@ export default function AdminPage() {
   const [asUser, setAsUser] = React.useState(false);
   const [mustChange, setMustChange] = React.useState(false);
   const [configured, setConfigured] = React.useState(true);
+  const [needsGate, setNeedsGate] = React.useState(false);
   const [data, setData] = React.useState(null);
   const [loading, setLoading] = React.useState(false);
   const [section, setSection] = React.useState(sectionFromHash);
@@ -893,6 +895,7 @@ export default function AdminPage() {
       if (session.state === SIGNED_IN) {
         adopt(session);
       } else {
+        setNeedsGate(Boolean(session.gate) && !session.gated);
         setState(session.state);
         setUser(null);
       }
@@ -917,6 +920,12 @@ export default function AdminPage() {
     const poll = setInterval(load, 60000);
     return () => clearInterval(poll);
   }, [state, section, held, mustChange, load]);
+
+  const gateAgain = React.useCallback(() => setNeedsGate(true), []);
+  const gatePassed = React.useCallback(() => {
+    setNeedsGate(false);
+    window.requestAnimationFrame(() => document.getElementById('main')?.focus());
+  }, []);
 
   const forget = React.useCallback(() => {
     setState(SIGNED_OUT);
@@ -995,7 +1004,11 @@ export default function AdminPage() {
 
             {state === SIGNED_OUT && (
               <Reveal rise className="w-full flex justify-center">
-                <SignIn onSignedIn={adopt} configured={configured} />
+                {needsGate ? (
+                  <Gate onPassed={gatePassed} />
+                ) : (
+                  <SignIn onSignedIn={adopt} configured={configured} onGateExpired={gateAgain} />
+                )}
               </Reveal>
             )}
 

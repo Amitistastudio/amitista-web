@@ -35,6 +35,10 @@ def _hostnames():
     return frozenset(part.strip().lower() for part in raw.split(",") if part.strip())
 
 
+def _testing_allowed():
+    return os.environ.get("TURNSTILE_ALLOW_TEST_KEYS", "").strip().lower() in ("1", "true", "yes", "on")
+
+
 def live():
     return bool(_secret() and _hostnames())
 
@@ -73,6 +77,16 @@ def verify(token, ip=None, action=ACTION):
         codes = result.get("error-codes") if isinstance(result, dict) else "malformed"
         log.warning("turnstile refused a sign-in (%s)", codes)
         raise VerificationError(403, FAILED)
+
+    metadata = result.get("metadata")
+    if isinstance(metadata, dict) and metadata.get("result_with_testing_key") is True:
+        if not _testing_allowed():
+            log.error(
+                "TURNSTILE_SECRET is one of Cloudflare's testing keys — every check would pass. "
+                "Refusing the sign-in. Set a real secret, or TURNSTILE_ALLOW_TEST_KEYS=on for a dev box."
+            )
+            raise VerificationError(403, FAILED)
+        log.warning("turnstile testing key in use — verification is not real")
 
     if result.get("action") != action:
         log.warning("turnstile action mismatch (%r)", result.get("action"))

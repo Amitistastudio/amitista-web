@@ -15,8 +15,6 @@ import {
 import { CONTACT_EMAIL, DISCORD_INVITE, REPLY_WINDOW } from '../../siteConfig';
 import { submitEnquiry, UNAVAILABLE as RELAY_DOWN } from '../../lib/enquiry';
 import { signIn, verifyGoogleCode, readSignInNotice } from '../../lib/admin';
-import { useTurnstile } from '../../lib/useTurnstile';
-import TurnstileField from '../TurnstileField';
 import { FIELD_CLASS } from './ui';
 import DiscordMark from '../DiscordMark';
 
@@ -126,7 +124,7 @@ function buildRequestMailto(form) {
   return `mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
 }
 
-function SignInPanel({ configured, notice, onSignedIn, onRequest }) {
+function SignInPanel({ configured, notice, onSignedIn, onRequest, onGateExpired }) {
   const [username, setUsername] = React.useState('');
   const [password, setPassword] = React.useState('');
   const [code, setCode] = React.useState('');
@@ -135,7 +133,6 @@ function SignInPanel({ configured, notice, onSignedIn, onRequest }) {
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState(null);
   const codeField = React.useRef(null);
-  const turnstile = useTurnstile('admin-login');
 
   const viaGoogle = step === 'google-code';
 
@@ -152,24 +149,20 @@ function SignInPanel({ configured, notice, onSignedIn, onRequest }) {
   async function submit(event) {
     event.preventDefault();
     if (busy) return;
-    if (!viaGoogle && turnstile.blocking) return;
 
     setBusy(true);
     setError(null);
     try {
       const session = viaGoogle
         ? await verifyGoogleCode(code.trim())
-        : await signIn(
-            username.trim(),
-            password,
-            step === 'code' ? code.trim() : undefined,
-            turnstile.token,
-          );
+        : await signIn(username.trim(), password, step === 'code' ? code.trim() : undefined);
       setPassword('');
       setCode('');
       onSignedIn(session);
     } catch (failure) {
-      if (failure.needsCode) {
+      if (failure.needsGate) {
+        onGateExpired();
+      } else if (failure.needsCode) {
         setStep('code');
         setError(null);
       } else {
@@ -179,7 +172,6 @@ function SignInPanel({ configured, notice, onSignedIn, onRequest }) {
       }
     } finally {
       setBusy(false);
-      if (!viaGoogle) turnstile.reset();
     }
   }
 
@@ -252,11 +244,9 @@ function SignInPanel({ configured, notice, onSignedIn, onRequest }) {
               </p>
             )}
 
-            {!viaGoogle && <TurnstileField turnstile={turnstile} />}
-
             <button
               type="submit"
-              disabled={busy || !code.trim() || (!viaGoogle && turnstile.blocking)}
+              disabled={busy || !code.trim()}
               className={primaryButtonClass}
             >
               <LogIn className="h-4 w-4" strokeWidth={2} />
@@ -318,11 +308,9 @@ function SignInPanel({ configured, notice, onSignedIn, onRequest }) {
               </p>
             )}
 
-            <TurnstileField turnstile={turnstile} className="mt-6" />
-
             <button
               type="submit"
-              disabled={busy || !username.trim() || !password || turnstile.blocking}
+              disabled={busy || !username.trim() || !password}
               className={`${primaryButtonClass} mt-6`}
             >
               <LogIn className="h-4 w-4" strokeWidth={2} />
@@ -566,7 +554,7 @@ function RequestPanel({ onBack }) {
   );
 }
 
-export default function SignIn({ onSignedIn, configured }) {
+export default function SignIn({ onSignedIn, configured, onGateExpired }) {
   const [mode, setMode] = React.useState('signin');
   const [notice, setNotice] = React.useState(null);
 
@@ -574,8 +562,9 @@ export default function SignIn({ onSignedIn, configured }) {
     const found = readSignInNotice(window.location.search);
     if (!found) return;
     window.history.replaceState(null, '', window.location.pathname);
-    setNotice(found);
-  }, []);
+    if (found.step === 'gate') onGateExpired();
+    else setNotice(found);
+  }, [onGateExpired]);
 
   const requesting = mode === 'request';
 
@@ -603,6 +592,7 @@ export default function SignIn({ onSignedIn, configured }) {
             configured={configured}
             notice={notice}
             onSignedIn={onSignedIn}
+            onGateExpired={onGateExpired}
             onRequest={() => setMode('request')}
           />
         )}
