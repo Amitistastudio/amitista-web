@@ -73,6 +73,8 @@ PERMISSIONS = (
     "transcripts.read",
     "transcripts.manage",
     "developer.read",
+    "github.read",
+    "github.security",
 )
 
 DEFAULT_ROLES = {
@@ -116,6 +118,7 @@ DEFAULT_ROLES = {
         "boards.manage",
         "transcripts.read",
         "developer.read",
+        "github.read",
         },
     "viewer": {
         "overview.read",

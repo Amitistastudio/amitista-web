@@ -36,9 +36,19 @@ const VIEWS = {
   'github-people': People,
 };
 
-// The group and its gate are real — only the accounts named in PRIVATE_GROUPS
-// on the server can reach it, and the server checks rather than trusting the
-// nav to hide it.
+// The gate is real, and it is three gates rather than one. Most of the group
+// needs github.read, which owners and developers hold. Security needs
+// github.security, which only an owner holds. People and access is by account
+// name — the list on the server, not a permission, because an owner resolves to
+// every permission at read time and so would hold any permission invented for
+// it.
+//
+// All of that is checked on the server rather than left to the nav to hide.
+// Every section here reads the one snapshot, so the server hands over a
+// snapshot cut to what the account may see: no guards or alerts without
+// github.security, no access, invitations or org people without being named.
+// A section whose data was cut is a section the nav did not offer in the first
+// place.
 //
 // Nothing in here can change a repository's contents. It reads the snapshot the
 // deploy writes and reports it; there is no button that pushes, merges or

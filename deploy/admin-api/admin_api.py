@@ -201,6 +201,11 @@ PERF_PATH = os.environ.get("ADMIN_PERF", "/var/lib/amitista/admin/perf.json")
 # would hold whatever we invented. The account name is the one thing an owner
 # cannot grant themselves from inside the panel.
 #
+# Only one half of the GitHub group needs that, and it is people and access —
+# who may reach a repository, and at what level. Everything else in the group
+# reads, and reading is what permissions are for, so the rest of it is gated on
+# github.read and github.security like any other screen.
+#
 # Worth being plain about what this is not — it is a gate against panel users.
 # Anyone with root on this box can read this file and edit the list.
 PRIVATE_GROUPS = {
@@ -1223,17 +1228,57 @@ def age_of(generated):
         return None
 
 
-def build_github():
+# One route feeds every section of the group, because every section reads the
+# same snapshot and fetching it once is the point. That makes the trimming here
+# the only real gate between them: hiding a section in the nav would otherwise
+# leave its data in the payload of anybody who opened any other one.
+#
+# Two things are held back, and only two, because only two of the sections are
+# narrower than the rest.
+GITHUB_SECURITY_KEYS = ("guards", "alerts")
+
+GITHUB_ACCESS_KEYS = ("access", "invites")
+
+def narrow_github(payload, granted, insider):
+    """Take out what this account is not to see.
+
+    Security is a permission, so an owner has it and a developer does not.
+    People and access is the private group, so it is by account name — an owner
+    who is not named does not get it either, which is the whole reason that
+    group exists.
+    """
+    if "github.security" not in set(granted or ()):
+        for repo in payload["repositories"]:
+            if isinstance(repo, dict):
+                for name in GITHUB_SECURITY_KEYS:
+                    repo.pop(name, None)
+
+    if not insider:
+        payload.pop("people", None)
+        for repo in payload["repositories"]:
+            if isinstance(repo, dict):
+                for name in GITHUB_ACCESS_KEYS:
+                    repo.pop(name, None)
+    else:
+        payload["queued"] = github_queued()
+
+    return payload
+
+def build_github(granted=None, insider=False):
     snapshot = read_json_file(GITHUB_PATH)
     if snapshot is None:
-        return {
-            "generated": None,
-            "stale": True,
-            "collected": False,
-            "org": None,
-            "branch": None,
-            "repositories": [],
-        }
+        return narrow_github(
+            {
+                "generated": None,
+                "stale": True,
+                "collected": False,
+                "org": None,
+                "branch": None,
+                "repositories": [],
+            },
+            granted,
+            insider,
+        )
 
     payload = dict(snapshot)
     payload["collected"] = True
@@ -1245,12 +1290,11 @@ def build_github():
 
     age = age_of(payload.get("generated"))
     payload["stale"] = True if age is None else age > GITHUB_STALE_AFTER
-    payload["queued"] = github_queued()
     payload["reviewer"] = admin_review.configured()
     for repo in payload["repositories"]:
         if isinstance(repo, dict):
             github_strip_patches(repo)
-    return payload
+    return narrow_github(payload, granted, insider)
 
 
 def github_strip_patches(repo):
@@ -3966,6 +4010,27 @@ class Handler(BaseHTTPRequestHandler):
             raise Rejected(403, "You do not have access to that.")
         return session
 
+    def require_github(self):
+        """The read half of the GitHub group: the permission, or the account.
+
+        More than one way in, because the named account has to be able to open
+        the group whatever role it holds — people and access is drawn from the
+        same snapshot as every other section, so being shut out of the read
+        route would shut it out of the one section it is named for. Security
+        counts on its own for the same reason from the other end: a role
+        hand-tuned to it alone would otherwise be offered a screen this route
+        then refuses to fill. What each of them gets to see once inside is
+        narrow_github's business, not this one's.
+        """
+        session = self.require_session()
+        record = session["record"]
+        granted = record.get("permissions") or []
+        if "github.read" in granted or "github.security" in granted:
+            return session
+        if "github" in private_groups_for(record["name"]):
+            return session
+        raise Rejected(403, "You do not have access to that.")
+
     def allowed(self, permission):
         session = self.current_session()
         if session is None:
@@ -4165,7 +4230,7 @@ class Handler(BaseHTTPRequestHandler):
         Same answer as the Discord artwork above — fetch it here, cache it, and
         hand it back same-origin.
         """
-        self.require_private("github")
+        self.require_github()
         url = github_avatar_for(self.query("login", 64))
         if url is None:
             raise Rejected(404, "Not found.")
@@ -4188,7 +4253,7 @@ class Handler(BaseHTTPRequestHandler):
         the collector has not looked into deeply cannot be reviewed, and says so
         rather than being reviewed on its file names alone.
         """
-        session = self.require_private("github")
+        session = self.require_github()
         repo = self.query("repo", 100)
         raw = self.query("number", 12)
         if not raw.isdigit():
@@ -4424,8 +4489,14 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if route == "/github/repositories":
-            self.require_private("github")
-            self.reply(200, build_github())
+            record = self.require_github()["record"]
+            self.reply(
+                200,
+                build_github(
+                    record.get("permissions") or [],
+                    "github" in private_groups_for(record["name"]),
+                ),
+            )
             return
 
         if route == "/github/avatar":

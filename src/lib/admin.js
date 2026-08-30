@@ -1152,6 +1152,8 @@ export const PERMISSION_LABELS = {
   'transcripts.read': 'Search and read archived transcripts',
   'transcripts.manage': 'Delete an archived transcript for good',
   'developer.read': 'See the developer group — health, endpoints, performance and releases',
+  'github.read': 'See the GitHub group — repositories, issues, pull requests and what is moving',
+  'github.security': 'See what the scanners and the deploy are warning about in the code',
 };
 
 export const PERMISSION_GROUPS = [
@@ -1169,6 +1171,7 @@ export const PERMISSION_GROUPS = [
   { id: 'c2c', label: 'Exchange bot', match: /^c2c\./ },
   { id: 'transcripts', label: 'Transcripts', match: /^transcripts\./ },
   { id: 'developer', label: 'Developer', match: /^developer\./ },
+  { id: 'github', label: 'GitHub', match: /^github\./ },
 ];
 
 export const PERMISSION_LEVELS = {
@@ -1211,6 +1214,8 @@ export const PERMISSION_SHORT = {
   'boards.own': 'Own boards',
   'boards.manage': 'Change every board',
   'developer.read': 'Developer group',
+  'github.read': 'GitHub group',
+  'github.security': 'Scanners and alerts',
 };
 
 export function permissionShort(permission) {
@@ -1225,6 +1230,10 @@ export const PERMISSION_NEEDS = {
   'orders.manage': ['orders.read'],
   'orders.files': ['orders.read'],
   'firewall.manage': ['firewall.read'],
+  // The Security screen is drawn from the same snapshot as the rest of the
+  // group, and that snapshot opens on github.read. Held on its own it would put
+  // a section in the nav that the server then refuses to fill.
+  'github.security': ['github.read'],
 };
 
 export const PERMISSION_INCLUDES = {
@@ -1301,7 +1310,7 @@ export const RECOVERY_CODES_LOW = 3;
 export const ROLE_SUMMARIES = {
   owner: 'Everything, including making and unmaking other owners. Only an owner can hand this out.',
   admin: 'Runs the panel day to day, but cannot add or remove accounts.',
-  dev: 'Builds and ships: the boards, the bot and the API, without touching accounts.',
+  dev: 'Builds and ships: the boards, the bot, the API and the GitHub group, without touching accounts.',
   viewer: 'Reads the dashboard and nothing else.',
   custom: 'Exactly what you tick below, nothing implied.',
 };

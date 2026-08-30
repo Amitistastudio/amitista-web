@@ -2,13 +2,18 @@
 
 """The GitHub group of the panel.
 
-Two things are worth holding still here. The gate is by account name rather
-than by permission, because an owner resolves to every permission at read time
-and so would hold any permission invented for this — that has to keep being
-true, including for owners. And the verdicts have to survive a snapshot that is
-missing, stale, or written by a newer collector than this code knows about,
-because the panel showing something confidently wrong is the failure this whole
-group exists to prevent.
+Three things are worth holding still here. The group opens on github.read, so
+an owner and a developer both reach it, and the scanners behind it open on
+github.security, which a developer does not hold. People and access stays by
+account name rather than by permission, because an owner resolves to every
+permission at read time and so would hold any permission invented for it — that
+has to keep being true, including for owners. And because one route feeds every
+section, what each account is handed out of the one snapshot is the only real
+gate between them, so the trimming is pinned here rather than left to the nav.
+
+The verdicts also have to survive a snapshot that is missing, stale, or written
+by a newer collector than this code knows about, because the panel showing
+something confidently wrong is the failure this whole group exists to prevent.
 """
 
 import http.client
@@ -46,11 +51,22 @@ INSIDER = "blxr"
 INSIDER_PASSWORD = "insiderpass88"
 OUTSIDER = "helper"
 OUTSIDER_PASSWORD = "secondaccount42"
+# A developer: github.read and nothing more of the group.
+DEVELOPER = "coder"
+DEVELOPER_PASSWORD = "developerpass55"
+# A hand-tuned role holding the security half on its own, which the shipped
+# roles never produce but the role editor can.
+SCANNER = "auditor"
+SCANNER_PASSWORD = "quietwatcher63"
 
 users = admin_api.users
 users.bootstrap_owner(OWNER, OWNER_PASSWORD)
 users.create(INSIDER, "viewer", None, OWNER, password=INSIDER_PASSWORD, must_change=False)
 users.create(OUTSIDER, "admin", None, OWNER, password=OUTSIDER_PASSWORD, must_change=False)
+users.create(DEVELOPER, "dev", None, OWNER, password=DEVELOPER_PASSWORD, must_change=False)
+users.create(
+    SCANNER, "custom", ["github.security"], OWNER, password=SCANNER_PASSWORD, must_change=False
+)
 
 server = ThreadingHTTPServer(("127.0.0.1", 0), admin_api.Handler)
 port = server.server_address[1]
@@ -98,17 +114,16 @@ def stamp(seconds_ago):
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - seconds_ago))
 
 
-def write_snapshot(repositories, generated_ago=5):
+def write_snapshot(repositories, generated_ago=5, **extra):
+    payload = {
+        "generated": stamp(generated_ago),
+        "org": "Amitistastudio",
+        "branch": "main",
+        "repositories": repositories,
+    }
+    payload.update(extra)
     with open(SNAPSHOT, "w", encoding="utf-8") as handle:
-        json.dump(
-            {
-                "generated": stamp(generated_ago),
-                "org": "Amitistastudio",
-                "branch": "main",
-                "repositories": repositories,
-            },
-            handle,
-        )
+        json.dump(payload, handle)
 
 
 def repo(**overrides):
@@ -138,28 +153,106 @@ def read(cookie):
 insider = sign_in(INSIDER, INSIDER_PASSWORD)
 outsider = sign_in(OUTSIDER, OUTSIDER_PASSWORD)
 owner = sign_in(OWNER, OWNER_PASSWORD)
+developer = sign_in(DEVELOPER, DEVELOPER_PASSWORD)
+scanner = sign_in(SCANNER, SCANNER_PASSWORD)
+
+
+def holds(name):
+    return set(users.find(name).get("permissions") or [])
+
 
 # ------------------------------------------------------------------ the gate
+
+write_snapshot([repo()])
 
 status, _, _ = request("GET", "/github/repositories")
 check("a stranger is turned away", status == 401)
 
 status, _ = read(outsider)
-check("an admin who is not named cannot read it", status == 403)
+check("an admin, holding neither github permission, cannot read it", status == 403)
 
-# The point of the private group: an owner holds every permission, so if this
-# were a permission the owner would be inside it. The owner is not named.
-check("an owner holds every permission", "users.manage" in (users.find(OWNER).get("permissions") or []))
+check("an owner holds every permission", "users.manage" in holds(OWNER))
+check("so an owner holds both of the group's", {"github.read", "github.security"} <= holds(OWNER))
+check("a developer holds the read one", "github.read" in holds(DEVELOPER))
+check("and not the security one", "github.security" not in holds(DEVELOPER))
+check("an admin holds neither", not ({"github.read", "github.security"} & holds(OUTSIDER)))
+
 status, _ = read(owner)
-check("an owner who is not named still cannot read it", status == 403)
+check("an owner can read it", status == 200)
+
+status, _ = read(developer)
+check("so can a developer", status == 200)
+
+# Security is drawn from the same snapshot as everything else, so holding it
+# alone has to open this route too — otherwise the nav offers a screen the
+# server then refuses to fill.
+check("the security half can be held on its own", holds(SCANNER) == {"github.security"})
+status, _ = read(scanner)
+check("and opens the snapshot on its own", status == 200)
+
+# The named account reaches the group whatever role it holds. People and access
+# is drawn from this same snapshot, so being shut out of the read route would
+# shut it out of the one section it is named for.
+check("the named account holds neither permission", not ({"github.read", "github.security"} & holds(INSIDER)))
+status, body = read(insider)
+check("the named account can read it anyway", status == 200)
 
 check("the named account is the only one in the group", admin_api.private_groups_for(INSIDER) == ["github"])
 check("an unnamed account is in no group", admin_api.private_groups_for(OUTSIDER) == [])
 check("the gate is not case sensitive", admin_api.private_groups_for(INSIDER.upper()) == ["github"])
 
-write_snapshot([repo()])
+# ------------------------------------------------ what each account is handed
+
+# One route feeds every section of the group, so this trimming is the only real
+# gate between them: hiding a section in the nav would otherwise leave its data
+# in the payload of anybody who opened any other one.
+
+write_snapshot(
+    [
+        repo(
+            guards={"scan": {"ran": True, "clean": True, "findings": []}},
+            alerts={"secretScanning": {"open": 0}},
+            access=[{"login": "octocat", "role": "push", "direct": True}],
+            invites=[{"login": "invited", "id": 4321}],
+        )
+    ],
+    people={"members": [{"login": "kostis4563"}], "actor": INSIDER},
+)
+
+status, body = read(owner)
+only = body["repositories"][0]
+check("an owner is handed the box's own scan", only["guards"]["scan"]["ran"] is True)
+check("and what GitHub is warning about", only["alerts"]["secretScanning"]["open"] == 0)
+check("but not who may reach the repository", "access" not in only)
+check("nor the invitations still out", "invites" not in only)
+check("nor the people in the organisation", "people" not in body)
+check("nor what is waiting to be carried out", "queued" not in body)
+
+status, body = read(developer)
+only = body["repositories"][0]
+check("a developer is handed the repository itself", only["name"] == "amitista-web")
+check("but not the box's own scan", "guards" not in only)
+check("nor GitHub's warnings", "alerts" not in only)
+check("nor who may reach the repository", "access" not in only)
+check("nor the invitations still out", "invites" not in only)
+check("nor the people in the organisation", "people" not in body)
+
 status, body = read(insider)
-check("the named account can read it", status == 200)
+only = body["repositories"][0]
+check("the named account is handed who may reach the repository", only["access"][0]["login"] == "octocat")
+check("and the invitations still out", only["invites"][0]["id"] == 4321)
+check("and the people in the organisation", body["people"]["members"][0]["login"] == "kostis4563")
+check("and what is waiting, as a list even when empty", body["queued"] == [])
+check("but not the box's own scan, holding no github.security", "guards" not in only)
+check("nor GitHub's warnings", "alerts" not in only)
+
+status, body = read(scanner)
+only = body["repositories"][0]
+check("the security half on its own is handed the scan", only["guards"]["scan"]["ran"] is True)
+check("and the warnings", "alerts" in only)
+check("and still not who may reach the repository", "access" not in only)
+
+write_snapshot([repo()])
 
 # ------------------------------------------------------------ a missing file
 
@@ -391,6 +484,9 @@ check("and nothing was written down", queued() == [])
 status, _ = ask("/github/access", {"repo": "amitista-web", "login": "octocat", "permission": "push"}, cookie=outsider)
 check("an admin who is not named cannot ask for access", status == 403)
 
+status, _ = ask("/github/access", {"repo": "amitista-web", "login": "octocat", "permission": "push"}, cookie=developer)
+check("nor can a developer, who can read the group", status == 403)
+
 status, _ = ask("/github/access", {"repo": "amitista-web", "login": "octocat", "permission": "push"}, cookie=owner)
 check("nor can an owner, who holds every permission", status == 403)
 check("still nothing was written down", queued() == [])
@@ -456,6 +552,9 @@ check("three requests are waiting in total", len(queued()) == 3)
 status, body = read(insider)
 check("what is waiting travels to the panel", len(body["queued"]) == 3)
 check("and says who asked", body["queued"][0]["by"] == INSIDER)
+
+status, body = read(developer)
+check("but not to a developer, who cannot ask for any of it", "queued" not in body)
 
 for name in queued():
     os.unlink(os.path.join(QUEUE, name))
@@ -551,15 +650,20 @@ status, _, _ = request("GET", "/github/avatar?login=kostis4563")
 check("a stranger cannot fetch an avatar", status == 401)
 
 status, _, _ = request("GET", "/github/avatar?login=kostis4563", cookie=outsider)
-check("an admin who is not named cannot fetch an avatar", status == 403)
-
-status, _, _ = request("GET", "/github/avatar?login=kostis4563", cookie=owner)
-check("nor can an owner, who holds every permission", status == 403)
-check("and nothing was fetched for any of them", served == [])
+check("an admin, holding neither github permission, cannot fetch an avatar", status == 403)
+check("and nothing was fetched for them", served == [])
 
 status, raw, _ = request("GET", "/github/avatar?login=kostis4563", cookie=insider)
 check("the named account is handed the image", status == 200 and raw == b"\x89PNG stand-in")
 check("and it came from the avatar cdn", len(served) == 1 and served[0].startswith(admin_api.GITHUB_CDN))
+
+# Faces are drawn on the pull request and tracking screens too, not only on
+# people and access, so anybody who can open those has to be able to fetch one.
+status, raw, _ = request("GET", "/github/avatar?login=kostis4563", cookie=owner)
+check("an owner is handed the image", status == 200 and raw == b"\x89PNG stand-in")
+
+status, raw, _ = request("GET", "/github/avatar?login=kostis4563", cookie=developer)
+check("so is a developer", status == 200 and raw == b"\x89PNG stand-in")
 
 held = len(served)
 request("GET", "/github/avatar?login=kostis4563", cookie=insider)
@@ -611,10 +715,16 @@ status, _, _ = request("GET", "/github/review?repo=amitista-web&number=3")
 check("a stranger cannot ask for a review", status == 401)
 
 status, _, _ = request("GET", "/github/review?repo=amitista-web&number=3", cookie=outsider)
-check("an admin who is not named cannot either", status == 403)
+check("an admin, holding neither github permission, cannot either", status == 403)
 
+# The reading belongs to the pull request screen, so it opens to whoever that
+# screen opens to. No model is configured in this test, so reaching it at all
+# comes back as a 503 rather than a 403 — which is the distinction being made.
 status, _, _ = request("GET", "/github/review?repo=amitista-web&number=3", cookie=owner)
-check("nor can an owner, who holds every permission", status == 403)
+check("an owner reaches it", status == 503)
+
+status, _, _ = request("GET", "/github/review?repo=amitista-web&number=3", cookie=developer)
+check("so does a developer", status == 503)
 
 status, _, _ = request("GET", "/github/review?repo=amitista-web&number=99", cookie=insider)
 check("a pull request not in the snapshot is a 404", status == 404)

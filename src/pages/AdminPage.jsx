@@ -211,7 +211,7 @@ const SECTIONS = [
     id: 'github',
     label: 'Repositories',
     icon: FolderGit2,
-    needs: null,
+    needs: 'github.read',
     group: 'github',
     blurb: 'whether what is on main is actually running on this box',
   },
@@ -219,7 +219,7 @@ const SECTIONS = [
     id: 'github-issues',
     label: 'Issues',
     icon: CircleDot,
-    needs: null,
+    needs: 'github.read',
     group: 'github',
     blurb: 'what is open across the three repositories, and what each one says',
   },
@@ -227,7 +227,7 @@ const SECTIONS = [
     id: 'github-pulls',
     label: 'Pull requests',
     icon: GitPullRequest,
-    needs: null,
+    needs: 'github.read',
     group: 'github',
     blurb: 'the review queue oldest first, and every pull request ever raised',
   },
@@ -235,7 +235,7 @@ const SECTIONS = [
     id: 'github-performance',
     label: 'Performance',
     icon: Gauge,
-    needs: null,
+    needs: 'github.read',
     group: 'github',
     blurb: 'what CI says across the three, and what the review queue is costing',
   },
@@ -243,7 +243,7 @@ const SECTIONS = [
     id: 'github-vitals',
     label: 'Site speed',
     icon: Timer,
-    needs: null,
+    needs: 'github.read',
     group: 'github',
     blurb: 'what each release did to the site, and which commit to blame for it',
   },
@@ -251,7 +251,7 @@ const SECTIONS = [
     id: 'github-tracking',
     label: 'Performance tracking',
     icon: Radar,
-    needs: null,
+    needs: 'github.read',
     group: 'github',
     blurb: 'who has committed what, how many lines it was, and when they were doing it',
   },
@@ -259,7 +259,7 @@ const SECTIONS = [
     id: 'github-security',
     label: 'Security',
     icon: ShieldCheck,
-    needs: null,
+    needs: 'github.security',
     group: 'github',
     blurb: 'what is key-shaped in the code, what GitHub is warning about, and what the deploy refuses',
   },
@@ -267,7 +267,7 @@ const SECTIONS = [
     id: 'github-org',
     label: 'Organisation',
     icon: Building2,
-    needs: null,
+    needs: 'github.read',
     group: 'github',
     blurb: 'the health of all three at once, and what has been happening across them',
   },
@@ -276,6 +276,7 @@ const SECTIONS = [
     label: 'People & access',
     icon: KeyRound,
     needs: null,
+    private: 'github',
     group: 'github',
     blurb: 'who can reach which repository, at what level, and how to change it',
   },
@@ -320,10 +321,6 @@ const SECTIONS = [
     blurb: 'your password, sign-ins and Discord link',
   },
 ];
-
-// Groups the server hands out per account rather than per permission. Named
-// here only so the nav can hide them; the server decides who is on the list.
-const PRIVATE_GROUPS = ['github'];
 
 const GROUPS = [
   { id: 'studio', label: 'Studio', icon: Compass },
@@ -948,14 +945,17 @@ export default function AdminPage() {
     }
   }
 
-  // A private group is hidden from everyone the server did not name, owners
-  // included. An empty group also disappears from the nav on its own, so the
-  // heading only ever shows for an account that can open something under it.
+  // A section marked private is hidden from everyone the server did not name,
+  // owners included — that list is handed out per account rather than per
+  // permission, and the server decides who is on it. Everything else goes by
+  // what the account holds. An empty group disappears from the nav on its own,
+  // so a heading only ever shows for an account that can open something under
+  // it.
   const allowed = mustChange
     ? SECTIONS.filter((entry) => entry.id === 'account')
     : SECTIONS.filter(
         (entry) =>
-          (!PRIVATE_GROUPS.includes(entry.group) || privateGroups.includes(entry.group)) &&
+          (!entry.private || privateGroups.includes(entry.private)) &&
           (entry.needs === null || [entry.needs].flat().some((need) => held.includes(need))),
       );
   const current = allowed.some((entry) => entry.id === section)
