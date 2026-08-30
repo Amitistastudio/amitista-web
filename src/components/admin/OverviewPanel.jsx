@@ -192,7 +192,7 @@ function Pair({ children }) {
   const items = React.Children.toArray(children);
   if (items.length === 0) return null;
   if (items.length === 1) return items[0];
-  return <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">{items}</div>;
+  return <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">{items}</div>;
 }
 
 export default function OverviewPanel({ data, permissions = [], role = null }) {
@@ -270,7 +270,7 @@ export default function OverviewPanel({ data, permissions = [], role = null }) {
   const probed = missing[0]?.requests ?? 0;
 
   return (
-    <div className="w-full flex flex-col gap-6">
+    <div className="w-full flex flex-col gap-4">
       {privileged && <Attention concerns={findConcerns(data, can)} />}
 
       {api ? (
@@ -309,7 +309,7 @@ export default function OverviewPanel({ data, permissions = [], role = null }) {
           )}
 
           <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,300px)_minmax(0,1fr)]">
-            <div className="px-4 sm:px-6 py-7 border-b lg:border-b-0 lg:border-r border-[#17171d]">
+            <div className="px-4 sm:px-6 py-5 border-b lg:border-b-0 lg:border-r border-[#17171d]">
               <Hero
                 value={formatCount(
                   live ? spanTotals.site : site?.requests ?? totals?.requests ?? 0,
@@ -327,7 +327,7 @@ export default function OverviewPanel({ data, permissions = [], role = null }) {
                   in the latest half of this window against the half before
                 </p>
               )}
-              <div className="flex items-center gap-2.5 mt-6 pt-5 border-t border-[#17171d]">
+              <div className="flex items-center gap-2.5 mt-4 pt-4 border-t border-[#17171d]">
                 <Dot state={OVERALL_DOT[overall] ?? 'failed'} />
                 <span className={`text-[13px] font-medium ${OVERALL_TONE[overall] ?? 'text-rose-400'}`}>
                   {OVERALL_LABEL[overall] ?? overall}
@@ -339,7 +339,7 @@ export default function OverviewPanel({ data, permissions = [], role = null }) {
             </div>
 
             <div
-              className={`px-4 sm:px-6 py-7 flex flex-col justify-center transition-opacity ${
+              className={`px-4 sm:px-6 py-5 flex flex-col justify-center transition-opacity ${
                 reading ? 'opacity-50' : 'opacity-100'
               }`}
             >
@@ -440,7 +440,7 @@ export default function OverviewPanel({ data, permissions = [], role = null }) {
                   : 'text-white',
               ],
             ].map(([label, value, tone]) => (
-              <div key={label} className="px-4 sm:px-6 py-5 border-r border-b border-[#17171d]">
+              <div key={label} className="px-4 sm:px-6 py-4 border-r border-b border-[#17171d]">
                 <p className="text-[10px] font-semibold text-neutral-500 tracking-[0.15em] uppercase mb-2">
                   {label}
                 </p>
@@ -463,7 +463,7 @@ export default function OverviewPanel({ data, permissions = [], role = null }) {
         </Notice>
       )}
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-6">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {can('services.read') ? (
           <>
             <Figure
@@ -544,7 +544,7 @@ export default function OverviewPanel({ data, permissions = [], role = null }) {
       )}
 
       {can('security.read') && (
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Panel title="Where the misses go" icon={AlertTriangle}>
           {missing.length === 0 && <Row label="Nothing missing" value="—" />}
           {missing.slice(0, 6).map((entry) => (
@@ -675,7 +675,7 @@ export default function OverviewPanel({ data, permissions = [], role = null }) {
       )}
 
       {can('services.read') && (
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Panel title="Timers" icon={Clock}>
           {timers.length === 0 && <Row label="Nothing reported" value="—" />}
           {timers.map((timer) => (
@@ -809,7 +809,7 @@ export default function OverviewPanel({ data, permissions = [], role = null }) {
                 ]
               : []),
           ].map(([label, value, tone]) => (
-            <div key={label} className="px-4 sm:px-6 py-5 border-r border-[#17171d]">
+            <div key={label} className="px-4 sm:px-6 py-4 border-r border-[#17171d]">
               <p className="text-[10px] font-semibold text-neutral-500 tracking-[0.15em] uppercase mb-2">
                 {label}
               </p>

@@ -978,8 +978,8 @@ export default function AdminPage() {
           </div>
 
           <div
-            className={`relative z-30 w-full flex flex-col items-center pb-16 sm:pb-24 px-4 sm:px-10 md:px-16 lg:px-20 ${
-              state === SIGNED_OUT ? 'pt-20 sm:pt-24' : 'pt-24 sm:pt-32'
+            className={`relative z-30 w-full flex flex-col items-center pb-10 sm:pb-16 px-4 sm:px-10 md:px-16 lg:px-20 ${
+              state === SIGNED_OUT ? 'pt-16 sm:pt-20' : 'pt-8 sm:pt-10'
             }`}
           >
             {state === CHECKING && <div className="h-40" />}
@@ -1005,9 +1005,9 @@ export default function AdminPage() {
 
             {state === SIGNED_IN && (
               <div className="w-full max-w-[1320px] flex flex-col">
-                <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 sm:gap-6 mb-6 sm:mb-8">
+                <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3 sm:gap-6 mb-4 sm:mb-5">
                   <div>
-                    <h1 className="text-[28px] sm:text-4xl font-normal text-white tracking-tight leading-none mb-2 sm:mb-3">
+                    <h1 className="text-[22px] sm:text-[26px] font-normal text-white tracking-tight leading-none mb-1.5 sm:mb-2">
                       Studio panel
                     </h1>
                     <p className="text-[13px] text-neutral-400 font-normal">
@@ -1046,7 +1046,7 @@ export default function AdminPage() {
                   </div>
                 </div>
 
-                <div className="flex flex-col gap-5 lg:flex-row lg:gap-8">
+                <div className="flex flex-col gap-4 lg:flex-row lg:gap-6">
                   <Sidebar sections={allowed} active={current} onPick={pick} />
 
                   <div className="flex-1 min-w-0 flex flex-col">

@@ -40,10 +40,10 @@ export function Bar({ percent, tone = 'bg-purple-500/70' }) {
 export function Hero({ value, label, footnote }) {
   return (
     <div className="flex flex-col">
-      <span className="text-[52px] sm:text-[64px] font-semibold text-white leading-none tracking-tight">
+      <span className="text-[36px] sm:text-[44px] font-semibold text-white leading-none tracking-tight">
         {value}
       </span>
-      <span className="text-[13px] text-neutral-400 font-normal mt-3">{label}</span>
+      <span className="text-[13px] text-neutral-400 font-normal mt-2">{label}</span>
       {footnote && <span className="text-[12px] text-neutral-600 font-normal mt-1">{footnote}</span>}
     </div>
   );
