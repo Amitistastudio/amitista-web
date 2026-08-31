@@ -222,6 +222,7 @@ deploy_dev() {
   fi
   rm -rf "$export_dir"
   chown -R www-data:www-data "$DEV_LIVE"
+  chmod -R u=rwX,go=rX "$DEV_LIVE"
 
   local code
   code="$(curl -sS -o /dev/null -w '%{http_code}' -L --max-time 20 https://dev.amitista.com/ 2>/dev/null)"
@@ -230,6 +231,7 @@ deploy_dev() {
     rm -rf "${DEV_LIVE:?}"/*
     tar xzf "$snap" -C "$DEV_LIVE"
     chown -R www-data:www-data "$DEV_LIVE"
+    chmod -R u=rwX,go=rX "$DEV_LIVE"
     return 1
   fi
   log "live, and answering 200 (through the redirect to /dashboard/)"
