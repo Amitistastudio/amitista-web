@@ -313,16 +313,16 @@ export default function Header() {
           <a
             href="/admin"
             aria-label="Sign in to the studio panel"
-            className="hidden lg:inline-flex items-center gap-2 border border-[#282832] hover:border-neutral-500 bg-transparent px-3 py-2.5 text-neutral-400 hover:text-white whitespace-nowrap transition-all cursor-pointer"
+            title="Sign in"
+            className="hidden lg:inline-flex h-9 w-9 items-center justify-center border border-[#24242b] bg-white/[0.015] text-neutral-500 hover:border-[#3a3a43] hover:bg-white/[0.035] hover:text-neutral-200 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-neutral-500 focus-visible:ring-offset-2 focus-visible:ring-offset-[#060608] transition-[color,background-color,border-color,transform] duration-150 active:scale-[0.97] cursor-pointer"
           >
-            <Lock size={13} strokeWidth={2} className="shrink-0" />
-            <span className="shrink-0 text-[10px] font-semibold tracking-[0.15em]">LOGIN</span>
+            <Lock size={14} strokeWidth={1.75} className="shrink-0" />
           </a>
           <a
             href="/contact"
-            className="inline-flex max-[380px]:hidden border border-[#282832] hover:border-neutral-500 text-white font-semibold text-[10px] tracking-[0.2em] px-4 py-2.5 whitespace-nowrap transition-all cursor-pointer"
+            className="inline-flex max-[380px]:hidden h-9 items-center border border-[#34343d] bg-white/[0.035] px-4 text-[11px] font-medium tracking-[0.04em] text-neutral-200 whitespace-nowrap hover:border-neutral-200 hover:bg-neutral-100 hover:text-[#09090b] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-neutral-400 focus-visible:ring-offset-2 focus-visible:ring-offset-[#060608] transition-[color,background-color,border-color,transform] duration-150 active:translate-y-px cursor-pointer"
           >
-            START A PROJECT
+            Start a project
           </a>
           <button
             type="button"
