@@ -223,6 +223,21 @@ EVENTS_SHOWN = env_int("ADMIN_API_EVENTS_SHOWN", 300)
 OWN_ACTIVITY_SHOWN = env_int("ADMIN_OWN_ACTIVITY_SHOWN", 200)
 OWN_SIGNINS_SHOWN = env_int("ADMIN_OWN_SIGNINS_SHOWN", 20)
 ALLOWED_ORIGIN = os.environ.get("ADMIN_ORIGIN", "https://amitista.com").strip()
+
+# Origins beyond ALLOWED_ORIGIN that may also sign in and act on sessions here —
+# added 2026-08-31 so the dev.amitista.com preview can authenticate against the
+# same accounts, proxied through its own nginx to this same service. Nothing
+# that builds an outbound URL (board_link, brand_facts, …) reads this: those
+# stay pinned to ALLOWED_ORIGIN, which is still the one canonical site. Empty
+# ALLOWED_ORIGIN still means "no origin check at all" — see check_origin.
+ALLOWED_ORIGINS = frozenset(
+    {ALLOWED_ORIGIN} if ALLOWED_ORIGIN else set()
+) | frozenset(
+    origin.strip()
+    for origin in os.environ.get("ADMIN_EXTRA_ORIGINS", "").split(",")
+    if origin.strip()
+)
+
 GATEWAY_GROUP = os.environ.get("ADMIN_GATEWAY_GROUP", "amitista-api")
 
 SHIELD_URL = os.environ.get("ADMIN_SHIELD_URL", "http://127.0.0.1:8093").strip().rstrip("/")
@@ -4235,7 +4250,7 @@ class Handler(BaseHTTPRequestHandler):
         if not ALLOWED_ORIGIN:
             return
         origin = self.headers.get("Origin")
-        if origin != ALLOWED_ORIGIN:
+        if origin not in ALLOWED_ORIGINS:
             raise Rejected(403, "Blocked.")
 
     def read_body(self):
