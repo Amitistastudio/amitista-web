@@ -215,6 +215,7 @@ BRANDS_GROUP = os.environ.get("ADMIN_BRANDS_GROUP", "www-data")
 STATUS_PATH = os.environ.get("ADMIN_STATUS", "/var/www/amitista.com/shared/status.json")
 REVOKE_PATH = os.environ.get("ADMIN_REVOKED", "/var/lib/amitista/admin/session/revoked-before")
 STATE_DIR = os.environ.get("ADMIN_STATE", "/var/lib/amitista/admin/session")
+SESSIONS_PATH = os.environ.get("ADMIN_SESSIONS", "")
 TOKENS_PATH = os.environ.get("ADMIN_TOKENS", "/var/lib/amitista/tokens/tokens.json")
 USAGE_PATH = os.environ.get("ADMIN_API_USAGE", "/var/lib/amitista/api/usage.json")
 EVENTS_PATH = os.environ.get("ADMIN_API_EVENTS", "/var/lib/amitista/api/events.jsonl")
@@ -313,6 +314,9 @@ LISTEN_PORT = env_int("LISTEN_PORT", 8788)
 
 SESSION_HOURS = env_int("ADMIN_SESSION_HOURS", 12)
 IDLE_MINUTES = env_int("ADMIN_IDLE_MINUTES", 60)
+REMEMBER_DAYS = env_int("ADMIN_REMEMBER_DAYS", 400)
+ROTATE_GRACE = env_int("ADMIN_ROTATE_GRACE", 120)
+SESSION_LIMIT = env_int("ADMIN_SESSION_LIMIT", 512)
 RENEW_AFTER = env_int("ADMIN_RENEW_AFTER", 300)
 RATE_PER_IP = env_int("ADMIN_RATE_PER_IP", 10)
 RATE_WINDOW = env_int("ADMIN_RATE_WINDOW", 900)
@@ -334,6 +338,7 @@ if INSECURE_COOKIE and ALLOWED_ORIGIN.lower().startswith("https://"):
 
 IDLE_SECONDS = max(60, IDLE_MINUTES * 60)
 SESSION_SECONDS = max(IDLE_SECONDS, SESSION_HOURS * 3600)
+REMEMBER_SECONDS = min(400, max(1, REMEMBER_DAYS)) * 86400
 
 TRUSTED_PROXIES = ("127.0.0.1", "::1", "::ffff:127.0.0.1")
 
@@ -667,30 +672,228 @@ class Revocations:
 
 revocations = Revocations(REVOKE_PATH)
 
+UA_PLATFORMS = (
+    ("Android", "android"),
+    ("iPhone", "iphone"),
+    ("iPad", "ipad"),
+    ("Windows", "windows"),
+    ("Macintosh", "mac"),
+    ("CrOS", "chromeos"),
+    ("Linux", "linux"),
+)
+
+UA_BROWSERS = (
+    ("Edg/", "edge"),
+    ("OPR/", "opera"),
+    ("Firefox/", "firefox"),
+    ("Chrome/", "chrome"),
+    ("Safari/", "safari"),
+)
+
+
+def device_mark(agent):
+    text = (agent or "")[:400]
+    platform = "other"
+    for token, mark in UA_PLATFORMS:
+        if token in text:
+            platform = mark
+            break
+    browser = "other"
+    for token, mark in UA_BROWSERS:
+        if token in text:
+            browser = mark
+            break
+    return "%s/%s" % (platform, browser)
+
+
+class Sessions:
+
+    def __init__(self, path, limit):
+        self.path = path
+        self.limit = max(8, limit)
+        self.lock = threading.Lock()
+        self.records = self._load()
+
+    def _load(self):
+        try:
+            with open(self.path, encoding="utf-8") as handle:
+                held = json.load(handle)
+        except (OSError, ValueError):
+            return {}
+        if not isinstance(held, dict):
+            return {}
+        return {
+            key: value
+            for key, value in held.items()
+            if isinstance(key, str) and isinstance(value, dict) and isinstance(value.get("u"), str)
+        }
+
+    def _save(self):
+        try:
+            os.makedirs(os.path.dirname(self.path), exist_ok=True)
+            tmp = "%s.tmp" % self.path
+            with open(tmp, "w", encoding="utf-8") as handle:
+                json.dump(self.records, handle, separators=(",", ":"))
+            os.replace(tmp, self.path)
+            os.chmod(self.path, 0o600)
+        except OSError:
+            log.warning("could not persist the session registry — sessions end at restart")
+
+    def _prune(self, now):
+        for sid in [held for held, kept in self.records.items() if float(kept.get("exp") or 0) <= now]:
+            del self.records[sid]
+        if len(self.records) <= self.limit:
+            return
+        oldest = sorted(self.records.items(), key=lambda pair: float(pair[1].get("seen") or 0))
+        for sid, _ in oldest[: len(self.records) - self.limit]:
+            del self.records[sid]
+
+    def open(self, user, now, remembered, device, ip):
+        sid = secrets.token_urlsafe(18)
+        nonce = secrets.token_urlsafe(18)
+        with self.lock:
+            self._prune(now)
+            self.records[sid] = {
+                "u": user,
+                "n": nonce,
+                "p": None,
+                "pat": 0.0,
+                "d": device,
+                "at": now,
+                "seen": now,
+                "ip": ip,
+                "r": bool(remembered),
+                "exp": now + (REMEMBER_SECONDS if remembered else SESSION_SECONDS),
+            }
+            self._save()
+        return sid, nonce
+
+    def check(self, sid, nonce, user, device, now):
+        with self.lock:
+            held = self.records.get(sid)
+            if held is None:
+                return None
+            if held.get("u") != user or float(held.get("exp") or 0) <= now:
+                del self.records[sid]
+                self._save()
+                return None
+            if device is not None and held.get("d") is not None and held["d"] != device:
+                del self.records[sid]
+                self._save()
+                return "device"
+            if hmac.compare_digest(str(held.get("n") or ""), nonce):
+                return "ok"
+            retired = str(held.get("p") or "")
+            if retired and hmac.compare_digest(retired, nonce) and now - float(held.get("pat") or 0) <= ROTATE_GRACE:
+                return "grace"
+            del self.records[sid]
+            self._save()
+            return "replay"
+
+    def rotate(self, sid, nonce, now, ip):
+        fresh = secrets.token_urlsafe(18)
+        with self.lock:
+            held = self.records.get(sid)
+            if held is None or not hmac.compare_digest(str(held.get("n") or ""), nonce):
+                return None
+            held["p"] = held["n"]
+            held["pat"] = now
+            held["n"] = fresh
+            held["seen"] = now
+            if ip:
+                held["ip"] = ip
+            if held.get("r"):
+                held["exp"] = now + REMEMBER_SECONDS
+            self._save()
+        return fresh
+
+    def touch(self, sid, now, ip):
+        with self.lock:
+            held = self.records.get(sid)
+            if held is None:
+                return
+            held["seen"] = now
+            if ip:
+                held["ip"] = ip
+
+    def close(self, sid):
+        with self.lock:
+            if self.records.pop(sid, None) is None:
+                return False
+            self._save()
+            return True
+
+    def close_user(self, user):
+        with self.lock:
+            gone = [sid for sid, held in self.records.items() if held.get("u") == user]
+            for sid in gone:
+                del self.records[sid]
+            if gone:
+                self._save()
+            return len(gone)
+
+    def clear(self):
+        with self.lock:
+            if not self.records:
+                return 0
+            gone = len(self.records)
+            self.records = {}
+            self._save()
+            return gone
+
+    def held_by(self, user, now):
+        with self.lock:
+            return sum(
+                1
+                for held in self.records.values()
+                if held.get("u") == user and float(held.get("exp") or 0) > now
+            )
+
+
+sessions = Sessions(SESSIONS_PATH or os.path.join(STATE_DIR, "sessions.json"), SESSION_LIMIT)
+
+
 def sign(body):
     return b64encode(hmac.new(secret_bytes(), body.encode("ascii"), hashlib.sha256).digest())
 
-def session_ceiling(started):
+def session_ceiling(started, remembered=False):
+    if remembered:
+        return None
     return float(started) + SESSION_SECONDS
 
 
-def token_expiry(now, started):
+def token_expiry(now, started, remembered=False):
+    if remembered:
+        return int(now + REMEMBER_SECONDS)
     return int(min(now + IDLE_SECONDS, session_ceiling(started)))
 
 
-def issue_token(user, version, now, started=None):
+def cookie_life(remembered):
+    return REMEMBER_SECONDS if remembered else SESSION_HOURS * 3600
+
+
+def issue_token(user, version, now, started, remembered, sid, nonce):
     start = float(now if started is None else started)
     payload = {
         "u": user,
         "v": int(version),
         "iat": round(now, 6),
         "sat": round(start, 6),
-        "exp": token_expiry(now, start),
+        "exp": token_expiry(now, start, remembered),
+        "sid": sid,
+        "n": nonce,
     }
+    if remembered:
+        payload["r"] = True
     body = b64encode(json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8"))
     return "%s.%s" % (body, sign(body))
 
-def read_token(token, now):
+
+def open_session(user, version, now, remembered, device, ip):
+    sid, nonce = sessions.open(user, now, remembered, device, ip)
+    return issue_token(user, version, now, now, remembered, sid, nonce)
+
+def read_token(token, now, device=None, ip=None):
     if not token or token.count(".") != 1:
         return None
     body, signature = token.split(".")
@@ -714,9 +917,12 @@ def read_token(token, now):
     started = payload.get("sat")
     if not isinstance(started, (int, float)):
         started = issued
-    if started > issued or now >= session_ceiling(started):
+    remembered = payload.get("r") is True
+    ceiling = session_ceiling(started, remembered)
+    if started > issued or (ceiling is not None and now >= ceiling):
         return None
     payload["sat"] = float(started)
+    payload["r"] = remembered
 
     name = payload.get("u")
     if not isinstance(name, str) or not name:
@@ -733,6 +939,48 @@ def read_token(token, now):
     if not isinstance(version, int) or version != int(record.get("tokenVersion") or 1):
         return None
 
+    sid = payload.get("sid")
+    nonce = payload.get("n")
+    if not isinstance(sid, str) or not isinstance(nonce, str) or not sid or not nonce:
+        return None
+
+    standing = sessions.check(sid, nonce, name, device, now)
+    if standing is None:
+        return None
+    if standing == "replay":
+        log.warning("a retired session cookie for %s came back from %s — that session is closed", name, ip or "?")
+        audit.record(name, "sessions.replayed", None, ip)
+        alert(
+            "lockout",
+            "A retired admin session cookie was used again",
+            [
+                ("User", name),
+                ("Address", ip or "—"),
+                ("What happened", "the cookie was replaced, so this copy should not exist"),
+                ("Done", "that session is closed — sign in again"),
+                ("When", stamp()),
+            ],
+        )
+        return None
+    if standing == "device":
+        log.warning("a session cookie for %s arrived from a different device at %s", name, ip or "?")
+        audit.record(name, "sessions.moved", None, ip)
+        alert(
+            "lockout",
+            "An admin session cookie moved to another device",
+            [
+                ("User", name),
+                ("Address", ip or "—"),
+                ("Now looks like", device or "—"),
+                ("Done", "that session is closed — sign in again"),
+                ("When", stamp()),
+            ],
+        )
+        return None
+
+    payload["sid"] = sid
+    payload["n"] = nonce
+    payload["current"] = standing == "ok"
     payload["record"] = record
     return payload
 
@@ -740,7 +988,7 @@ def sign_pending(body):
     return b64encode(hmac.new(secret_bytes(), ("step." + body).encode("ascii"), hashlib.sha256).digest())
 
 
-def issue_pending(user, version, now, subject):
+def issue_pending(user, version, now, subject, remembered=False):
     payload = {
         "p": user,
         "v": int(version),
@@ -748,6 +996,8 @@ def issue_pending(user, version, now, subject):
         "iat": round(now, 6),
         "exp": int(now + PENDING_SECONDS),
     }
+    if remembered:
+        payload["r"] = True
     body = b64encode(json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8"))
     return "%s.%s" % (body, sign_pending(body))
 
@@ -795,6 +1045,7 @@ def read_pending(token, now):
     if not isinstance(linked, dict) or linked.get("sub") != subject:
         return None
 
+    payload["r"] = payload.get("r") is True
     payload["record"] = record
     return payload
 
@@ -3839,12 +4090,35 @@ class Handler(BaseHTTPRequestHandler):
         now = time.time()
         if now - float(session.get("iat") or 0) < RENEW_AFTER:
             return None
+        if not session.get("current"):
+            return None
+        remembered = session.get("r") is True
         started = float(session.get("sat") or now)
-        expires = token_expiry(now, started)
+        expires = token_expiry(now, started, remembered)
         if expires <= now:
             return None
-        token = issue_token(session["u"], session["v"], now, started)
+        nonce = sessions.rotate(session["sid"], session["n"], now, self.client_ip())
+        if nonce is None:
+            return None
+        token = issue_token(
+            session["u"], session["v"], now, started, remembered, session["sid"], nonce
+        )
         return self.session_cookie(token, int(expires - now))
+
+    def client_device(self):
+        return device_mark(self.headers.get("User-Agent"))
+
+    def reissue(self, session, version):
+        now = time.time()
+        remembered = session.get("r") is True
+        started = float(session.get("sat") or now)
+        nonce = sessions.rotate(session["sid"], session["n"], now, self.client_ip())
+        if nonce is not None:
+            return issue_token(
+                session["u"], version, now, started, remembered, session["sid"], nonce
+            )
+        sessions.close(session["sid"])
+        return open_session(session["u"], version, now, remembered, self.client_device(), self.client_ip())
 
     def current_session(self):
         header = self.headers.get("Cookie")
@@ -3858,8 +4132,11 @@ class Handler(BaseHTTPRequestHandler):
         morsel = jar.get(COOKIE_NAME)
         if morsel is None:
             return None
-        session = read_token(morsel.value, int(time.time()))
+        now = int(time.time())
+        ip = self.client_ip()
+        session = read_token(morsel.value, now, self.client_device(), ip)
         if session is not None:
+            sessions.touch(session["sid"], now, ip)
             self.held_session = session
         return session
 
@@ -4285,6 +4562,7 @@ class Handler(BaseHTTPRequestHandler):
             "private": private_groups_for(record["name"]),
             "mustChange": bool(record.get("mustChange")),
             "expires": session["exp"],
+            "remembered": session.get("r") is True,
         }
 
     def handle_get(self):
@@ -4392,6 +4670,7 @@ class Handler(BaseHTTPRequestHandler):
             session = self.require_session()
             record = session["record"]
             started = float(session.get("sat") or session.get("iat") or time.time())
+            remembered = session.get("r") is True
             self.reply(
                 200,
                 {
@@ -4415,7 +4694,10 @@ class Handler(BaseHTTPRequestHandler):
                     "session": {
                         "started": started,
                         "expires": session["exp"],
-                        "ceiling": session_ceiling(started),
+                        "ceiling": session_ceiling(started, remembered),
+                        "remembered": remembered,
+                        "device": self.client_device(),
+                        "held": sessions.held_by(record["name"], time.time()),
                         "idleMinutes": IDLE_MINUTES,
                         "hours": SESSION_HOURS,
                         "renewAfter": RENEW_AFTER,
@@ -4784,10 +5066,7 @@ class Handler(BaseHTTPRequestHandler):
             session = self.current_session()
             if session is not None:
                 name = session["record"]["name"]
-                try:
-                    users.bump_version(name)
-                except StoreError:
-                    pass
+                sessions.close(session["sid"])
                 log.info("%s signed out from %s", name, self.client_ip())
             self.reply(204, None, self.session_cookie("", 0))
             return
@@ -5378,6 +5657,7 @@ class Handler(BaseHTTPRequestHandler):
         data = self.read_body()
         user = str(data.get("username") or "").strip()
         password = str(data.get("password") or "")
+        remembered = data.get("remember") is True
 
         if not user or not password:
             raise Rejected(400, "Enter a username and a password.")
@@ -5496,7 +5776,9 @@ class Handler(BaseHTTPRequestHandler):
             gate_passes.spend(pass_held["id"])
 
         fresh = users.find(user) or record
-        token = issue_token(user, fresh.get("tokenVersion") or 1, time.time())
+        token = open_session(
+            user, fresh.get("tokenVersion") or 1, time.time(), remembered, self.client_device(), ip
+        )
         self.reply(
             200,
             {
@@ -5507,11 +5789,12 @@ class Handler(BaseHTTPRequestHandler):
                 "viewerPermissions": sorted(ROLES.get("viewer", ())),
                 "private": private_groups_for(user),
                 "mustChange": bool(fresh.get("mustChange")),
+                "remembered": remembered,
             },
-            self.session_cookie(token, SESSION_HOURS * 3600),
+            self.session_cookie(token, cookie_life(remembered)),
         )
 
-    def finish_sign_in(self, user, ip, method):
+    def finish_sign_in(self, user, ip, method, remembered=False):
         known = users.find(user)
         seen_before = (known or {}).get("lastIp")
         lockout.passed(ip)
@@ -5541,7 +5824,9 @@ class Handler(BaseHTTPRequestHandler):
                 ("When", stamp()),
             ],
         )
-        return fresh, issue_token(user, fresh.get("tokenVersion") or 1, time.time())
+        return fresh, open_session(
+            user, fresh.get("tokenVersion") or 1, time.time(), remembered, self.client_device(), ip
+        )
 
     def google_refused(self, ip, slug, reason, user=None):
         locked = lockout.failed(ip)
@@ -5572,8 +5857,11 @@ class Handler(BaseHTTPRequestHandler):
             log.warning("failed sign-in from %s — still locked out", ip)
             raise Rejected(429, "Too many failed attempts. Try again in %d minutes." % max(1, held // 60))
 
+        query = urllib.parse.parse_qs(self.path.split("?", 1)[1] if "?" in self.path else "")
+        remembered = (query.get("remember") or [""])[0] == "1"
+
         try:
-            target = admin_google.start(ip)
+            target = admin_google.start(ip, remembered)
         except admin_google.GoogleError as error:
             raise Rejected(error.status, error.message)
         self.bounce(target)
@@ -5647,17 +5935,21 @@ class Handler(BaseHTTPRequestHandler):
             log.info("pinned Google id for %s on first sign-in from %s", user, ip)
             audit.record(user, "google.confirmed", {"email": identity["email"][:64]}, ip)
 
+        remembered = bool(identity.get("remember"))
+
         if (record.get("totp") or {}).get("confirmed"):
             fresh = users.find(user) or record
-            pending_token = issue_pending(user, fresh.get("tokenVersion") or 1, time.time(), identity["sub"])
+            pending_token = issue_pending(
+                user, fresh.get("tokenVersion") or 1, time.time(), identity["sub"], remembered
+            )
             log.info("google sign-in for %s from %s — second step required", user, ip)
             self.land("/admin?signin=code", [self.pending_cookie(pending_token, PENDING_SECONDS)])
             return
 
-        fresh, token = self.finish_sign_in(user, ip, "google")
+        fresh, token = self.finish_sign_in(user, ip, "google", remembered)
         self.land(
             "/admin?signin=ok",
-            [self.session_cookie(token, SESSION_HOURS * 3600), self.pending_cookie("", 0)],
+            [self.session_cookie(token, cookie_life(remembered)), self.pending_cookie("", 0)],
         )
 
     def handle_google_verify(self):
@@ -5719,7 +6011,8 @@ class Handler(BaseHTTPRequestHandler):
                 [("User", user), ("Codes left", str(left)), ("Address", ip), ("When", stamp())],
             )
 
-        fresh, token = self.finish_sign_in(user, ip, "google")
+        remembered = step.get("r") is True
+        fresh, token = self.finish_sign_in(user, ip, "google", remembered)
         self.reply(
             200,
             {
@@ -5730,8 +6023,9 @@ class Handler(BaseHTTPRequestHandler):
                 "viewerPermissions": sorted(ROLES.get("viewer", ())),
                 "private": private_groups_for(user),
                 "mustChange": bool(fresh.get("mustChange")),
+                "remembered": remembered,
             },
-            self.session_cookie(token, SESSION_HOURS * 3600),
+            self.session_cookie(token, cookie_life(remembered)),
             [self.pending_cookie("", 0)],
         )
 
@@ -7556,8 +7850,12 @@ class Handler(BaseHTTPRequestHandler):
         version = users.change_own_password(record["name"], fresh)
         audit.record(record["name"], "password.changed", None, self.client_ip())
 
-        token = issue_token(record["name"], version, time.time())
-        self.reply(200, {"changed": True}, self.session_cookie(token, SESSION_HOURS * 3600))
+        remembered = session.get("r") is True
+        sessions.close_user(record["name"])
+        token = open_session(
+            record["name"], version, time.time(), remembered, self.client_device(), self.client_ip()
+        )
+        self.reply(200, {"changed": True}, self.session_cookie(token, cookie_life(remembered)))
 
     def handle_totp_start(self):
         session = self.require_session()
@@ -7585,8 +7883,11 @@ class Handler(BaseHTTPRequestHandler):
         )
 
         fresh = users.find(name)
-        token = issue_token(name, (fresh or {}).get("tokenVersion") or 1, time.time())
-        self.reply(200, {"enabled": True, "recovery": codes}, self.session_cookie(token, SESSION_HOURS * 3600))
+        remembered = session.get("r") is True
+        token = self.reissue(session, (fresh or {}).get("tokenVersion") or 1)
+        self.reply(
+            200, {"enabled": True, "recovery": codes}, self.session_cookie(token, cookie_life(remembered))
+        )
 
     def handle_totp_disable(self):
         session = self.require_session()
@@ -7615,8 +7916,9 @@ class Handler(BaseHTTPRequestHandler):
         )
 
         fresh = users.find(name)
-        token = issue_token(name, (fresh or {}).get("tokenVersion") or 1, time.time())
-        self.reply(200, {"enabled": False}, self.session_cookie(token, SESSION_HOURS * 3600))
+        remembered = session.get("r") is True
+        token = self.reissue(session, (fresh or {}).get("tokenVersion") or 1)
+        self.reply(200, {"enabled": False}, self.session_cookie(token, cookie_life(remembered)))
 
     def handle_totp_clear(self):
         session = self.require("users.manage")
@@ -7640,6 +7942,7 @@ class Handler(BaseHTTPRequestHandler):
     def handle_revoke_all(self):
         session = self.require("users.manage")
         revocations.revoke(time.time())
+        sessions.clear()
         audit.record(session["record"]["name"], "sessions.revokedAll", None, self.client_ip())
         log.info("every session ended by %s", session["record"]["name"])
         self.reply(204, None, self.session_cookie("", 0))
@@ -9239,6 +9542,7 @@ class Handler(BaseHTTPRequestHandler):
         self.not_over_an_owner(session, name)
 
         version = users.bump_version(name)
+        sessions.close_user(name)
         audit.record(session["record"]["name"], "user.signedOut", {"name": name}, self.client_ip())
         log.info("sessions for %s ended by %s", name, session["record"]["name"])
         self.reply(200, {"name": name, "tokenVersion": version})

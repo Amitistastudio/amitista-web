@@ -13,7 +13,7 @@ os.environ["ADMIN_SECRET"] = "0" * 64
 os.environ["ADMIN_REVOKED"] = os.path.join(workspace, "revoked-before")
 
 import admin_api
-from admin_api import issue_pending, issue_token, read_pending, read_token
+from admin_api import issue_pending, open_session, read_pending, read_token
 from admin_store import StoreError
 
 OWNER = "amitista"
@@ -40,7 +40,7 @@ now = time.time()
 
 print("=== a two-step token is not a session ===")
 step = issue_pending(OWNER, version, now, SUBJECT)
-session = issue_token(OWNER, version, now)
+session = open_session(OWNER, version, now, False, None, None)
 
 check("the two-step token reads back", read_pending(step, int(now)) is not None)
 check("the session token reads back", read_token(session, int(now)) is not None)

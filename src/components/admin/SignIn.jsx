@@ -129,6 +129,7 @@ function SignInPanel({ configured, notice, onSignedIn, onRequest, onGateExpired 
   const [password, setPassword] = React.useState('');
   const [code, setCode] = React.useState('');
   const [step, setStep] = React.useState('password');
+  const [remember, setRemember] = React.useState(true);
   const [reveal, setReveal] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState(null);
@@ -155,7 +156,7 @@ function SignInPanel({ configured, notice, onSignedIn, onRequest, onGateExpired 
     try {
       const session = viaGoogle
         ? await verifyGoogleCode(code.trim())
-        : await signIn(username.trim(), password, step === 'code' ? code.trim() : undefined);
+        : await signIn(username.trim(), password, step === 'code' ? code.trim() : undefined, remember);
       setPassword('');
       setCode('');
       onSignedIn(session);
@@ -301,6 +302,25 @@ function SignInPanel({ configured, notice, onSignedIn, onRequest, onGateExpired 
                 </div>
               </Field>
             </div>
+
+            <label className="flex items-start gap-3 cursor-pointer mt-5">
+              <input
+                type="checkbox"
+                checked={remember}
+                onChange={(event) => setRemember(event.target.checked)}
+                className="mt-0.5 h-4 w-4 sm:h-3.5 sm:w-3.5 accent-purple-500 shrink-0"
+              />
+              <span className="min-w-0">
+                <span className="block text-[13px] text-neutral-200 font-normal leading-tight">
+                  Keep me signed in on this browser
+                </span>
+                <span className="block text-[11px] text-neutral-500 font-normal leading-relaxed mt-1">
+                  {remember
+                    ? 'You stay signed in until you sign out or clear this browser. Leave it off on a shared computer.'
+                    : 'This session ends after an hour idle, and after 12 hours either way.'}
+                </span>
+              </span>
+            </label>
 
             {error && (
               <p role="alert" className={`${errorClass} mt-5`}>

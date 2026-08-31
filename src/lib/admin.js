@@ -88,6 +88,7 @@ export async function fetchSession() {
     viewerPermissions: result.body.viewerPermissions ?? [],
     private: result.body.private ?? [],
     mustChange: Boolean(result.body.mustChange),
+    remembered: Boolean(result.body.remembered),
     configured: true,
   };
 }
@@ -98,8 +99,10 @@ export async function passGate(verification) {
   throw new Error(message(result, 'That check could not be confirmed. Try it once more.'));
 }
 
-export async function signIn(username, password, code) {
-  const payload = code ? { username, password, code } : { username, password };
+export async function signIn(username, password, code, remember = true) {
+  const payload = code
+    ? { username, password, code, remember }
+    : { username, password, remember };
   const result = await send('/login', payload);
   if (result.ok) {
     return {
@@ -109,6 +112,7 @@ export async function signIn(username, password, code) {
       viewerPermissions: result.body.viewerPermissions ?? [],
       private: result.body.private ?? [],
       mustChange: Boolean(result.body.mustChange),
+      remembered: Boolean(result.body.remembered),
     };
   }
   if (result.body.needs === 'code') {
@@ -125,6 +129,10 @@ export async function signIn(username, password, code) {
 }
 
 export const GOOGLE_START = `${BASE}/login/google/start`;
+
+export function googleStartUrl(remember = true) {
+  return remember ? `${GOOGLE_START}?remember=1` : GOOGLE_START;
+}
 
 const SIGNIN_NOTICES = {
   cancelled: 'That Google sign-in was cancelled.',
@@ -154,6 +162,7 @@ export async function verifyGoogleCode(code) {
       viewerPermissions: result.body.viewerPermissions ?? [],
       private: result.body.private ?? [],
       mustChange: Boolean(result.body.mustChange),
+      remembered: Boolean(result.body.remembered),
     };
   }
   throw new Error(message(result, `Sign-in failed (${result.status}).`));
@@ -1314,6 +1323,8 @@ export const AUDIT_LABELS = {
   'password.changed': 'changed their password',
   'password.failed': 'gave the wrong current password',
   'sessions.revokedAll': 'ended every session',
+  'sessions.replayed': 'had an out-of-date session cookie come back — that session was closed',
+  'sessions.moved': 'had a session cookie turn up on another device — that session was closed',
   'user.created': 'created an account',
   'user.updated': 'changed an account',
   'user.ownerGranted': 'made an owner',

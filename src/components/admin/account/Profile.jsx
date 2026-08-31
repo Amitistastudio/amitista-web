@@ -59,7 +59,7 @@ function useCountdown(session) {
   const clock = now + skew;
   return {
     idleLeft: session.expires - clock,
-    hardLeft: session.ceiling - clock,
+    hardLeft: typeof session.ceiling === 'number' ? session.ceiling - clock : null,
     elapsed: clock - session.started,
   };
 }
@@ -592,6 +592,7 @@ export default function Profile({ account, activity, onGoTo, onTab, onChanged })
   }, [account]);
 
   const clock = useCountdown(session);
+  const remembered = Boolean(session?.remembered);
   const twoFactor = account.twoFactor ?? {};
   const discord = account.discord ?? {};
   const keys = account.keys;
@@ -612,9 +613,11 @@ export default function Profile({ account, activity, onGoTo, onTab, onChanged })
   );
   const fresh = addresses.filter((seen) => seen.fresh);
 
-  const idlePercent = clock && session
-    ? Math.max(0, Math.min(100, (clock.idleLeft / (session.idleMinutes * 60)) * 100))
-    : 0;
+  const idlePercent = remembered
+    ? 100
+    : clock && session
+      ? Math.max(0, Math.min(100, (clock.idleLeft / (session.idleMinutes * 60)) * 100))
+      : 0;
 
   const goSecurity = onTab ? () => onTab('security') : undefined;
   const goHistory = onTab ? () => onTab('history') : undefined;
@@ -777,11 +780,18 @@ export default function Profile({ account, activity, onGoTo, onTab, onChanged })
 
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-px bg-[#17171d] border-t border-[#282832]">
           <Metric
-            label="Session left"
-            value={clock ? remaining(clock.idleLeft) : '—'}
-            percent={clock ? idlePercent : undefined}
+            label={remembered ? 'This browser' : 'Session left'}
+            value={remembered ? 'Kept' : clock ? remaining(clock.idleLeft) : '—'}
+            tone={remembered ? 'text-emerald-400' : undefined}
+            percent={remembered ? undefined : clock ? idlePercent : undefined}
             bar={idlePercent < 20 ? 'bg-amber-400' : 'bg-purple-500/70'}
-            hint={clock ? `${remaining(clock.hardLeft)} before the hard limit` : 'idle timeout'}
+            hint={
+              remembered
+                ? 'signed in until you sign out'
+                : clock
+                  ? `${remaining(clock.hardLeft)} before the hard limit`
+                  : 'idle timeout'
+            }
           />
           <Metric
             label="Two-step"
@@ -936,19 +946,43 @@ export default function Profile({ account, activity, onGoTo, onTab, onChanged })
             label="From"
             value={<span className="font-mono text-[12px]">{session?.ip ?? account.lastIp ?? '—'}</span>}
           />
-          <Row label="Goes idle after" value={`${session?.idleMinutes ?? 60} minutes`} />
-          <Row label="Idles out" value={clock ? `in ${remaining(clock.idleLeft)}` : '—'} />
-          <Row
-            label="Hard limit"
-            value={clock ? `in ${remaining(clock.hardLeft)}` : `${session?.hours ?? 12} hours`}
-          />
-          <div className="px-4 sm:px-6 py-4 border-t border-[#17171d]">
-            <Bar percent={idlePercent} tone={idlePercent < 20 ? 'bg-amber-400' : 'bg-purple-500/70'} />
-            <p className="text-[12px] text-neutral-500 font-normal leading-relaxed mt-3">
-              Using the panel pushes the idle timeout back. The {session?.hours ?? 12}-hour limit does
-              not move.
-            </p>
-          </div>
+          {remembered ? (
+            <>
+              <Row label="Kept signed in" value={<Pill tone="green">on this browser</Pill>} />
+              <Row label="Ends when" value="you sign out, or clear this browser" />
+              <Row label="Tied to" value={<span className="font-mono text-[12px]">{session?.device ?? '—'}</span>} />
+              {typeof session?.held === 'number' && (
+                <Row
+                  label="Browsers signed in"
+                  value={session.held === 1 ? 'just this one' : `${session.held}, this one included`}
+                />
+              )}
+              <div className="px-4 sm:px-6 py-4 border-t border-[#17171d]">
+                <p className="text-[12px] text-neutral-500 font-normal leading-relaxed">
+                  You asked this browser to keep you signed in, so it does not time out. The cookie is
+                  swapped for a new one as you work — if an old one ever comes back, or this one turns up
+                  on another device, that session is dropped and you are told. Sign out ends this browser
+                  only; changing your password ends every one.
+                </p>
+              </div>
+            </>
+          ) : (
+            <>
+              <Row label="Goes idle after" value={`${session?.idleMinutes ?? 60} minutes`} />
+              <Row label="Idles out" value={clock ? `in ${remaining(clock.idleLeft)}` : '—'} />
+              <Row
+                label="Hard limit"
+                value={clock ? `in ${remaining(clock.hardLeft)}` : `${session?.hours ?? 12} hours`}
+              />
+              <div className="px-4 sm:px-6 py-4 border-t border-[#17171d]">
+                <Bar percent={idlePercent} tone={idlePercent < 20 ? 'bg-amber-400' : 'bg-purple-500/70'} />
+                <p className="text-[12px] text-neutral-500 font-normal leading-relaxed mt-3">
+                  Using the panel pushes the idle timeout back. The {session?.hours ?? 12}-hour limit does
+                  not move.
+                </p>
+              </div>
+            </>
+          )}
         </Panel>
       </div>
 

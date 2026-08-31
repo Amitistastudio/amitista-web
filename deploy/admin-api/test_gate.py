@@ -170,7 +170,7 @@ stale = admin_api.issue_gate(time.time() - admin_api.GATE_SECONDS - 60, "127.0.0
 status, body, _ = login(cookie="%s=%s" % (admin_api.GATE_COOKIE, stale))
 check("a pass that has run out is refused", status == 403 and body.get("needs") == "gate")
 
-session_shaped = admin_api.issue_token(OWNER, 1, time.time())
+session_shaped = admin_api.open_session(OWNER, 1, time.time(), False, None, None)
 status, body, _ = login(cookie="%s=%s" % (admin_api.GATE_COOKIE, session_shaped))
 check("a session token presented as a pass is refused", status == 403)
 

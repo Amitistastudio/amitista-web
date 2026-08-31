@@ -83,13 +83,14 @@ class Pending:
         for key in stale:
             del self._items[key]
 
-    def issue(self, ip, now=None):
+    def issue(self, ip, remember=False, now=None):
         now = time.time() if now is None else now
         state = secrets.token_urlsafe(32)
         item = {
             "nonce": secrets.token_urlsafe(32),
             "verifier": secrets.token_urlsafe(64),
             "ip": ip,
+            "remember": bool(remember),
             "at": now,
         }
         with self._lock:
@@ -202,11 +203,11 @@ def get_json(url, data=None):
     return payload
 
 
-def start(ip):
+def start(ip, remember=False):
     if not enabled():
         raise GoogleError("Google sign-in is not switched on.", 404)
 
-    state, item = pending.issue(ip)
+    state, item = pending.issue(ip, remember)
     challenge = b64url(hashlib.sha256(item["verifier"].encode("ascii")).digest())
     params = {
         "client_id": CLIENT_ID,
@@ -312,4 +313,5 @@ def finish(code, state, ip):
     identity = verify(raw, item["nonce"])
     identity["startedFrom"] = item["ip"]
     identity["sameAddress"] = item["ip"] == ip
+    identity["remember"] = bool(item.get("remember"))
     return identity
