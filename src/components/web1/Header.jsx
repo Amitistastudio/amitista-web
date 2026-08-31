@@ -303,13 +303,12 @@ export default function Header() {
             aria-label="Search the site"
             aria-haspopup="dialog"
             aria-expanded={open}
-            className="hidden lg:inline-flex items-center gap-2 border border-[#282832] hover:border-neutral-500 bg-transparent px-3 py-2.5 text-neutral-400 hover:text-white cursor-pointer group/search search-press"
+            className="hidden lg:inline-flex h-9 items-center gap-2.5 border border-[#24242b] bg-white/[0.015] px-3 text-neutral-500 hover:border-[#3a3a43] hover:bg-white/[0.035] hover:text-neutral-200 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-neutral-500 focus-visible:ring-offset-2 focus-visible:ring-offset-[#060608] cursor-pointer group/search search-press"
           >
-            <Search size={13} strokeWidth={2} className="shrink-0" />
-            <span className="shrink-0 text-[10px] font-semibold tracking-[0.15em]">SEARCH</span>
-            <span className="shrink-0 text-[10px] font-normal tracking-[0.1em] text-muted group-hover/search:text-neutral-300 transition-colors">
+            <Search size={14} strokeWidth={1.75} className="shrink-0" />
+            <kbd className="shrink-0 font-sans text-[10px] font-medium tracking-[0.08em] text-neutral-600 group-hover/search:text-neutral-400 transition-colors">
               {shortcutLabel}
-            </span>
+            </kbd>
           </button>
           <a
             href="/admin"
