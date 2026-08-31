@@ -4,6 +4,8 @@ set -uo pipefail
 WEB=/root/website
 BOTS=/opt/amitista/discord-bot
 SHIELD=/root/dev/amitista-shield
+DEV=/root/dev/amitista-dev
+DEV_LIVE=/var/www/dev.amitista.com
 ENCHANGE_LIVE=/opt/enchange
 TOKEN_FILE=/root/.gh-oauth
 ORG=Amitistastudio
@@ -199,6 +201,40 @@ deploy_api() {
   log "$unit running"
 }
 
+deploy_dev() {
+  step "amitista-dev site"
+  if [ -n "$DRY" ]; then log "(dry run) would export HEAD from $DEV and rsync it to $DEV_LIVE"; return 0; fi
+
+  local export_dir; export_dir="$(mktemp -d)"
+  if ! git -C "$DEV" archive HEAD | tar -x -C "$export_dir"; then
+    warn "could not export $DEV at HEAD; refusing to deploy"
+    rm -rf "$export_dir"
+    return 1
+  fi
+
+  local snap="$STATE/dev-$STAMP.tar.gz"
+  tar czf "$snap" -C "$DEV_LIVE" . 2>/dev/null || true
+
+  if ! rsync -a --delete --exclude='README.md' --exclude='src/' "$export_dir"/ "$DEV_LIVE"/; then
+    warn "rsync to $DEV_LIVE failed; the live copy may be half-updated"
+    rm -rf "$export_dir"
+    return 1
+  fi
+  rm -rf "$export_dir"
+  chown -R www-data:www-data "$DEV_LIVE"
+
+  local code
+  code="$(curl -sS -o /dev/null -w '%{http_code}' -L --max-time 20 https://dev.amitista.com/ 2>/dev/null)"
+  if [ "$code" != "200" ]; then
+    warn "dev.amitista.com answered $code after deploying; rolling back"
+    rm -rf "${DEV_LIVE:?}"/*
+    tar xzf "$snap" -C "$DEV_LIVE"
+    chown -R www-data:www-data "$DEV_LIVE"
+    return 1
+  fi
+  log "live, and answering 200 (through the redirect to /dashboard/)"
+}
+
 deploy_shield() {
   step "shield"
   if [ -n "$DRY" ]; then log "(dry run) would run feed/install.sh and evaluator/install.sh"; return 0; fi
@@ -256,7 +292,7 @@ run() {
 }
 
 sync_repo() {
-  local dir="$1" repo="$2"
+  local dir="$1" repo="$2" gate="${3:-ci}"
   git -C "$dir" fetch --quiet origin main 2>/dev/null || { warn "$repo: fetch failed"; return 2; }
   local head_now after
   head_now="$(git -C "$dir" rev-parse HEAD)"
@@ -280,11 +316,14 @@ sync_repo() {
     return 1
   fi
 
-  local verdict; verdict="$(ci_is_green "$repo" "$after")"
-  local green=$?
-  if [ $green -ne 0 ] && [ -z "$FORCE" ]; then
-    log "$repo: ${after:0:7} is not deployable yet (CI $verdict)"
-    return 1
+  local verdict="no gate"
+  if [ "$gate" = "ci" ]; then
+    verdict="$(ci_is_green "$repo" "$after")"
+    local green=$?
+    if [ $green -ne 0 ] && [ -z "$FORCE" ]; then
+      log "$repo: ${after:0:7} is not deployable yet (CI $verdict)"
+      return 1
+    fi
   fi
   [ "$before" != "$head_now" ] && log "$repo: catching up a commit made straight in this checkout"
   log "$repo: ${before:0:7} -> ${after:0:7} (CI $verdict)"
@@ -305,7 +344,8 @@ if [ -n "$ONLY" ]; then
     admin-api)   run admin-api   deploy_api admin-api amitista-admin ;;
     api-gateway) run api-gateway deploy_api api-gateway amitista-api ;;
     shield)      run shield      deploy_shield ;;
-    *) die "unknown component: $ONLY (website, studio-bot, enchange, admin-api, api-gateway, shield)" ;;
+    dev)         run dev         deploy_dev ;;
+    *) die "unknown component: $ONLY (website, studio-bot, enchange, admin-api, api-gateway, shield, dev)" ;;
   esac
   if [ ${#FAILED[@]} -gt 0 ]; then report_deploy no; die "$ONLY did not come up and was rolled back"; fi
   report_deploy yes
@@ -351,14 +391,20 @@ if [ $SYNC -eq 0 ]; then
   uncovered amitista-shield '^(src/|bin/|feed/|evaluator/|index\.js|package(-lock)?\.json)'
 fi
 
+step "amitista-dev"
+scan_checkout "$DEV" amitista-dev || true
+sync_repo "$DEV" amitista-dev nogate; SYNC=$?
+[ $SYNC -eq 2 ] && FAILED+=("amitista-dev (sync)")
+[ $SYNC -eq 0 ] && run dev deploy_dev
+
 step "scan"
 RESCAN=0
-for pair in "$WEB amitista-web" "$BOTS amitista-bots" "$SHIELD amitista-shield"; do
+for pair in "$WEB amitista-web" "$BOTS amitista-bots" "$SHIELD amitista-shield" "$DEV amitista-dev"; do
   set -- $pair
   scan_checkout "$1" "$2" || RESCAN=1
 done
 if [ $RESCAN -eq 0 ]; then
-  log "all three checkouts clean"
+  log "all four checkouts clean"
 else
   warn "a deploy has left a checkout dirty — commit, ignore or stop writing those"
   warn "files, or the next commit touching one of them will block the deploy"
