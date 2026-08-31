@@ -271,6 +271,198 @@ export const IMAGE_MANIFEST = {
       }
     ]
   },
+  "/work/async-preview-01.webp": {
+    "width": 960,
+    "height": 437,
+    "avif": [
+      {
+        "url": "/img/async-preview-01-400w.b96aca7c.avif",
+        "w": 400
+      },
+      {
+        "url": "/img/async-preview-01-640w.6998e7d1.avif",
+        "w": 640
+      },
+      {
+        "url": "/img/async-preview-01-960w.a1ec541d.avif",
+        "w": 960
+      }
+    ],
+    "webp": [
+      {
+        "url": "/img/async-preview-01-400w.9ba9b651.webp",
+        "w": 400
+      },
+      {
+        "url": "/img/async-preview-01-640w.20ebfeae.webp",
+        "w": 640
+      },
+      {
+        "url": "/img/async-preview-01-960w.96e7854f.webp",
+        "w": 960
+      }
+    ]
+  },
+  "/work/async-preview-02.webp": {
+    "width": 960,
+    "height": 433,
+    "avif": [
+      {
+        "url": "/img/async-preview-02-400w.507b4a73.avif",
+        "w": 400
+      },
+      {
+        "url": "/img/async-preview-02-640w.0f52157b.avif",
+        "w": 640
+      },
+      {
+        "url": "/img/async-preview-02-960w.fad32626.avif",
+        "w": 960
+      }
+    ],
+    "webp": [
+      {
+        "url": "/img/async-preview-02-400w.0f603825.webp",
+        "w": 400
+      },
+      {
+        "url": "/img/async-preview-02-640w.9d981ea1.webp",
+        "w": 640
+      },
+      {
+        "url": "/img/async-preview-02-960w.453ed114.webp",
+        "w": 960
+      }
+    ]
+  },
+  "/work/async-preview-03.webp": {
+    "width": 960,
+    "height": 437,
+    "avif": [
+      {
+        "url": "/img/async-preview-03-400w.f24d9d6e.avif",
+        "w": 400
+      },
+      {
+        "url": "/img/async-preview-03-640w.beef8888.avif",
+        "w": 640
+      },
+      {
+        "url": "/img/async-preview-03-960w.a3b5efba.avif",
+        "w": 960
+      }
+    ],
+    "webp": [
+      {
+        "url": "/img/async-preview-03-400w.b2a91b90.webp",
+        "w": 400
+      },
+      {
+        "url": "/img/async-preview-03-640w.2624d580.webp",
+        "w": 640
+      },
+      {
+        "url": "/img/async-preview-03-960w.bc1aa6d5.webp",
+        "w": 960
+      }
+    ]
+  },
+  "/work/async-preview-04.webp": {
+    "width": 960,
+    "height": 438,
+    "avif": [
+      {
+        "url": "/img/async-preview-04-400w.7f9b64ba.avif",
+        "w": 400
+      },
+      {
+        "url": "/img/async-preview-04-640w.a674dde4.avif",
+        "w": 640
+      },
+      {
+        "url": "/img/async-preview-04-960w.f0529736.avif",
+        "w": 960
+      }
+    ],
+    "webp": [
+      {
+        "url": "/img/async-preview-04-400w.3d30cc66.webp",
+        "w": 400
+      },
+      {
+        "url": "/img/async-preview-04-640w.de71bfe0.webp",
+        "w": 640
+      },
+      {
+        "url": "/img/async-preview-04-960w.17c143c8.webp",
+        "w": 960
+      }
+    ]
+  },
+  "/work/async-preview-05.webp": {
+    "width": 960,
+    "height": 439,
+    "avif": [
+      {
+        "url": "/img/async-preview-05-400w.b0a8fad5.avif",
+        "w": 400
+      },
+      {
+        "url": "/img/async-preview-05-640w.7bfdfd47.avif",
+        "w": 640
+      },
+      {
+        "url": "/img/async-preview-05-960w.63541339.avif",
+        "w": 960
+      }
+    ],
+    "webp": [
+      {
+        "url": "/img/async-preview-05-400w.adf07de8.webp",
+        "w": 400
+      },
+      {
+        "url": "/img/async-preview-05-640w.80ff213a.webp",
+        "w": 640
+      },
+      {
+        "url": "/img/async-preview-05-960w.fe971460.webp",
+        "w": 960
+      }
+    ]
+  },
+  "/work/async-preview-06.webp": {
+    "width": 960,
+    "height": 444,
+    "avif": [
+      {
+        "url": "/img/async-preview-06-400w.575f0b2c.avif",
+        "w": 400
+      },
+      {
+        "url": "/img/async-preview-06-640w.528fac1d.avif",
+        "w": 640
+      },
+      {
+        "url": "/img/async-preview-06-960w.be3b0b6b.avif",
+        "w": 960
+      }
+    ],
+    "webp": [
+      {
+        "url": "/img/async-preview-06-400w.d240941d.webp",
+        "w": 400
+      },
+      {
+        "url": "/img/async-preview-06-640w.6bb2ed17.webp",
+        "w": 640
+      },
+      {
+        "url": "/img/async-preview-06-960w.d580433f.webp",
+        "w": 960
+      }
+    ]
+  },
   "/work/ocean-full.webp": {
     "width": 1300,
     "height": 7031,

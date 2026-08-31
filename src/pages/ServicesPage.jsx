@@ -69,11 +69,11 @@ export default function ServicesPage() {
 
           <div className="relative z-30 w-full flex flex-col items-center pt-24 pb-24 px-6 sm:px-10 md:px-16 lg:px-20">
             <Reveal rise className="w-full flex flex-col items-center">
-              <div className="inline-flex items-center justify-center px-4 py-1.5 rounded-full border border-[#222228] bg-[#111115]/50 text-xs sm:text-[13px] font-medium text-neutral-300 mb-6 select-none transition-all hover:bg-[#15151a]">
-                SERVICES
-              </div>
+              <span className="mb-7 font-mono text-[10px] font-medium tracking-[0.18em] text-violet-400">
+                SERVICES / 01—03
+              </span>
               <h1 className="text-4xl sm:text-5xl md:text-6xl lg:text-[72px] font-normal text-white tracking-tight leading-none mb-6 max-w-4xl">
-                What we build
+                Websites, products &amp; systems.
               </h1>
               <p className="text-sm sm:text-base text-neutral-400 font-normal max-w-[540px] text-center leading-relaxed mb-16 tracking-tight">
                 Three things, and the detail underneath each of them. If your

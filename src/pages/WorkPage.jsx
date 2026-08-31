@@ -13,7 +13,7 @@ const NEXT_PAGES = [
   {
     href: '/services',
     icon: Layers,
-    title: 'What we build',
+    title: 'Websites, products & systems',
     body: 'The three kinds of work we take on, and what each one covers.',
   },
   {

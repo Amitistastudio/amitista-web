@@ -323,7 +323,7 @@ export default function ApplyPage() {
     setStatus('idle');
     setError('');
     window.requestAnimationFrame(() => {
-      formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      formRef.current?.scrollIntoView({ behavior: 'auto', block: 'start' });
     });
   };
 

@@ -60,8 +60,7 @@ const COLUMNS = [
 ];
 
 function scrollToTop() {
-  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  window.scrollTo({ top: 0, behavior: reduced ? 'auto' : 'smooth' });
+  window.scrollTo({ top: 0, behavior: 'auto' });
 }
 
 export default function Footer() {

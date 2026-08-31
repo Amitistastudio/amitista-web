@@ -630,16 +630,6 @@
 }
 
 @layer base {
-  html {
-    scroll-behavior: smooth;
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    html {
-      scroll-behavior: auto;
-    }
-  }
-
   :focus-visible {
     outline: 2px solid #a78bfa;
     outline-offset: 2px;
@@ -837,4 +827,78 @@ mark.tx-hit-live {
 .eb-card {
   background: linear-gradient(180deg, rgba(12, 28, 48, 0.72) 0%, rgba(6, 10, 17, 0.9) 100%);
   box-shadow: 0 26px 70px -40px rgba(21, 133, 242, 0.85);
+}
+
+.service-hover-preview {
+  display: none;
+}
+
+@media (hover: hover) and (pointer: fine) and (min-width: 1024px) {
+  .service-hover-preview {
+    display: block;
+    visibility: hidden;
+    opacity: 0;
+    transition:
+      opacity 240ms ease,
+      visibility 0s linear 240ms;
+    will-change: opacity;
+  }
+
+  .service-preview-track {
+    transform: translate3d(0, 0, 0);
+    will-change: transform;
+  }
+
+  .service-preview-card {
+    transform: rotate(1deg) scale(0.94);
+    transform-origin: 50% 55%;
+    transition: transform 380ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .service-preview-image {
+    opacity: 0;
+    transform: scale(1.025);
+    transition:
+      opacity 340ms ease,
+      transform 480ms cubic-bezier(0.22, 1, 0.36, 1);
+    will-change: opacity, transform;
+  }
+
+  .service-preview-image[data-active='true'] {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  .service-row:hover,
+  .service-row:focus-visible {
+    z-index: 20;
+  }
+
+  .service-row:hover .service-hover-preview,
+  .service-row:focus-visible .service-hover-preview {
+    visibility: visible;
+    opacity: 1;
+    transition:
+      opacity 300ms ease,
+      visibility 0s linear 0s;
+  }
+
+  .service-row:hover .service-preview-card,
+  .service-row:focus-visible .service-preview-card {
+    transform: rotate(-0.45deg) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .service-hover-preview,
+  .service-preview-track,
+  .service-preview-card,
+  .service-preview-image,
+  .service-hover-preview img {
+    transition: none !important;
+  }
+
+  .service-preview-card {
+    transform: none;
+  }
 }

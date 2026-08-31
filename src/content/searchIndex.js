@@ -31,7 +31,7 @@ export const SITE_PAGES = [
   },
   {
     title: 'Services',
-    subtitle: 'What we build, and what each one covers',
+    subtitle: 'Three digital disciplines, and what each one covers',
     href: '/services',
     group: 'Studio',
     keywords: 'what we do offerings capabilities hire build',
@@ -254,7 +254,7 @@ export const SITE_PAGES = [
     href: '/open-source',
     group: 'Legal',
     keywords:
-      'open source licences licenses attribution notices credits mit isc ofl react lenis lucide ogl fonts',
+      'open source licences licenses attribution notices credits mit isc ofl react lucide ogl fonts',
   },
   {
     title: 'Accessibility',

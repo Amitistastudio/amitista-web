@@ -14,13 +14,6 @@ export const OPEN_SOURCE = [
     url: 'https://github.com/facebook/react',
   },
   {
-    name: 'Lenis',
-    version: '1.3',
-    licence: 'MIT',
-    purpose: 'Smooth scrolling, switched off when you ask for reduced motion',
-    url: 'https://github.com/darkroomengineering/lenis',
-  },
-  {
     name: 'Lucide',
     version: '1.27',
     licence: 'ISC',
