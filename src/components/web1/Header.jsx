@@ -127,14 +127,14 @@ function externalProps(external) {
 }
 
 const linkClasses =
-  'relative flex items-center gap-1.5 h-20 text-[11px] font-semibold tracking-[0.2em] transition-colors';
+  'relative flex h-8 items-center gap-1.5 px-3 text-[10px] font-semibold tracking-[0.14em] transition-[color,background-color] duration-200';
 
 function ActiveBar({ shown }) {
   return (
     <span
       aria-hidden="true"
-      className={`absolute left-0 right-0 bottom-0 h-px transition-colors ${
-        shown ? 'bg-violet-400' : 'bg-transparent'
+      className={`absolute bottom-0 left-3 right-3 h-px transition-[opacity,transform] duration-200 ${
+        shown ? 'translate-y-0 bg-violet-400 opacity-100' : 'translate-y-0.5 opacity-0'
       }`}
     />
   );
@@ -147,7 +147,9 @@ function NavMenu({ link, active }) {
         href={link.href}
         aria-current={active ? 'page' : undefined}
         className={`${linkClasses} ${
-          active ? 'text-white' : 'text-neutral-300 hover:text-white'
+          active
+            ? 'bg-white/[0.055] text-white'
+            : 'text-neutral-500 hover:bg-white/[0.035] hover:text-neutral-200'
         }`}
       >
         {link.label}
@@ -160,7 +162,7 @@ function NavMenu({ link, active }) {
       </a>
 
       <div
-        className="absolute top-full left-1/2 -translate-x-1/2 w-[340px] invisible opacity-0 translate-y-1 transition-all duration-200
+        className="absolute top-[calc(100%+1.25rem)] left-1/2 -translate-x-1/2 w-[340px] invisible opacity-0 translate-y-1 transition-all duration-200
                    group-hover/menu:visible group-hover/menu:opacity-100 group-hover/menu:translate-y-0
                    group-focus-within/menu:visible group-focus-within/menu:opacity-100 group-focus-within/menu:translate-y-0"
       >
@@ -252,7 +254,7 @@ export default function Header() {
       <a href="#main" className="skip-link">
         SKIP TO CONTENT
       </a>
-      <div className="w-full max-w-[1480px] border-x border-[#282832] h-20 px-6 sm:px-10 flex items-center justify-between">
+      <div className="w-full max-w-[1480px] border-x border-[#282832] h-[4.5rem] px-6 sm:px-10 flex items-center justify-between">
         <a
           href="/"
           className="flex items-center gap-3 text-xs tracking-[0.22em] shrink-0 group"
@@ -266,7 +268,10 @@ export default function Header() {
           <span className="hidden sm:inline font-medium text-neutral-400">STUDIO</span>
         </a>
 
-        <nav aria-label="Main" className="hidden lg:flex items-center gap-6 xl:gap-8">
+        <nav
+          aria-label="Main"
+          className="hidden lg:flex h-10 items-center gap-1 border border-white/[0.065] bg-[#0a0a0d]/80 p-1 shadow-[0_10px_35px_rgba(0,0,0,0.22)]"
+        >
           {NAV_LINKS.map((link) => {
             const active = isActive(link, currentPath);
 
@@ -280,7 +285,9 @@ export default function Header() {
                 href={link.href}
                 aria-current={active ? 'page' : undefined}
                 className={`${linkClasses} ${
-                  active ? 'text-white' : 'text-neutral-300 hover:text-white'
+                  active
+                    ? 'bg-white/[0.055] text-white'
+                    : 'text-neutral-500 hover:bg-white/[0.035] hover:text-neutral-200'
                 }`}
               >
                 {link.label}
@@ -290,34 +297,37 @@ export default function Header() {
           })}
         </nav>
 
-        <div className="flex items-center gap-3 shrink-0">
-          <button
-            type="button"
-            onClick={() => openPalette('')}
-            onKeyDown={(event) => {
-              if (event.key.length !== 1 || event.metaKey || event.ctrlKey || event.altKey) return;
-              if (event.key === ' ') return;
-              event.preventDefault();
-              openPalette(event.key);
-            }}
-            aria-label="Search the site"
-            aria-haspopup="dialog"
-            aria-expanded={open}
-            className="hidden lg:inline-flex h-9 items-center gap-2.5 border border-[#24242b] bg-white/[0.015] px-3 text-neutral-500 hover:border-[#3a3a43] hover:bg-white/[0.035] hover:text-neutral-200 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-neutral-500 focus-visible:ring-offset-2 focus-visible:ring-offset-[#060608] cursor-pointer group/search search-press"
-          >
-            <Search size={14} strokeWidth={1.75} className="shrink-0" />
-            <kbd className="shrink-0 font-sans text-[10px] font-medium tracking-[0.08em] text-neutral-600 group-hover/search:text-neutral-400 transition-colors">
-              {shortcutLabel}
-            </kbd>
-          </button>
-          <a
-            href="/admin"
-            aria-label="Sign in to the studio panel"
-            title="Sign in"
-            className="hidden lg:inline-flex h-9 w-9 items-center justify-center border border-[#24242b] bg-white/[0.015] text-neutral-500 hover:border-[#3a3a43] hover:bg-white/[0.035] hover:text-neutral-200 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-neutral-500 focus-visible:ring-offset-2 focus-visible:ring-offset-[#060608] transition-[color,background-color,border-color,transform] duration-150 active:scale-[0.97] cursor-pointer"
-          >
-            <Lock size={14} strokeWidth={1.75} className="shrink-0" />
-          </a>
+        <div className="flex items-center gap-2 shrink-0">
+          <div className="hidden lg:flex h-9 items-center border border-[#24242b] bg-white/[0.015]">
+            <button
+              type="button"
+              onClick={() => openPalette('')}
+              onKeyDown={(event) => {
+                if (event.key.length !== 1 || event.metaKey || event.ctrlKey || event.altKey) return;
+                if (event.key === ' ') return;
+                event.preventDefault();
+                openPalette(event.key);
+              }}
+              aria-label="Search the site"
+              aria-haspopup="dialog"
+              aria-expanded={open}
+              className="group/search search-press inline-flex h-full items-center gap-2.5 px-3 text-neutral-500 hover:bg-white/[0.035] hover:text-neutral-200 focus-visible:z-10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-neutral-500 cursor-pointer"
+            >
+              <Search size={14} strokeWidth={1.75} className="shrink-0" />
+              <kbd className="shrink-0 font-sans text-[10px] font-medium tracking-[0.08em] text-neutral-600 transition-colors group-hover/search:text-neutral-400">
+                {shortcutLabel}
+              </kbd>
+            </button>
+            <span aria-hidden="true" className="h-4 w-px bg-[#2c2c34]" />
+            <a
+              href="/admin"
+              aria-label="Sign in to the studio panel"
+              className="inline-flex h-full items-center gap-2 px-3 text-[11px] font-medium tracking-[0.04em] text-neutral-400 hover:bg-white/[0.035] hover:text-white focus-visible:z-10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-neutral-500 transition-[color,background-color,transform] duration-150 active:scale-[0.98] cursor-pointer"
+            >
+              <Lock size={14} strokeWidth={1.75} className="shrink-0 text-neutral-500" />
+              <span>Sign in</span>
+            </a>
+          </div>
           <a
             href="/contact"
             className="inline-flex max-[380px]:hidden h-9 items-center border border-[#34343d] bg-white/[0.035] px-4 text-[11px] font-medium tracking-[0.04em] text-neutral-200 whitespace-nowrap hover:border-neutral-200 hover:bg-neutral-100 hover:text-[#09090b] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-neutral-400 focus-visible:ring-offset-2 focus-visible:ring-offset-[#060608] transition-[color,background-color,border-color,transform] duration-150 active:translate-y-px cursor-pointer"
