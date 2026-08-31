@@ -303,23 +303,14 @@ function SignInPanel({ configured, notice, onSignedIn, onRequest, onGateExpired 
               </Field>
             </div>
 
-            <label className="flex items-start gap-3 cursor-pointer mt-5">
+            <label className="flex items-center gap-3 cursor-pointer mt-5 w-fit">
               <input
                 type="checkbox"
                 checked={remember}
                 onChange={(event) => setRemember(event.target.checked)}
-                className="mt-0.5 h-4 w-4 sm:h-3.5 sm:w-3.5 accent-purple-500 shrink-0"
+                className="h-4 w-4 sm:h-3.5 sm:w-3.5 accent-purple-500 shrink-0"
               />
-              <span className="min-w-0">
-                <span className="block text-[13px] text-neutral-200 font-normal leading-tight">
-                  Keep me signed in on this browser
-                </span>
-                <span className="block text-[11px] text-neutral-500 font-normal leading-relaxed mt-1">
-                  {remember
-                    ? 'You stay signed in until you sign out or clear this browser. Leave it off on a shared computer.'
-                    : 'This session ends after an hour idle, and after 12 hours either way.'}
-                </span>
-              </span>
+              <span className="text-[13px] text-neutral-300 font-normal">Keep me signed in</span>
             </label>
 
             {error && (
