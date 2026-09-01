@@ -59,8 +59,16 @@ const COLUMNS = [
   },
 ];
 
+const COPYRIGHTED_URL = 'https://app.copyrighted.com/website/0WJlyl916TfhHOdy/';
+
 function scrollToTop() {
   window.scrollTo({ top: 0, behavior: 'auto' });
+}
+
+// What copyrighted.com's helper.js does on load: tag the outbound link with the
+// page it was clicked from. Inlined here so the badge needs no third-party script.
+function tagBadgeHref(event) {
+  event.currentTarget.href = `${COPYRIGHTED_URL}?url=${encodeURIComponent(window.location.href)}`;
 }
 
 export default function Footer() {
@@ -129,8 +137,25 @@ export default function Footer() {
           <span>
             © 2026 {STUDIO_NAME} · {JURISDICTION}
           </span>
-          <div className="inline-flex items-center gap-2">
+          <div className="inline-flex items-center gap-4">
             <meta name="copyrighted-site-verification" content="89bacc26b63a766e" />
+            <a
+              className="copyrighted-badge inline-flex opacity-70 hover:opacity-100 transition-opacity"
+              title="Copyrighted.com Registered &amp; Protected"
+              href={COPYRIGHTED_URL}
+              onClick={tagBadgeHref}
+              target="_blank"
+              rel="noreferrer noopener"
+            >
+              <img
+                src="/copyrighted-badge.png"
+                srcSet="/copyrighted-badge.png 1x, /copyrighted-badge@2x.png 2x"
+                alt="Copyrighted.com Registered &amp; Protected"
+                width={125}
+                height={25}
+                className="block select-none"
+              />
+            </a>
             <button
               type="button"
               onClick={scrollToTop}
