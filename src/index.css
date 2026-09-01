@@ -174,6 +174,113 @@
   --ease-palette: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
+.pin-note {
+  --pin-progress: 0;
+  height: 185vh;
+  min-height: 1040px;
+  background: #060608;
+  border-block: 1px solid #222228;
+}
+
+.pin-note__sticky {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  min-height: 620px;
+  display: flex;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.pin-note__inner {
+  position: relative;
+  width: min(100%, 1480px);
+  height: 100%;
+  overflow: hidden;
+  border-inline: 1px solid #282832;
+  background: #08080b;
+}
+
+.pin-note__meta {
+  position: absolute;
+  inset: 32px 5% auto;
+  display: flex;
+  justify-content: space-between;
+  font: 500 9px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: .17em;
+  color: #72727b;
+}
+
+.pin-note__title {
+  position: absolute;
+  inset: 50% 3.5% auto;
+  display: flex;
+  flex-direction: column;
+  transform: translateY(-50%);
+  font-size: clamp(58px, 8.5vw, 132px);
+  font-family: 'Instrument Serif', serif;
+  font-weight: 400;
+  line-height: .88;
+  letter-spacing: -.045em;
+  color: #f4f4f3;
+}
+
+.pin-note__line {
+  display: block;
+  white-space: nowrap;
+  will-change: transform, opacity;
+}
+
+.pin-note__line--one {
+  align-self: flex-start;
+  opacity: clamp(.28, calc(1 - var(--pin-progress) * 1.7), 1);
+  transform: translate3d(calc((1 - var(--pin-progress)) * -5vw), 0, 0);
+}
+
+.pin-note__line--two {
+  align-self: center;
+  font-style: italic;
+  color: #a88df8;
+  opacity: clamp(.4, calc(.4 + var(--pin-progress)), 1);
+  transform: translate3d(calc((.5 - var(--pin-progress)) * 8vw), 0, 0);
+}
+
+.pin-note__line--three {
+  align-self: flex-end;
+  opacity: clamp(.28, calc(var(--pin-progress) * 1.8), 1);
+  transform: translate3d(calc((1 - var(--pin-progress)) * 5vw), 0, 0);
+}
+
+.pin-note__footer {
+  position: absolute;
+  inset: auto 5% 36px;
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+}
+
+.pin-note__footer p {
+  font-size: 12px;
+  line-height: 1.55;
+  color: #777780;
+}
+
+@media (max-width: 760px) {
+  .pin-note { height: 165vh; }
+  .pin-note__meta { inset: 24px 20px auto; }
+  .pin-note__meta span:last-child { display: none; }
+  .pin-note__title { inset-inline: 20px; gap: .08em; font-size: clamp(49px, 14vw, 74px); line-height: .92; }
+  .pin-note__line { white-space: normal; }
+  .pin-note__line--two { align-self: flex-start; }
+  .pin-note__footer { inset: auto 20px 30px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pin-note { height: auto; min-height: 0; }
+  .pin-note__sticky { position: relative; height: auto; min-height: 620px; }
+  .pin-note__line { opacity: 1; transform: none; }
+}
+
 .palette-panel {
   transition:
     opacity 150ms ease-out,
