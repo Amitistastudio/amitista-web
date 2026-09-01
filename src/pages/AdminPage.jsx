@@ -19,10 +19,6 @@ import {
   FileSearch,
   Search,
   FolderOpen,
-  HeartPulse,
-  Gauge,
-  Rocket,
-  Zap,
   ChevronDown,
   ChevronRight,
   PanelLeftClose,
@@ -31,7 +27,6 @@ import {
   Layers,
   Globe,
   Archive,
-  Terminal,
   UsersRound,
   CircleUserRound,
 } from 'lucide-react';
@@ -59,7 +54,6 @@ import SignIn from '../components/admin/SignIn';
 import Gate from '../components/admin/Gate';
 import { Notice } from '../components/admin/ui';
 import GlobalSearch from '../components/admin/GlobalSearch';
-import DeveloperPanel, { DEVELOPER_VIEWS } from '../components/admin/DeveloperPanel';
 import {
   fetchSession,
   signOut,
@@ -161,38 +155,6 @@ const SECTIONS = [
     blurb: 'every swap, gift card and safety trip the exchange bot recorded',
   },
   {
-    id: 'dev-health',
-    label: 'Health',
-    icon: HeartPulse,
-    needs: 'developer.read',
-    group: 'developer',
-    blurb: 'services, timers, disk, certificate and backups, with anything wrong called out',
-  },
-  {
-    id: 'dev-endpoints',
-    label: 'Endpoints',
-    icon: Gauge,
-    needs: 'developer.read',
-    group: 'developer',
-    blurb: 'per-endpoint traffic, errors and latency, and which 404s are ours',
-  },
-  {
-    id: 'dev-performance',
-    label: 'Performance',
-    icon: Zap,
-    needs: 'developer.read',
-    group: 'developer',
-    blurb: 'what a real browser measures on five routes, against budget, run after run',
-  },
-  {
-    id: 'dev-releases',
-    label: 'Releases',
-    icon: Rocket,
-    needs: 'developer.read',
-    group: 'developer',
-    blurb: 'what is serving, what each deploy changed, and what you can roll back to',
-  },
-  {
     id: 'accounts',
     label: 'Accounts',
     icon: Users,
@@ -239,7 +201,6 @@ const GROUPS = [
   { id: 'platform', label: 'Platform', icon: Layers },
   { id: 'site', label: 'Site', icon: Globe },
   { id: 'logs', label: 'Logs', icon: Archive },
-  { id: 'developer', label: 'Developer', icon: Terminal },
   { id: 'people', label: 'People', icon: UsersRound },
   { id: 'you', label: 'You', icon: CircleUserRound },
 ];
@@ -964,8 +925,6 @@ export default function AdminPage() {
                     {current === 'pages' && <PagesPanel />}
 
                     {current === 'firewall' && <FirewallPanel />}
-
-                    {DEVELOPER_VIEWS.includes(current) && <DeveloperPanel view={current} />}
 
                     {current === 'accounts' && (
                       <AccountsPanel

@@ -716,10 +716,6 @@ export async function fetchOverview() {
   return { expired: false, data: result.body };
 }
 
-export async function fetchDeveloper() {
-  return unwrap(await call('/developer'), 'Could not read the developer snapshot.');
-}
-
 export async function fetchAccount() {
   return unwrap(await call('/account'), 'Could not read your account.');
 }
@@ -1370,6 +1366,36 @@ export function daysSince(stamp) {
   const parsed = Date.parse(stamp);
   if (Number.isNaN(parsed)) return null;
   return Math.floor((Date.now() - parsed) / 86400000);
+}
+
+export function agoMs(value) {
+  if (typeof value !== 'string' || !value) return null;
+  const parsed = Date.parse(value);
+  if (Number.isNaN(parsed)) return null;
+  return Date.now() - parsed;
+}
+
+// Moved here from the (now-removed) Developer group's shared.jsx — Overview
+// still needs these for its own restart/relay-settling notices; the constant
+// and the two functions below have no other home now.
+export const RESTART_RECENT_MS = 6 * 60 * 60 * 1000;
+export const RELAY_PROBE_TTL_MS = 5 * 60 * 1000;
+export const RELAY_DELIVERY_UNIT = 'amitista-bot-website.service';
+
+export function restartedRecently(service) {
+  if ((service?.restarts ?? 0) <= 0) return false;
+  const running = agoMs(service?.since);
+  return running !== null && running < RESTART_RECENT_MS;
+}
+
+export function deliverySettling(health) {
+  for (const service of health?.services ?? []) {
+    if (service?.unit !== RELAY_DELIVERY_UNIT) continue;
+    if (service.state !== 'active') return null;
+    const running = agoMs(service.since);
+    return running !== null && running < RELAY_PROBE_TTL_MS ? service.name : null;
+  }
+  return null;
 }
 
 export function formatDate(date) {

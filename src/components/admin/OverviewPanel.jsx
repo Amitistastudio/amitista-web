@@ -13,8 +13,10 @@ import {
   Users,
 } from 'lucide-react';
 import {
+  RELAY_PROBE_TTL_MS,
   TRAFFIC_DEFAULT,
   TRAFFIC_WINDOWS,
+  deliverySettling,
   fetchTraffic,
   formatAgo,
   formatBytes,
@@ -24,11 +26,11 @@ import {
   peakOf,
   pointLabel,
   releaseLabel,
+  restartedRecently,
   seriesOf,
   shareOf,
   swingOf,
 } from '../../lib/admin';
-import { RELAY_PROBE_TTL_MS, deliverySettling, restartedRecently } from './developer/shared';
 import {
   Bar,
   Dot,
