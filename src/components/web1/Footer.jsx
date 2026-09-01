@@ -129,13 +129,16 @@ export default function Footer() {
           <span>
             © 2026 {STUDIO_NAME} · {JURISDICTION}
           </span>
-          <button
-            type="button"
-            onClick={scrollToTop}
-            className="inline-flex items-center gap-2 hover:text-white transition-colors cursor-pointer"
-          >
-            <ArrowUp size={12} strokeWidth={2} />
-          </button>
+          <div className="inline-flex items-center gap-2">
+            <meta name="copyrighted-site-verification" content="89bacc26b63a766e" />
+            <button
+              type="button"
+              onClick={scrollToTop}
+              className="inline-flex items-center gap-2 hover:text-white transition-colors cursor-pointer"
+            >
+              <ArrowUp size={12} strokeWidth={2} />
+            </button>
+          </div>
         </div>
       </div>
     </footer>
