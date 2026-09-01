@@ -1263,7 +1263,7 @@ export const RECOVERY_CODES_LOW = 3;
 export const ROLE_SUMMARIES = {
   owner: 'Everything, including making and unmaking other owners. Only an owner can hand this out.',
   admin: 'Runs the panel day to day, but cannot add or remove accounts.',
-  dev: 'Builds and ships: the boards, the bot, the API and the GitHub group, without touching accounts.',
+  dev: "Builds and ships: the boards, the bot, the API, and dev.amitista.com's GitHub and Developer groups, without touching accounts.",
   viewer: 'Reads the dashboard and nothing else.',
   custom: 'Exactly what you tick below, nothing implied.',
 };
