@@ -23,14 +23,6 @@ import {
   Gauge,
   Rocket,
   Zap,
-  FolderGit2,
-  CircleDot,
-  GitPullRequest,
-  Building2,
-  KeyRound,
-  Radar,
-  Timer,
-  ShieldCheck,
   ChevronDown,
   ChevronRight,
   PanelLeftClose,
@@ -40,7 +32,6 @@ import {
   Globe,
   Archive,
   Terminal,
-  GitBranch,
   UsersRound,
   CircleUserRound,
 } from 'lucide-react';
@@ -69,7 +60,6 @@ import Gate from '../components/admin/Gate';
 import { Notice } from '../components/admin/ui';
 import GlobalSearch from '../components/admin/GlobalSearch';
 import DeveloperPanel, { DEVELOPER_VIEWS } from '../components/admin/DeveloperPanel';
-import GithubPanel, { GITHUB_VIEWS } from '../components/admin/GithubPanel';
 import {
   fetchSession,
   signOut,
@@ -203,79 +193,6 @@ const SECTIONS = [
     blurb: 'what is serving, what each deploy changed, and what you can roll back to',
   },
   {
-    id: 'github',
-    label: 'Repositories',
-    icon: FolderGit2,
-    needs: 'github.read',
-    group: 'github',
-    blurb: 'whether what is on main is actually running on this box',
-  },
-  {
-    id: 'github-issues',
-    label: 'Issues',
-    icon: CircleDot,
-    needs: 'github.read',
-    group: 'github',
-    blurb: 'what is open across the three repositories, and what each one says',
-  },
-  {
-    id: 'github-pulls',
-    label: 'Pull requests',
-    icon: GitPullRequest,
-    needs: 'github.read',
-    group: 'github',
-    blurb: 'the review queue oldest first, and every pull request ever raised',
-  },
-  {
-    id: 'github-performance',
-    label: 'Performance',
-    icon: Gauge,
-    needs: 'github.read',
-    group: 'github',
-    blurb: 'what CI says across the three, and what the review queue is costing',
-  },
-  {
-    id: 'github-vitals',
-    label: 'Site speed',
-    icon: Timer,
-    needs: 'github.read',
-    group: 'github',
-    blurb: 'what each release did to the site, and which commit to blame for it',
-  },
-  {
-    id: 'github-tracking',
-    label: 'Performance tracking',
-    icon: Radar,
-    needs: 'github.read',
-    group: 'github',
-    blurb: 'who has committed what, how many lines it was, and when they were doing it',
-  },
-  {
-    id: 'github-security',
-    label: 'Security',
-    icon: ShieldCheck,
-    needs: 'github.security',
-    group: 'github',
-    blurb: 'what is key-shaped in the code, what GitHub is warning about, and what the deploy refuses',
-  },
-  {
-    id: 'github-org',
-    label: 'Organisation',
-    icon: Building2,
-    needs: 'github.read',
-    group: 'github',
-    blurb: 'the health of all three at once, and what has been happening across them',
-  },
-  {
-    id: 'github-people',
-    label: 'People & access',
-    icon: KeyRound,
-    needs: null,
-    private: 'github',
-    group: 'github',
-    blurb: 'who can reach which repository, at what level, and how to change it',
-  },
-  {
     id: 'accounts',
     label: 'Accounts',
     icon: Users,
@@ -323,7 +240,6 @@ const GROUPS = [
   { id: 'site', label: 'Site', icon: Globe },
   { id: 'logs', label: 'Logs', icon: Archive },
   { id: 'developer', label: 'Developer', icon: Terminal },
-  { id: 'github', label: 'GitHub', icon: GitBranch },
   { id: 'people', label: 'People', icon: UsersRound },
   { id: 'you', label: 'You', icon: CircleUserRound },
 ];
@@ -1050,8 +966,6 @@ export default function AdminPage() {
                     {current === 'firewall' && <FirewallPanel />}
 
                     {DEVELOPER_VIEWS.includes(current) && <DeveloperPanel view={current} />}
-
-                    {GITHUB_VIEWS.includes(current) && <GithubPanel view={current} />}
 
                     {current === 'accounts' && (
                       <AccountsPanel

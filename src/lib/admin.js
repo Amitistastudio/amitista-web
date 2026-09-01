@@ -720,42 +720,6 @@ export async function fetchDeveloper() {
   return unwrap(await call('/developer'), 'Could not read the developer snapshot.');
 }
 
-export async function fetchGithubRepositories() {
-  return unwrap(await call('/github/repositories'), 'Could not read the repository snapshot.');
-}
-
-export async function fetchGithubReview(repo, number) {
-  return unwrap(
-    await call(`/github/review?repo=${encodeURIComponent(repo)}&number=${encodeURIComponent(number)}`),
-    'Could not get a reading of that pull request.',
-  );
-}
-
-export function githubAvatarUrl(login) {
-  return `${BASE}/github/avatar?login=${encodeURIComponent(login)}`;
-}
-
-export async function queueGithubAccess(repo, login, permission) {
-  return unwrap(
-    await send('/github/access', { repo, login, permission }),
-    'Could not ask for that access change.',
-  );
-}
-
-export async function queueGithubRevoke(repo, login) {
-  return unwrap(
-    await send('/github/access/remove', { repo, login }),
-    'Could not ask for that access to be removed.',
-  );
-}
-
-export async function queueGithubInviteCancel(repo, invite) {
-  return unwrap(
-    await send('/github/access/invite/cancel', { repo, invite }),
-    'Could not ask for that invitation to be cancelled.',
-  );
-}
-
 export async function fetchAccount() {
   return unwrap(await call('/account'), 'Could not read your account.');
 }
