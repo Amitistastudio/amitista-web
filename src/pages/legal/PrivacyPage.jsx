@@ -54,16 +54,6 @@ export default function PrivacyPage() {
           Nothing else is collected from the form. If you email us directly instead, we
           have your message and your email address in the same way any recipient would.
         </P>
-        <P>
-          The estimator at{' '}
-          <a href="/estimate" className={linkClasses}>
-            /estimate
-          </a>{' '}
-          works the same way and sends the same kind of thing: your name, your email
-          address, the answers you picked, the range the page showed you, and anything you
-          wrote in the notes box. Answering the questions sends nothing on its own — it is
-          the send button that does, exactly as on the contact form.
-        </P>
       </Section>
 
       <Section number="4" title="Where the forms actually send it">

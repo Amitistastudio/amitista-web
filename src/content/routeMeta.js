@@ -43,16 +43,6 @@ const PAGES = {
     description:
       'The developers who do the work, what each of them focuses on, and the stack the studio builds with.',
   },
-  '/resources': {
-    label: 'Resources',
-    description:
-      'Templates, checklists and studio updates, shared in the Discord rather than behind an email form.',
-  },
-  '/network': {
-    label: 'The network',
-    description:
-      'Where the machine serving this site is, how far that is from you, and what the round trip costs — measured on your own connection while you watch.',
-  },
   '/status': {
     label: 'Status',
     description:
@@ -100,21 +90,11 @@ const PAGES = {
     description:
       'Tell us what you need and we’ll scope it before anything starts. Enquiries are answered within two working days.',
   },
-  '/estimate': {
-    label: 'Estimate',
-    description:
-      'Answer a few questions about your project and see the shape of the work. A person prices it from there.',
-  },
   '/apply': {
     label: 'Apply',
     title: 'Join the studio — Amitista Studio',
     description:
       'Apply to work with the studio as a developer, designer, tester, support or moderation. Pick a role, answer the questions, and the people doing that job read it.',
-  },
-  '/for': {
-    label: 'Who we build for',
-    description:
-      'The same work, described from where you are standing — whether you run a game server, a young company, or a site you have outgrown.',
   },
   '/what-we-dont-take-on': {
     label: 'What we don’t take on',

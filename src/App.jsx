@@ -15,17 +15,14 @@ const RefundPage = page('/refund', () => import('./pages/legal/RefundPage'));
 const PrivacyPage = page('/privacy', () => import('./pages/legal/PrivacyPage'));
 const DocsPage = page('docs', () => import('./pages/DocsPage'));
 const ContactPage = page('/contact', () => import('./pages/ContactPage'));
-const EstimatePage = page('/estimate', () => import('./pages/EstimatePage'));
 const TeamPage = page('/team', () => import('./pages/TeamPage'));
 const FaqPage = page('/faq', () => import('./pages/FaqPage'));
 const WorkPage = page('/work', () => import('./pages/WorkPage'));
 const ProjectPage = page('project', () => import('./pages/ProjectPage'));
 const ServicesPage = page('/services', () => import('./pages/ServicesPage'));
 const ProcessPage = page('/process', () => import('./pages/ProcessPage'));
-const ResourcesPage = page('/resources', () => import('./pages/ResourcesPage'));
 const DeclinesPage = page('/what-we-dont-take-on', () => import('./pages/DeclinesPage'));
 const AudiencePage = page('audience', () => import('./pages/AudiencePage'));
-const AudienceIndexPage = page('/for', () => import('./pages/AudienceIndexPage'));
 const DpaPage = page('/dpa', () => import('./pages/legal/DpaPage'));
 const SubprocessorsPage = page('/subprocessors', () => import('./pages/legal/SubprocessorsPage'));
 const SecurityPage = page('/security', () => import('./pages/legal/SecurityPage'));
@@ -37,7 +34,6 @@ const CopyrightPage = page('/copyright', () => import('./pages/legal/CopyrightPa
 const CookiesPage = page('/cookies', () => import('./pages/legal/CookiesPage'));
 const OpenSourcePage = page('/open-source', () => import('./pages/legal/OpenSourcePage'));
 const ExchangeFeesPage = page('/exchange-fees', () => import('./pages/ExchangeFeesPage'));
-const NetworkPage = page('/network', () => import('./pages/NetworkPage'));
 const StatusPage = page('/status', () => import('./pages/StatusPage'));
 const ApiPage = page('/api', () => import('./pages/ApiPage'));
 const ShieldPage = page('/shield', () => import('./pages/ShieldPage'));
@@ -52,14 +48,11 @@ const NotFoundPage = page('notFound', () => import('./pages/NotFoundPage'));
 const ROUTES = {
   '/': HomePage,
   '/contact': ContactPage,
-  '/estimate': EstimatePage,
   '/apply': ApplyPage,
   '/team': TeamPage,
   '/work': WorkPage,
   '/services': ServicesPage,
   '/process': ProcessPage,
-  '/resources': ResourcesPage,
-  '/network': NetworkPage,
   '/status': StatusPage,
   '/api': ApiPage,
   '/shield': ShieldPage,
@@ -67,7 +60,6 @@ const ROUTES = {
   '/block': BlockedPage,
   '/track': TrackPage,
   '/faq': FaqPage,
-  '/for': AudienceIndexPage,
   '/what-we-dont-take-on': DeclinesPage,
   '/legal': LegalIndexPage,
   '/eula': EulaPage,

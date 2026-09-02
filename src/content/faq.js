@@ -31,8 +31,8 @@ export const FAQ = [
     questions: [
       {
         q: 'How much does a project cost?',
-        a: 'There is no price list, because no two of these are the same job. Every project is quoted on its own, and the price is agreed in writing before anything starts — it is not a meter that runs while we work. If you want a figure before you write to us, the estimator asks what the job involves and gives you a range.',
-        more: { href: '/estimate', label: 'ESTIMATE A PROJECT' },
+        a: 'There is no price list, because no two of these are the same job. Every project is quoted on its own, and the price is agreed in writing before anything starts — it is not a meter that runs while we work. Tell us what the job involves and we will scope it with you.',
+        more: { href: '/contact', label: 'START A PROJECT' },
       },
       {
         q: 'How does payment work?',

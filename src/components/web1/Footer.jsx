@@ -11,8 +11,6 @@ const COLUMNS = [
       { label: 'Work', href: '/work' },
       { label: 'How we work', href: '/process' },
       { label: 'Team', href: '/team' },
-      { label: 'Estimate a project', href: '/estimate' },
-      { label: 'Who we build for', href: '/for' },
       { label: 'Discord bots', href: '/bots' },
       { label: 'What we don’t take on', href: '/what-we-dont-take-on' },
     ],
@@ -20,8 +18,6 @@ const COLUMNS = [
   {
     heading: 'Resources',
     links: [
-      { label: 'Resources', href: '/resources' },
-      { label: 'The network', href: '/network' },
       { label: 'Documentation', href: '/docs' },
       { label: 'FAQ', href: '/faq' },
       { label: 'Status', href: '/status' },

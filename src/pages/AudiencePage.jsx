@@ -1,5 +1,5 @@
 import React from 'react';
-import { Gamepad2, Rocket, RefreshCw, Check, Info, ArrowUpRight, Calculator } from 'lucide-react';
+import { Gamepad2, Rocket, RefreshCw, Check, Info, ArrowUpRight } from 'lucide-react';
 import Silk from '../components/Silk';
 import Reveal from '../components/Reveal';
 import CtaPanel from '../components/CtaPanel';
@@ -149,25 +149,6 @@ export default function AudiencePage({ audience }) {
                   </p>
                 </Reveal>
               )}
-
-              <Reveal className="w-full border border-[#282832] bg-[#0a0a0d] px-8 py-8 flex flex-col sm:flex-row sm:items-center justify-between gap-6">
-                <div>
-                  <h2 className="text-xl sm:text-2xl font-medium text-white tracking-tight mb-2">
-                    What it tends to cost
-                  </h2>
-                  <p className="text-sm text-neutral-400 font-normal leading-relaxed max-w-[420px]">
-                    The estimator, already set to what this usually involves. Change
-                    anything that is not true of yours.
-                  </p>
-                </div>
-                <a
-                  href={`/estimate?${audience.estimate}`}
-                  className="shrink-0 inline-flex items-center gap-3 border border-white bg-transparent hover:bg-white hover:text-black text-white font-semibold text-[11px] tracking-[0.2em] px-6 py-3 transition-all self-start sm:self-auto"
-                >
-                  <Calculator size={13} strokeWidth={1.5} />
-                  OPEN THE ESTIMATOR
-                </a>
-              </Reveal>
 
               {(projects.length > 0 || services.length > 0) && (
                 <>

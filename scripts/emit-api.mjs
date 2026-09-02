@@ -332,8 +332,8 @@ function llmsTxt(payloads) {
     return meta ? `- [${meta.title.replace(` — ${STUDIO_NAME}`, '')}](${SITE_URL}${path}): ${meta.description}` : null;
   };
 
-  const primary = ['/', '/work', '/services', '/process', '/team', '/faq', '/contact', '/estimate'];
-  const secondary = ['/docs', '/resources', '/network', '/status', '/what-we-dont-take-on', '/legal'];
+  const primary = ['/', '/work', '/services', '/process', '/team', '/faq', '/contact'];
+  const secondary = ['/docs', '/status', '/what-we-dont-take-on', '/legal'];
 
   return [
     `# ${STUDIO_NAME}`,

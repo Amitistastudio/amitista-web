@@ -53,24 +53,37 @@ function breadcrumb(path, siteUrl) {
   const parentLabel = labelForPath(parent);
   const ownLabel = labelForPath(path);
 
-  if (!parentLabel || !ownLabel) {
+  if (!ownLabel) {
     throw new Error(
-      `structuredData: no route metadata for ${!parentLabel ? parent : path}, ` +
-        `which ${path} needs for its breadcrumb. Add it to routeMeta.js.`,
+      `structuredData: no route metadata for ${path}, which needs a breadcrumb label.`,
     );
   }
 
-  const suffix = ` — ${parentLabel}`;
-  const leaf = ownLabel.endsWith(suffix) ? ownLabel.slice(0, -suffix.length) : ownLabel;
+  const suffix = parentLabel ? ` — ${parentLabel}` : '';
+  const leaf = suffix && ownLabel.endsWith(suffix) ? ownLabel.slice(0, -suffix.length) : ownLabel;
+
+  const itemListElement = [
+    { '@type': 'ListItem', position: 1, name: 'Home', item: `${siteUrl}/` },
+  ];
+  if (parentLabel) {
+    itemListElement.push({
+      '@type': 'ListItem',
+      position: 2,
+      name: parentLabel,
+      item: `${siteUrl}${parent}`,
+    });
+  }
+  itemListElement.push({
+    '@type': 'ListItem',
+    position: itemListElement.length + 1,
+    name: leaf,
+    item: `${siteUrl}${path}`,
+  });
 
   return {
     '@type': 'BreadcrumbList',
     '@id': `${siteUrl}${path}#breadcrumb`,
-    itemListElement: [
-      { '@type': 'ListItem', position: 1, name: 'Home', item: `${siteUrl}/` },
-      { '@type': 'ListItem', position: 2, name: parentLabel, item: `${siteUrl}${parent}` },
-      { '@type': 'ListItem', position: 3, name: leaf, item: `${siteUrl}${path}` },
-    ],
+    itemListElement,
   };
 }
 

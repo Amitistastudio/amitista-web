@@ -35,23 +35,13 @@ const NAV_LINKS = [
   {
     label: 'SERVICES',
     href: '/services',
-    match: ['/services', '/estimate', '/for', '/bots'],
+    match: ['/services', '/for', '/bots'],
     items: [
       ...SERVICES.map((service) => ({
         href: `/services#${service.slug}`,
         title: service.name,
         subtitle: service.blurb,
       })),
-      {
-        href: '/estimate',
-        title: 'Estimate a project',
-        subtitle: 'Build a rough price from your own answers',
-      },
-      {
-        href: '/for',
-        title: 'Who we build for',
-        subtitle: 'The same work, described from where you are standing',
-      },
       {
         href: '/bots',
         title: 'Discord bots',
@@ -64,19 +54,9 @@ const NAV_LINKS = [
   { label: 'TEAM', href: '/team', match: '/team' },
   {
     label: 'RESOURCES',
-    href: '/resources',
-    match: ['/resources', '/docs', '/faq', '/network', '/status', '/api', '/shield'],
+    href: '/docs',
+    match: ['/docs', '/faq', '/status', '/api', '/shield'],
     items: [
-      {
-        href: '/resources',
-        title: 'Resources',
-        subtitle: 'Templates, checklists and updates, in the Discord',
-      },
-      {
-        href: '/network',
-        title: 'The network',
-        subtitle: 'Where the server is, and your ping to it',
-      },
       {
         href: '/docs',
         title: 'Documentation',
@@ -96,7 +76,7 @@ const NAV_LINKS = [
     ],
     footer: DISCORD_INVITE
       ? { href: DISCORD_INVITE, label: 'JOIN THE DISCORD', external: true, icon: DiscordMark }
-      : { href: '/resources', label: 'ALL RESOURCES' },
+      : { href: '/docs', label: 'ALL DOCUMENTATION' },
   },
 ];
 

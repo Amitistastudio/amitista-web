@@ -3,7 +3,6 @@ import { SERVICES } from './services';
 import { STAGES } from './process';
 import { DOC_META } from './docsMeta';
 import { FAQ } from './faq';
-import { RESOURCE_GROUPS } from './resources';
 import { AUDIENCES } from './audiences';
 
 const AUDIENCE_PAGES = AUDIENCES.map((audience) => ({
@@ -49,21 +48,6 @@ export const SITE_PAGES = [
     href: '/team',
     group: 'Studio',
     keywords: 'about us who developers people stack blxr jean wizzard',
-  },
-  {
-    title: 'Resources',
-    subtitle: 'Templates, checklists and updates, in the Discord',
-    href: '/resources',
-    group: 'Resources',
-    keywords: 'discord community free downloads templates server join',
-  },
-  {
-    title: 'The network',
-    subtitle: 'Where the server is, and what it costs you to reach it',
-    href: '/network',
-    group: 'Resources',
-    keywords:
-      'latency ping speed globe map frankfurt germany hosting where is the server round trip rtt jitter distance infrastructure dns tls handshake',
   },
   {
     title: 'Status',
@@ -118,27 +102,12 @@ export const SITE_PAGES = [
     keywords: 'contact email hire enquiry quote get in touch message brief',
   },
   {
-    title: 'Estimate',
-    subtitle: 'Build a rough price from your own answers',
-    href: '/estimate',
-    group: 'Studio',
-    keywords:
-      'price pricing cost how much budget quote calculator estimate ballpark rates',
-  },
-  {
     title: 'Join the studio',
     subtitle: 'Apply for a role on the team',
     href: '/apply',
     group: 'Studio',
     keywords:
       'apply application job jobs hiring hire recruit recruitment staff join careers vacancy role roles developer designer qa tester support moderator',
-  },
-  {
-    title: 'Who we build for',
-    subtitle: 'The same work, described from where you are standing',
-    href: '/for',
-    group: 'Studio',
-    keywords: 'audience fivem server owners founders startups rebuild industries',
   },
   {
     title: 'What we don’t take on',
@@ -325,22 +294,11 @@ export const SEARCH_SECTIONS = [
       })),
     ),
   },
-  {
-    label: 'Resources',
-    icon: 'sparkles',
-    items: RESOURCE_GROUPS.map((group) => ({
-      title: group.title,
-      subtitle: group.body,
-      href: '/resources',
-      keywords: `discord community server ${group.channel ?? ''}`,
-    })),
-  },
 ];
 
 export const SEARCH_DEFAULTS = [
   '/work',
   '/services',
   '/contact',
-  '/resources',
   '/docs',
 ];
