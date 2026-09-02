@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { findProject } from './content/projects';
-import { findAudience } from './content/audiences';
 import { initialPath, normalizePath, PathContext } from './lib/routePath';
 import { useMaintenance } from './lib/maintenance';
 import { page } from './lib/pageRegistry';
@@ -22,7 +21,6 @@ const ProjectPage = page('project', () => import('./pages/ProjectPage'));
 const ServicesPage = page('/services', () => import('./pages/ServicesPage'));
 const ProcessPage = page('/process', () => import('./pages/ProcessPage'));
 const DeclinesPage = page('/what-we-dont-take-on', () => import('./pages/DeclinesPage'));
-const AudiencePage = page('audience', () => import('./pages/AudiencePage'));
 const DpaPage = page('/dpa', () => import('./pages/legal/DpaPage'));
 const SubprocessorsPage = page('/subprocessors', () => import('./pages/legal/SubprocessorsPage'));
 const SecurityPage = page('/security', () => import('./pages/legal/SecurityPage'));
@@ -93,10 +91,6 @@ export function routeKeyFor(path) {
     return 'project';
   }
 
-  if (currentPath.startsWith('/for/') && findAudience(currentPath.slice('/for/'.length))) {
-    return 'audience';
-  }
-
   if (/^\/t(\/[A-Za-z0-9-]{5,80})?$/.test(currentPath)) return 'transcript';
 
   return ROUTES[currentPath] ? currentPath : 'notFound';
@@ -108,8 +102,6 @@ function routeElement(currentPath) {
       return <DocsPage slug={currentPath.slice('/docs/'.length)} />;
     case 'project':
       return <ProjectPage project={findProject(currentPath.slice('/work/'.length))} />;
-    case 'audience':
-      return <AudiencePage audience={findAudience(currentPath.slice('/for/'.length))} />;
     case 'transcript':
       return <TranscriptPage />;
     case 'notFound':

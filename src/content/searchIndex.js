@@ -3,15 +3,6 @@ import { SERVICES } from './services';
 import { STAGES } from './process';
 import { DOC_META } from './docsMeta';
 import { FAQ } from './faq';
-import { AUDIENCES } from './audiences';
-
-const AUDIENCE_PAGES = AUDIENCES.map((audience) => ({
-  title: audience.label,
-  subtitle: audience.title,
-  href: `/for/${audience.slug}`,
-  group: 'Studio',
-  keywords: `${audience.intro} ${audience.problems.join(' ')}`,
-}));
 
 export const SITE_PAGES = [
   {
@@ -233,7 +224,6 @@ export const SITE_PAGES = [
     keywords:
       'accessibility a11y wcag screen reader keyboard contrast reduced motion statement conformance',
   },
-  ...AUDIENCE_PAGES,
 ];
 
 export const SEARCH_SECTIONS = [

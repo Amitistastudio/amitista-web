@@ -50,7 +50,6 @@ const GROUP_ORDER = [
 function groupOf(path) {
   if (path.startsWith('/docs')) return 'docs';
   if (path.startsWith('/work')) return 'work';
-  if (path.startsWith('/for')) return 'audiences';
   if (LEGAL_PATHS.has(path)) return 'legal';
   return 'pages';
 }

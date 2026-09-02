@@ -1,6 +1,5 @@
 import { PROJECTS } from './projects.js';
 import { DOC_META } from './docsMeta.js';
-import { AUDIENCES } from './audiences.js';
 import { LEGAL_GROUPS } from './legal.js';
 
 export const DEFAULT_DESCRIPTION =
@@ -160,14 +159,6 @@ for (const project of PROJECTS) {
     title: null,
     label: project.name,
     description: clamp(`${project.kind}. ${project.summary}`),
-  });
-}
-
-for (const audience of AUDIENCES) {
-  BY_PATH.set(`/for/${audience.slug}`, {
-    title: null,
-    label: audience.label,
-    description: clamp(audience.intro),
   });
 }
 

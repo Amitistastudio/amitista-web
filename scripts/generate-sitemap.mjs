@@ -50,19 +50,17 @@ const siteUrl = (
   ''
 ).replace(/\/+$/, '');
 
-const [projectsSource, docsSource, audiencesSource] = await Promise.all([
+const [projectsSource, docsSource] = await Promise.all([
   read('src/content/projects.js'),
   read('src/content/docsMeta.js'),
-  read('src/content/audiences.js'),
 ]);
 
 const projectSlugs = slugsIn(projectsSource);
 const docSlugs = slugsIn(docsSource);
-const audienceSlugs = slugsIn(audiencesSource);
 
-if (!projectSlugs.length || !docSlugs.length || !audienceSlugs.length) {
+if (!projectSlugs.length || !docSlugs.length) {
   throw new Error(
-    `Could not read routes: ${projectSlugs.length} projects, ${docSlugs.length} doc pages, ${audienceSlugs.length} audiences.`,
+    `Could not read routes: ${projectSlugs.length} projects, ${docSlugs.length} doc pages.`,
   );
 }
 
@@ -77,11 +75,6 @@ const routes = [
     path: `/docs/${slug}`,
     priority: '0.4',
     changefreq: 'monthly',
-  })),
-  ...audienceSlugs.map((slug) => ({
-    path: `/for/${slug}`,
-    priority: '0.7',
-    changefreq: 'yearly',
   })),
 ];
 

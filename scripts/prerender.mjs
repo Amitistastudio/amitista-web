@@ -472,7 +472,7 @@ async function main() {
   );
   console.log(
     `[prerender] schema.org JSON-LD on ${structured + 1} pages — Organization and ` +
-      'WebSite on the home page, a BreadcrumbList under /docs and /work and on audience pages, ' +
+      'WebSite on the home page, a BreadcrumbList under /docs and /work, ' +
       'and the FAQ as an FAQPage',
   );
   console.log(

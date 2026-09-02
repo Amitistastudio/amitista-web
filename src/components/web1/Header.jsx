@@ -35,7 +35,7 @@ const NAV_LINKS = [
   {
     label: 'SERVICES',
     href: '/services',
-    match: ['/services', '/for', '/bots'],
+    match: ['/services', '/bots'],
     items: [
       ...SERVICES.map((service) => ({
         href: `/services#${service.slug}`,
