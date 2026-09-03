@@ -1,11 +1,11 @@
 import React from 'react';
-import { Check, ArrowRight } from 'lucide-react';
 import Silk from '../components/Silk';
 import Reveal from '../components/Reveal';
 import CtaPanel from '../components/CtaPanel';
 import Header from '../components/web1/Header';
 import Footer from '../components/web1/Footer';
-import { STAGES, PRINCIPLES } from '../content/process';
+import StageRail from '../components/web1/StageRail';
+import { PRINCIPLES } from '../content/process';
 import { STUDIO_NAME } from '../siteConfig';
 
 export default function ProcessPage() {
@@ -22,8 +22,8 @@ export default function ProcessPage() {
       <Header />
 
       <main id="main" tabIndex={-1} className="w-full flex justify-center bg-[#060608] flex-1 focus:outline-none">
-        <section className="w-full max-w-[1480px] border-x border-[#282832] relative flex flex-col items-center justify-start text-center overflow-hidden">
-          <div className="absolute inset-x-0 top-0 h-[560px] z-0 pointer-events-none">
+        <section className="w-full max-w-[1480px] border-x border-[#282832] relative flex flex-col items-center justify-start text-center">
+          <div className="absolute inset-x-0 top-0 h-[560px] z-0 overflow-hidden pointer-events-none">
             <Silk
               color="#8864f2"
               speed={4.5}
@@ -36,7 +36,7 @@ export default function ProcessPage() {
             <div className="absolute inset-0 bg-gradient-to-b from-[#060608]/25 via-[#060608]/65 to-[#060608]" />
           </div>
 
-          <div className="absolute inset-x-0 top-[500px] bottom-0 z-0 pointer-events-none">
+          <div className="absolute inset-x-0 top-[500px] bottom-0 z-0 overflow-hidden pointer-events-none">
             <div className="absolute inset-0 dot-grid opacity-70" />
             <div className="absolute inset-0 bg-gradient-to-b from-[#060608] via-transparent to-[#060608]" />
           </div>
@@ -56,62 +56,7 @@ export default function ProcessPage() {
             </Reveal>
 
             <div className="w-full max-w-5xl flex flex-col">
-              {STAGES.map((stage) => (
-                <React.Fragment key={stage.step}>
-                  <Reveal
-                    id={`stage-${stage.step}`}
-                    className="w-full border-t border-x border-[#282832] bg-[#0a0a0d] h-14 px-8 flex items-center justify-between gap-4 scroll-mt-20"
-                  >
-                    <span className="text-[11px] font-semibold text-muted tracking-[0.2em]">
-                      {stage.step} — {stage.title.toUpperCase()}
-                    </span>
-                  </Reveal>
-
-                  <Reveal className="w-full border-t border-x border-[#282832] bg-[#0a0a0d] p-8 sm:p-12 flex flex-col text-left">
-                    <p className="text-sm sm:text-[15px] text-neutral-400 font-normal leading-relaxed max-w-[68ch]">
-                      {stage.detail}
-                    </p>
-                  </Reveal>
-
-                  <Reveal className="grid grid-cols-1 sm:grid-cols-2 gap-[1px] bg-[#282832] w-full border-t border-x border-[#282832]">
-                    <div className="bg-[#0a0a0d] p-8 flex flex-col text-left hover:bg-[#0c0c10] transition-colors duration-300">
-                      <span className="text-[11px] font-semibold text-muted tracking-[0.2em] uppercase mb-6">
-                        What we need from you
-                      </span>
-                      <ul className="flex flex-col gap-4">
-                        {stage.youBring.map((item) => (
-                          <li key={item} className="flex items-start gap-3">
-                            <Check
-                              size={14}
-                              strokeWidth={2}
-                              className="text-violet-400 mt-1 shrink-0"
-                            />
-                            <span className="text-sm sm:text-[15px] text-neutral-400 font-normal leading-relaxed">
-                              {item}
-                            </span>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-
-                    <div className="bg-[#0a0a0d] p-8 flex flex-col text-left justify-center hover:bg-[#0c0c10] transition-colors duration-300">
-                      <span className="text-[11px] font-semibold text-muted tracking-[0.2em] uppercase mb-4">
-                        This stage ends with
-                      </span>
-                      <span className="flex items-start gap-3">
-                        <ArrowRight
-                          size={14}
-                          strokeWidth={2}
-                          className="text-muted mt-1 shrink-0"
-                        />
-                        <span className="text-sm sm:text-[15px] text-neutral-300 font-normal leading-relaxed">
-                          {stage.ends}
-                        </span>
-                      </span>
-                    </div>
-                  </Reveal>
-                </React.Fragment>
-              ))}
+              <StageRail />
 
               <Reveal className="grid grid-cols-1 md:grid-cols-2 gap-[1px] bg-[#282832] w-full border-t border-x border-[#282832]">
                 {PRINCIPLES.map((principle) => (
