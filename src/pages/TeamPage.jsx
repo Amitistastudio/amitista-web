@@ -52,13 +52,6 @@ const STACK_ICONS = {
   'Design & tooling': PenTool,
 };
 
-const COLUMNS = {
-  1: 'grid-cols-1',
-  2: 'grid-cols-1 sm:grid-cols-2',
-  3: 'grid-cols-1 sm:grid-cols-2 md:grid-cols-3',
-  4: 'grid-cols-1 sm:grid-cols-2 md:grid-cols-4',
-};
-
 function Portrait({ person, sizes, className = '', eager = false }) {
   const [failed, setFailed] = React.useState(false);
   const showImage = Boolean(person.avatar) && !failed;
@@ -192,8 +185,59 @@ function MemberTile({ member, index }) {
   );
 }
 
+function CompactMemberTile({ member, index }) {
+  const person = member.people?.[0] ?? member;
+
+  return (
+    <div className="bg-[#0a0a0d] flex flex-row items-stretch text-left group hover:bg-[#0c0c10] transition-colors duration-300">
+      <div className="relative w-28 sm:w-36 shrink-0 overflow-hidden">
+        <Portrait
+          person={person}
+          sizes="144px"
+          className="w-full h-full"
+        />
+      </div>
+
+      <div className="p-5 sm:p-6 flex flex-col justify-center flex-1 min-w-0">
+        <span className="text-[10px] font-semibold text-muted tracking-wider mb-1.5 select-none">
+          {String(index + 1).padStart(3, '0')}
+        </span>
+        <h2 className="text-base sm:text-lg font-medium text-white tracking-tight leading-tight mb-1 truncate">
+          {member.name}
+        </h2>
+        <span className="text-[10px] font-semibold text-muted tracking-[0.2em] uppercase mb-2">
+          {member.role}
+        </span>
+        <p className="text-xs text-neutral-400 font-normal leading-relaxed line-clamp-2">
+          {member.focus}
+        </p>
+
+        {(member.github || member.site) && (
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 mt-3 pt-3 border-t border-[#1c1c22]">
+            {member.github && (
+              <OutboundLink
+                icon={GithubMark}
+                label={member.github}
+                href={`https://github.com/${member.github}`}
+              />
+            )}
+            {member.site && (
+              <OutboundLink
+                icon={Globe}
+                label={siteLabel(member.site)}
+                href={member.site}
+              />
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function TeamPage() {
-  const columns = COLUMNS[TEAM.length] ?? COLUMNS[3];
+  const featured = TEAM.filter((member) => member.featured);
+  const rest = TEAM.filter((member) => !member.featured);
 
   return (
     <div className="min-h-screen bg-[#060608] text-white selection:bg-purple-500 selection:text-white flex flex-col justify-between font-sans">
@@ -235,9 +279,9 @@ export default function TeamPage() {
 
             <div className="w-full max-w-5xl flex flex-col">
               <Reveal
-                className={`grid ${columns} gap-[1px] bg-[#282832] w-full border-t border-x border-[#282832]`}
+                className="grid grid-cols-1 sm:grid-cols-2 gap-[1px] bg-[#282832] w-full border-t border-x border-[#282832]"
               >
-                {TEAM.map((member, index) => (
+                {featured.map((member, index) => (
                   <MemberTile
                     key={member.name + member.role}
                     member={member}
@@ -245,6 +289,20 @@ export default function TeamPage() {
                   />
                 ))}
               </Reveal>
+
+              {rest.length > 0 && (
+                <Reveal
+                  className={`grid grid-cols-1 ${rest.length > 1 ? 'sm:grid-cols-2' : ''} gap-[1px] bg-[#282832] w-full border-t border-x border-[#282832]`}
+                >
+                  {rest.map((member, index) => (
+                    <CompactMemberTile
+                      key={member.name + member.role}
+                      member={member}
+                      index={featured.length + index}
+                    />
+                  ))}
+                </Reveal>
+              )}
 
               <Reveal className="grid grid-cols-1 md:grid-cols-2 gap-[1px] bg-[#282832] w-full border-t border-x border-[#282832]">
                 <div className="bg-[#0a0a0d] p-8 flex flex-col justify-center text-left min-h-[220px] hover:bg-[#0c0c10] transition-colors duration-300 group">

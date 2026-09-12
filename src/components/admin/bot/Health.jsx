@@ -7,7 +7,7 @@ const STATUS_MAX = 128;
 
 const RESTART_LINES = {
   asking: 'Asking the bot to exit…',
-  waiting: 'It is exiting now — waiting for systemd to bring it back…',
+  waiting: 'It is exiting now  waiting for systemd to bring it back…',
   down: 'The control port stopped answering. That is the restart itself — still waiting…',
   starting: 'It is back on the control port and logging in to Discord…',
 };

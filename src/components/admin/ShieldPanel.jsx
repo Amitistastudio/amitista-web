@@ -159,7 +159,7 @@ export default function ShieldPanel({ canManage, onBadges }) {
         () => clearShieldFlags(),
         (answer) =>
           answer.cleared === false
-            ? 'The in-memory flags are gone, but the file could not be emptied.'
+            ? 'The in memory flags are gone, but the file could not be emptied.'
             : 'Every flag has been cleared.',
       ),
     [act],
@@ -172,7 +172,7 @@ export default function ShieldPanel({ canManage, onBadges }) {
         (answer) =>
           answer.health?.healthy
             ? 'Every hook is in place.'
-            : 'The self-test came back degraded — see the probes below.',
+            : 'The self test came back degraded — see the probes below.',
       ),
     [act],
   );

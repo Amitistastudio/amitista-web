@@ -25,6 +25,7 @@ export const TEAM = [
     avatar: '/team/blxr.webp',
     github: 'kostis4563',
     site: 'https://blxr.net',
+    featured: true,
   },
   {
     name: 'Jean',
@@ -33,15 +34,13 @@ export const TEAM = [
     avatar: '/team/jean.webp',
     github: 'j3qn',
     site: 'https://jean.is-a.dev',
+    featured: true,
   },
   {
-    name: 'Wizzard & Lacy',
-    role: 'Developers',
+    name: 'Lacy',
+    role: 'Developer',
     focus: 'General development work across the projects we take on',
-    people: [
-      { name: 'Wizzard', avatar: '/team/wizzard.webp', focal: [0.5, 0.33], aim: 'pair-aim-wizzard' },
-      { name: 'Lacy', avatar: '/team/lacy.webp', focal: [0.34, 0.5], aim: 'pair-aim-lacy' },
-    ],
+    avatar: '/team/lacy.webp',
     github: '',
     site: '',
   },

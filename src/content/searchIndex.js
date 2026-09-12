@@ -38,7 +38,7 @@ export const SITE_PAGES = [
     subtitle: 'The people who build it',
     href: '/team',
     group: 'Studio',
-    keywords: 'about us who developers people stack blxr jean wizzard',
+    keywords: 'about us who developers people stack blxr jean lacy',
   },
   {
     title: 'Status',
