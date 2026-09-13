@@ -16,8 +16,14 @@ The marketing site, client portal, and lightweight API surface for **Amitista St
   <img alt="CI" src="https://github.com/Amitistastudio/amitista-web/actions/workflows/ci.yml/badge.svg" />
 </p>
 
+## Owners & developers
+
+1. [blxr](https://github.com/kostis4563)
+2. [jean](https://github.com/j3qn)
+
 ## Contents
 
+- [Owners & developers](#owners--developers)
 - [Overview](#overview)
 - [Tech stack](#tech-stack)
 - [Project structure](#project-structure)
