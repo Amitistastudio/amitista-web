@@ -1375,9 +1375,6 @@ export function agoMs(value) {
   return Date.now() - parsed;
 }
 
-// Moved here from the (now-removed) Developer group's shared.jsx — Overview
-// still needs these for its own restart/relay-settling notices; the constant
-// and the two functions below have no other home now.
 export const RESTART_RECENT_MS = 6 * 60 * 60 * 1000;
 export const RELAY_PROBE_TTL_MS = 5 * 60 * 1000;
 export const RELAY_DELIVERY_UNIT = 'amitista-bot-website.service';
