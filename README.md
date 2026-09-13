@@ -7,7 +7,7 @@ The marketing site, client portal, and lightweight API surface for **Amitista St
   <img alt="Vite" src="https://img.shields.io/badge/Vite-8-646CFF?logo=vite&logoColor=white&labelColor=20232a" />
   <img alt="Tailwind CSS" src="https://img.shields.io/badge/Tailwind_CSS-4-38BDF8?logo=tailwindcss&logoColor=white&labelColor=20232a" />
   <img alt="Node" src="https://img.shields.io/badge/Node-%E2%89%A518-339933?logo=node.js&logoColor=white&labelColor=20232a" />
-  <img alt="License" src="https://img.shields.io/badge/License-Proprietary-lightgrey?labelColor=20232a" />
+  <img alt="License" src="https://img.shields.io/badge/License-MIT-lightgrey?labelColor=20232a" />
 </p>
 
 <p>
@@ -25,6 +25,9 @@ The marketing site, client portal, and lightweight API surface for **Amitista St
 - [Scripts](#scripts)
 - [Environment variables](#environment-variables)
 - [Deployment](#deployment)
+- [Contributing](#contributing)
+- [Security](#security)
+- [License](#license)
 
 ## Overview
 
@@ -45,7 +48,6 @@ This repo is a React + Vite single-page app that is prerendered to static HTML p
 ## Project structure
 
 ```
-<<<<<<< HEAD
 ├── src/
 │   ├── components/     UI components (shared, admin, api, docs, legal, web1)
 │   ├── content/        Static content & copy (services, team, FAQ, docs, etc.)
@@ -55,6 +57,7 @@ This repo is a React + Vite single-page app that is prerendered to static HTML p
 │   └── main.jsx         Client entry
 ├── scripts/            Build-time tooling (sitemap, fonts, images, prerender, secrets scan)
 ├── public/             Static assets served as-is
+├── brand/              Source brand assets (logo, icon originals)
 ├── deploy/             Ops: nginx, Cloudflare, admin-api, api-gateway, contact-relay, backups…
 └── dist/               Build output (generated)
 ```
@@ -109,21 +112,7 @@ Production infrastructure lives in [`deploy/`](deploy) and is service-oriented:
 - **`backup` / `autodeploy` / `healthcheck` / `errorwatch` / `perf-monitor` / `logrotate` / `initcwnd` / `mta-sts`** — operational tooling
 
 See `deploy/deploy.sh` / `deploy/deploy-local.sh` for the deployment entry points.
-=======
-src/
-  components/   Shared UI components
-  pages/        Route-level page components
-  content/      Static copy/content used by pages
-  lib/          Client-side helpers
-  App.jsx       Route table
-scripts/        Node scripts used at build time (sitemap, prerender, fonts, images, secret scanning...)
-public/         Static assets served as-is
-brand/          Source brand assets (logo, icon originals)
-deploy/         Production deployment and operations configuration for amitista.com
-```
-
-`deploy/` describes how the live site and its backend services are deployed
-and operated — it isn't needed to build or run the front end locally.
+`deploy/` isn't needed to build or run the front end locally.
 
 ## Contributing
 
@@ -143,4 +132,3 @@ The Amitista name, wordmark and logo (including everything under
 [brand/](brand/) and the logo/icon files in [public/](public/)) are **not**
 covered by that license and may not be reused to represent your own project
 or organization.
->>>>>>> 76091f9bf717f375a1890fdc49ba3a3ceae9d4aa
