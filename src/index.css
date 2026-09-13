@@ -284,9 +284,6 @@
   .pin-note__line { opacity: 1; transform: none; }
 }
 
-/* Home — "How we work" drawn as a plan sheet rather than a row of cards.
-   One hairline scale carries the four stages; the numerals sit astride it and
-   break it, and scroll position drives a playhead along it. Nothing fades in. */
 .plan {
   --track: 0;
   --plan-bg: #060608;
@@ -360,8 +357,6 @@
   padding-bottom: 8px;
 }
 
-/* The numeral masks the rule behind it, so the scale reads as four measured
-   spans instead of one unbroken line. */
 .plan__num {
   position: relative;
   z-index: 1;
@@ -425,7 +420,6 @@
 
 .plan__stage[data-state='live'] .plan__blurb { color: #9d9da8; }
 
-/* Two notes set as columns of a page, divided by a hairline — not panels. */
 .plan-notes {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -523,7 +517,6 @@
   .plan__blurb { max-width: none; }
 }
 
-/* Stacked: the scale turns on its side and runs down the left margin. */
 @media (max-width: 767px) {
   .plan__rule,
   .plan__fill,
@@ -604,8 +597,6 @@
   .plan-cta__arrow { transition: none; }
 }
 
-/* Process page — scroll-linked stage rail. Nothing animates on entry: the bar,
-   the numbers and the spines read out scroll position and nothing else. */
 .stage-rail {
   --rail-progress: 0;
   --rail-top: 4.5rem;
@@ -716,8 +707,6 @@
   background: linear-gradient(180deg, #5b3fbe, #8864f2);
 }
 
-/* The number and title park under the chapter bar while the stage reads past them,
-   then hand off to the next stage. */
 .stage-card__parked {
   position: sticky;
   top: calc(var(--rail-top) + var(--rail-height) + 28px);

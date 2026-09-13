@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/Amitistastudio/amitista-web/security/policy
+    about: Please don't file security issues publicly — see SECURITY.md for how to report privately.

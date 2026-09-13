@@ -3,9 +3,6 @@ import { ArrowUpRight } from 'lucide-react';
 import Reveal from '../Reveal';
 import { STAGES, PRINCIPLES } from '../../content/process';
 
-// The stage scale is a scrub track: scrolling drives a playhead along the rule
-// and the stage it has reached is the live one. Nothing enters or fades in —
-// the whole scale is drawn from the start and only the readout moves.
 function useStageTrack() {
   const ref = React.useRef(null);
   const frameRef = React.useRef(0);
