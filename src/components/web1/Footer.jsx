@@ -61,8 +61,6 @@ function scrollToTop() {
   window.scrollTo({ top: 0, behavior: 'auto' });
 }
 
-// What copyrighted.com's helper.js does on load: tag the outbound link with the
-// page it was clicked from. Inlined here so the badge needs no third-party script.
 function tagBadgeHref(event) {
   event.currentTarget.href = `${COPYRIGHTED_URL}?url=${encodeURIComponent(window.location.href)}`;
 }

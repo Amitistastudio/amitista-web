@@ -1,0 +1,40 @@
+name: Bug report
+description: Something on the site or in the build isn't working as expected
+labels: [bug]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: A clear description of the bug.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: What did you do, and what did you expect to happen instead?
+      placeholder: |
+        1. Go to '...'
+        2. Click on '...'
+        3. See error
+    validations:
+      required: true
+
+  - type: input
+    id: url
+    attributes:
+      label: URL (if applicable)
+      placeholder: https://amitista.com/...
+
+  - type: input
+    id: environment
+    attributes:
+      label: Browser / OS / Node version
+      placeholder: e.g. Chrome 129 on macOS 15, or Node 20.11 for a build issue
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Screenshots or additional context

@@ -2,8 +2,6 @@ import React from 'react';
 import { Check, ArrowRight } from 'lucide-react';
 import { STAGES } from '../../content/process';
 
-// Scroll-linked, not scroll-animated: nothing fades in on entry. The chapter bar,
-// the stage numbers and the spines simply read out where in the process you are.
 export default function StageRail() {
   const rootRef = React.useRef(null);
   const frameRef = React.useRef(0);
