@@ -1085,6 +1085,7 @@ export const PERMISSION_LABELS = {
   'releases.read': 'See releases',
   'services.read': 'See services',
   'security.read': 'See sign-ins and lockouts',
+  'logs.read': 'Read the log of everything the panel recorded',
   'users.read': 'See accounts',
   'users.manage': 'Create and change accounts',
   'api.keys': 'Hold their own API keys',
@@ -1124,6 +1125,7 @@ export const PERMISSION_GROUPS = [
   { id: 'support', label: 'Support', match: /^support\./ },
   { id: 'orders', label: 'Projects & orders', match: /^orders\./ },
   { id: 'security', label: 'Security', match: /^security\./ },
+  { id: 'logs', label: 'Logs', match: /^logs\./ },
   { id: 'c2c', label: 'Exchange bot', match: /^c2c\./ },
   { id: 'transcripts', label: 'Transcripts', match: /^transcripts\./ },
   { id: 'developer', label: 'Developer', match: /^developer\./ },
@@ -1150,6 +1152,7 @@ export const PERMISSION_SHORT = {
   'releases.read': 'Releases',
   'services.read': 'Services',
   'security.read': 'Sign-ins',
+  'logs.read': 'Everything',
   'users.read': 'See accounts',
   'users.manage': 'Create and change',
   'api.keys': 'Own keys',
@@ -2176,6 +2179,32 @@ export async function fetchTranscript(id) {
 export async function deleteTranscript(id) {
   return unwrap(await send('/transcripts/delete', { id }), 'That transcript could not be deleted.');
 }
+
+export async function fetchLogSummary(since) {
+  const query = since ? `?since=${encodeURIComponent(since)}` : '';
+  return unwrap(await call(`/logs/summary${query}`), 'The log could not be read.');
+}
+
+export async function fetchLogEntries(filters = {}) {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(filters)) {
+    if (value !== null && value !== undefined && value !== '') query.set(key, String(value));
+  }
+  const suffix = query.toString();
+  return unwrap(await call(`/logs${suffix ? `?${suffix}` : ''}`), 'The log could not be read.');
+}
+
+export const LOG_SEVERITIES = [
+  { id: 'security', label: 'Security', tone: 'rose' },
+  { id: 'important', label: 'Notable', tone: 'purple' },
+  { id: 'routine', label: 'Routine', tone: 'neutral' },
+];
+
+export const LOG_SEVERITY_TONE = {
+  security: 'rose',
+  important: 'purple',
+  routine: 'neutral',
+};
 
 export async function fetchC2cLogSummary(since) {
   const query = since ? `?since=${encodeURIComponent(since)}` : '';

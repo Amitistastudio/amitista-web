@@ -16,6 +16,7 @@ import {
   SquareKanban,
   Construction,
   ScrollText,
+  History,
   FileSearch,
   Search,
   FolderOpen,
@@ -49,6 +50,7 @@ import BoardsPanel from '../components/admin/BoardsPanel';
 import PagesPanel from '../components/admin/PagesPanel';
 import FirewallPanel from '../components/admin/FirewallPanel';
 import LogsPanel from '../components/admin/LogsPanel';
+import EverythingPanel from '../components/admin/EverythingPanel';
 import TranscriptsPanel from '../components/admin/TranscriptsPanel';
 import SignIn from '../components/admin/SignIn';
 import Gate from '../components/admin/Gate';
@@ -137,6 +139,14 @@ const SECTIONS = [
     needs: 'firewall.read',
     group: 'site',
     blurb: 'edge rules and what they turned away',
+  },
+  {
+    id: 'everything',
+    label: 'Everything',
+    icon: History,
+    needs: 'logs.read',
+    group: 'logs',
+    blurb: 'every sign-in, account, project and setting the panel recorded',
   },
   {
     id: 'transcripts',
@@ -919,6 +929,8 @@ export default function AdminPage() {
                     )}
 
                     {current === 'transcripts' && <TranscriptsPanel permissions={permissions} />}
+
+                    {current === 'everything' && <EverythingPanel />}
 
                     {current === 'c2c' && <LogsPanel />}
 

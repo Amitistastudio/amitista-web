@@ -2413,6 +2413,519 @@ def own_activity(name, limit=OWN_ACTIVITY_SHOWN):
     return out
 
 
+LOG_FAMILIES = (
+    {
+        "id": "signin",
+        "label": "Sign-in",
+        "blurb": "who got in, who was turned away, two-factor and sessions",
+    },
+    {
+        "id": "accounts",
+        "label": "Accounts",
+        "blurb": "people, roles, passwords and the logins linked to them",
+    },
+    {
+        "id": "orders",
+        "label": "Projects & payments",
+        "blurb": "orders, stages, invoicing, tracking and released files",
+    },
+    {
+        "id": "support",
+        "label": "Support",
+        "blurb": "tickets opened, answered and closed, and transcripts",
+    },
+    {
+        "id": "boards",
+        "label": "Boards",
+        "blurb": "boards, cards, seats, art and reminders",
+    },
+    {
+        "id": "site",
+        "label": "Site",
+        "blurb": "maintenance covers, the firewall and the brand list",
+    },
+    {
+        "id": "platform",
+        "label": "Platform",
+        "blurb": "API keys, webhooks, Shield and the bot",
+    },
+    {
+        "id": "github",
+        "label": "GitHub",
+        "blurb": "access asked for, granted and taken away",
+    },
+    {
+        "id": "other",
+        "label": "Other",
+        "blurb": "anything recorded that fits nowhere else",
+    },
+)
+
+LOG_FAMILY_IDS = tuple(family["id"] for family in LOG_FAMILIES)
+
+LOG_FAMILY_PREFIXES = (
+    ("signin.", "signin"),
+    ("twofactor.", "signin"),
+    ("sessions.", "signin"),
+    ("user.", "accounts"),
+    ("role.", "accounts"),
+    ("password.", "accounts"),
+    ("picture.", "accounts"),
+    ("google.", "accounts"),
+    ("discord.", "accounts"),
+    ("order.", "orders"),
+    ("project.", "orders"),
+    ("support.", "support"),
+    ("transcript.", "support"),
+    ("board.", "boards"),
+    ("page.", "site"),
+    ("firewall.", "site"),
+    ("brand.", "site"),
+    ("token.", "platform"),
+    ("hook.", "platform"),
+    ("embed.", "platform"),
+    ("shield.", "platform"),
+    ("bot.", "platform"),
+    ("github.", "github"),
+)
+
+LOG_SEVERITIES = ("security", "important", "routine")
+
+LOG_SECURITY = frozenset(
+    (
+        "signin.failed",
+        "signin.barred",
+        "signin.badCode",
+        "signin.googleRefused",
+        "signin.recovery",
+        "password.failed",
+        "twofactor.failed",
+        "twofactor.off",
+        "twofactor.cleared",
+        "sessions.replayed",
+        "sessions.moved",
+        "sessions.revokedAll",
+        "user.deleted",
+        "user.password",
+        "user.ownerGranted",
+        "user.ownerRemoved",
+        "role.saved",
+        "role.reset",
+        "role.deleted",
+        "google.cleared",
+        "discord.cleared",
+        "firewall.settings",
+        "firewall.restaged",
+        "shield.mode",
+        "transcript.deleted",
+        "github.accessQueued",
+        "github.accessRevokeQueued",
+    )
+)
+
+LOG_IMPORTANT = frozenset(
+    (
+        "signin.ok",
+        "user.created",
+        "user.updated",
+        "user.signedOut",
+        "password.changed",
+        "twofactor.on",
+        "twofactor.started",
+        "google.linked",
+        "google.unlinked",
+        "discord.linked",
+        "discord.unlinked",
+        "order.claim",
+        "order.close",
+        "order.stage",
+        "order.recode",
+        "order.visibility",
+        "order.tracking",
+        "project.file.add",
+        "project.file.remove",
+        "support.closed",
+        "support.staffClosed",
+        "board.created",
+        "board.deleted",
+        "board.member",
+        "board.memberRemoved",
+        "page.covered",
+        "page.reopened",
+        "brand.published",
+        "token.created",
+        "token.updated",
+        "token.deleted",
+        "hook.removed",
+        "embed.removed",
+        "shield.cleared",
+        "shield.tuned",
+        "bot.restarted",
+        "bot.moderation",
+        "github.teamCreateQueued",
+        "github.action",
+    )
+)
+
+LOG_TITLES = {
+    "signin.ok": "Signed in",
+    "signin.failed": "Wrong password",
+    "signin.barred": "Turned away while locked out",
+    "signin.badCode": "Wrong two-factor code",
+    "signin.recovery": "Signed in with a recovery code",
+    "signin.googleRefused": "Google sign-in refused",
+    "twofactor.started": "Two-factor setup started",
+    "twofactor.on": "Two-factor turned on",
+    "twofactor.off": "Two-factor turned off",
+    "twofactor.failed": "Two-factor check failed",
+    "twofactor.cleared": "Two-factor cleared for an account",
+    "sessions.replayed": "A signed-out session cookie came back",
+    "sessions.moved": "A session moved to another address",
+    "sessions.revokedAll": "Every session was signed out",
+    "password.changed": "Password changed",
+    "password.failed": "Password confirmation failed",
+    "user.created": "Account created",
+    "user.updated": "Account changed",
+    "user.deleted": "Account deleted",
+    "user.password": "Password set for an account",
+    "user.signedOut": "Account signed out",
+    "user.ownerGranted": "Made an owner",
+    "user.ownerRemoved": "Owner taken away",
+    "role.saved": "Role saved",
+    "role.reset": "Role reset to its default",
+    "role.deleted": "Role deleted",
+    "picture.set": "Picture set",
+    "picture.removed": "Picture removed",
+    "picture.cleared": "Picture cleared for an account",
+    "google.linked": "Google account linked",
+    "google.unlinked": "Google account unlinked",
+    "google.confirmed": "Google account confirmed",
+    "google.cleared": "Google link cleared for an account",
+    "discord.linked": "Discord account linked",
+    "discord.unlinked": "Discord account unlinked",
+    "discord.codeIssued": "Discord link code issued",
+    "discord.renamed": "Discord name changed",
+    "discord.prefs": "Discord preferences changed",
+    "discord.cleared": "Discord link cleared for an account",
+    "order.claim": "Project claimed",
+    "order.close": "Project closed",
+    "order.stage": "Project moved on",
+    "order.share": "Shared with the client",
+    "order.reply": "Replied to the client",
+    "order.note": "Note added",
+    "order.note.share": "Note shared with the client",
+    "order.note.remove": "Note removed",
+    "order.tracking": "Tracking switched",
+    "order.recode": "Project re-coded",
+    "order.visibility": "Who can see it changed",
+    "order.priority": "Priority changed",
+    "order.link": "Linked to another record",
+    "order.fields": "Custom fields reordered",
+    "order.field.save": "Custom field saved",
+    "order.field.remove": "Custom field removed",
+    "order.workflow": "Workflow run",
+    "order.workflow.save": "Workflow saved",
+    "order.workflow.remove": "Workflow removed",
+    "project.file.add": "File released to the client",
+    "project.file.remove": "File withdrawn",
+    "support.opened": "Ticket opened",
+    "support.closed": "Ticket closed",
+    "support.staffClosed": "Ticket closed by the team",
+    "support.status": "Ticket status changed",
+    "support.priority": "Ticket priority changed",
+    "transcript.deleted": "Transcript deleted",
+    "board.created": "Board made",
+    "board.changed": "Board changed",
+    "board.deleted": "Board deleted",
+    "board.member": "Someone put on a board",
+    "board.memberRemoved": "Someone taken off a board",
+    "board.art": "Board art set",
+    "board.artRemoved": "Board art removed",
+    "board.reminders": "Board reminders changed",
+    "page.covered": "Page covered for maintenance",
+    "page.reopened": "Page reopened",
+    "firewall.settings": "Firewall settings changed",
+    "firewall.restaged": "Firewall rules restaged",
+    "brand.published": "Brand list published",
+    "token.created": "API key issued",
+    "token.updated": "API key changed",
+    "token.deleted": "API key revoked",
+    "hook.saved": "Webhook saved",
+    "hook.removed": "Webhook removed",
+    "hook.tested": "Webhook tested",
+    "embed.saved": "Embed saved",
+    "embed.removed": "Embed removed",
+    "embed.tested": "Embed tested",
+    "shield.mode": "Shield mode changed",
+    "shield.cleared": "Shield flags cleared",
+    "shield.tuned": "Shield rule tuned",
+    "shield.selfTest": "Shield self-test run",
+    "bot.restarted": "Bot restarted",
+    "bot.moderation": "Bot moderation action",
+    "bot.presenceSet": "Bot presence set",
+    "bot.presenceCleared": "Bot presence cleared",
+    "bot.queueDeleted": "Bot queue entry deleted",
+    "bot.queueClosed": "Bot queue entry closed",
+    "github.accessQueued": "GitHub access asked for",
+    "github.accessRevokeQueued": "GitHub access removal asked for",
+    "github.teamCreateQueued": "GitHub team asked for",
+    "github.action": "GitHub change asked for",
+    "github.task": "GitHub task raised",
+}
+
+LOG_SUBJECT_KEYS = (
+    "ref",
+    "code",
+    "account",
+    "name",
+    "login",
+    "role",
+    "repo",
+    "path",
+    "order",
+    "board",
+    "id",
+)
+
+LOG_FIELD_LABELS = {
+    "byOther": "on behalf of",
+    "lockedFor": "locked for",
+    "legacyRef": "old reference",
+    "mustChange": "must change",
+}
+
+LOG_LIMIT = 60
+LOG_LIMIT_MAX = 200
+LOG_ACTORS_SHOWN = 12
+LOG_ACTIONS_SHOWN = 14
+LOG_DAY_SECONDS = 24 * 60 * 60
+
+LOG_WORD_BREAK = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+LOG_CURSOR = re.compile(r"^(.{1,20})-[0-9a-f]{10}-\d{1,4}$")
+
+
+def log_family(action):
+    for prefix, family in LOG_FAMILY_PREFIXES:
+        if action.startswith(prefix):
+            return family
+    return "other"
+
+
+def log_severity(action):
+    if action in LOG_SECURITY:
+        return "security"
+    if action in LOG_IMPORTANT:
+        return "important"
+    return "routine"
+
+
+def log_words(text):
+    spaced = LOG_WORD_BREAK.sub(" ", str(text or "").replace(".", " ").replace("_", " "))
+    cleaned = " ".join(spaced.split()).lower()
+    return cleaned[:1].upper() + cleaned[1:] if cleaned else ""
+
+
+def log_title(action):
+    known = LOG_TITLES.get(action)
+    if known:
+        return known
+    return log_words(action) or "Recorded"
+
+
+def log_field_label(key):
+    return LOG_FIELD_LABELS.get(key) or log_words(key).lower() or str(key)[:40]
+
+
+def log_value(value, depth=0):
+    if value is None:
+        return "—"
+    if isinstance(value, bool):
+        return "yes" if value else "no"
+    if isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, (list, tuple)):
+        if depth > 1:
+            return "%d items" % len(value)
+        parts = [log_value(item, depth + 1) for item in list(value)[:12]]
+        if len(value) > 12:
+            parts.append("and %d more" % (len(value) - 12))
+        return ", ".join(part for part in parts if part)[:240] or "—"
+    if isinstance(value, dict):
+        if depth > 1:
+            return "%d entries" % len(value)
+        parts = [
+            "%s %s" % (log_field_label(key), log_value(held, depth + 1))
+            for key, held in list(value.items())[:8]
+        ]
+        return ", ".join(parts)[:240] or "—"
+    return str(value)[:240]
+
+
+def log_subject(detail):
+    for key in LOG_SUBJECT_KEYS:
+        held = detail.get(key)
+        if isinstance(held, str) and held.strip():
+            return held.strip()[:60]
+    return None
+
+
+def log_mark(entry):
+    # An entry has no id of its own, and its place in the file is not one either: the
+    # file is appended to while the panel is paging through it, and swept when it grows
+    # past AUDIT_KEEP. So name a line by what it says — same second, same everything,
+    # and log_rows() tells the twins apart by counting from the oldest end.
+    held = json.dumps(
+        [entry.get("actor"), entry.get("action"), entry.get("detail"), entry.get("ip")],
+        sort_keys=True,
+        default=str,
+    )
+    return hashlib.blake2s(held.encode("utf-8"), digest_size=5).hexdigest()
+
+
+def log_row(entry):
+    action = str(entry.get("action") or "")
+    detail = entry.get("detail")
+    if not isinstance(detail, dict):
+        detail = {}
+    actor = entry.get("actor")
+    fields = [[log_field_label(key), log_value(value)] for key, value in sorted(detail.items())]
+    return {
+        "id": "%s-%s" % (entry.get("at") or "0", log_mark(entry)),
+        "at": entry.get("at"),
+        "actor": actor if isinstance(actor, str) and actor else "—",
+        "ip": entry.get("ip") or None,
+        "action": action,
+        "family": log_family(action),
+        "severity": log_severity(action),
+        "title": log_title(action),
+        "subject": log_subject(detail),
+        "fields": fields[:16],
+    }
+
+
+def log_haystack(row):
+    parts = [
+        row["actor"],
+        row["action"],
+        row["title"],
+        row["subject"] or "",
+        row["ip"] or "",
+    ]
+    for key, value in row["fields"]:
+        parts.append(key)
+        parts.append(value)
+    return " ".join(parts).lower()
+
+
+def log_rows():
+    # Every store's tail() answers newest first — keep that order, the panel reads down.
+    rows = []
+    seen = {}
+    for entry in reversed(audit.tail(AUDIT_KEEP)):
+        row = log_row(entry)
+        twin = seen.get(row["id"], 0)
+        seen[row["id"]] = twin + 1
+        row["id"] = "%s-%d" % (row["id"], twin)
+        rows.append(row)
+    rows.reverse()
+    return rows
+
+
+def log_since(raw):
+    if not raw:
+        return None
+    try:
+        millis = int(raw)
+    except ValueError:
+        raise Rejected(400, "That is not a valid since.")
+    if millis <= 0:
+        return None
+    try:
+        when = datetime.fromtimestamp(millis / 1000, timezone.utc)
+    except (OverflowError, OSError, ValueError):
+        raise Rejected(400, "That is not a valid since.")
+    return when.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def log_after(rows, since):
+    if since is None:
+        return rows
+    return [row for row in rows if (row["at"] or "") >= since]
+
+
+def log_picked(rows, family, action, actor, severity, search):
+    out = []
+    lowered = actor.lower() if actor else ""
+    needle = search.lower() if search else ""
+    for row in rows:
+        if family and row["family"] != family:
+            continue
+        if action and row["action"] != action:
+            continue
+        if severity and row["severity"] != severity:
+            continue
+        if lowered and row["actor"].lower() != lowered:
+            continue
+        if needle and needle not in log_haystack(row):
+            continue
+        out.append(row)
+    return out
+
+
+def log_overview(rows, window):
+    families = {family["id"]: 0 for family in LOG_FAMILIES}
+    severities = {name: 0 for name in LOG_SEVERITIES}
+    actors = {}
+    actions = {}
+    day_from = (
+        datetime.now(timezone.utc) - timedelta(seconds=LOG_DAY_SECONDS)
+    ).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    day = 0
+
+    for row in window:
+        families[row["family"]] = families.get(row["family"], 0) + 1
+        severities[row["severity"]] = severities.get(row["severity"], 0) + 1
+        actors[row["actor"]] = actors.get(row["actor"], 0) + 1
+        actions[row["action"]] = actions.get(row["action"], 0) + 1
+        if (row["at"] or "") >= day_from:
+            day += 1
+
+    ranked_actors = sorted(actors.items(), key=lambda pair: (-pair[1], pair[0]))
+    ranked_actions = sorted(actions.items(), key=lambda pair: (-pair[1], pair[0]))
+
+    return {
+        "counts": {
+            "total": len(window),
+            "kept": len(rows),
+            "day": day,
+            "security": severities.get("security", 0),
+            "important": severities.get("important", 0),
+            "routine": severities.get("routine", 0),
+            "newest": window[0]["at"] if window else None,
+            "oldest": rows[-1]["at"] if rows else None,
+        },
+        "families": [
+            dict(family, count=families.get(family["id"], 0)) for family in LOG_FAMILIES
+        ],
+        "severities": [
+            {"id": name, "count": severities.get(name, 0)} for name in LOG_SEVERITIES
+        ],
+        "actors": [
+            {"name": name, "count": count} for name, count in ranked_actors[:LOG_ACTORS_SHOWN]
+        ],
+        "actions": [
+            {
+                "id": name,
+                "label": log_title(name),
+                "family": log_family(name),
+                "count": count,
+            }
+            for name, count in ranked_actions[:LOG_ACTIONS_SHOWN]
+        ],
+        "limit": AUDIT_KEEP,
+    }
+
+
 def own_key_summary(name):
     held = tokens.listing(read_usage(), name, True)
     used = [key.get("lastUsed") for key in held if key.get("lastUsed")]
@@ -4550,6 +5063,65 @@ class Handler(BaseHTTPRequestHandler):
         audit.record(name, "transcript.deleted", {"code": answer.get("code")}, self.client_ip())
         self.reply(200, answer)
 
+    def handle_logs(self):
+        rows = log_rows()
+        since = log_since(self.query("since", 20))
+
+        family = self.query("family", 20)
+        if family and family not in LOG_FAMILY_IDS:
+            raise Rejected(400, "That is not a family of logs.")
+
+        severity = self.query("severity", 16)
+        if severity and severity not in LOG_SEVERITIES:
+            raise Rejected(400, "That is not a severity.")
+
+        action = self.query("action", 60)
+        actor = self.query("actor", 64)
+        search = self.query("q", 120).strip()
+
+        limit = self.query("limit", 8)
+        try:
+            limit = max(1, min(int(limit or LOG_LIMIT), LOG_LIMIT_MAX))
+        except ValueError:
+            limit = LOG_LIMIT
+
+        picked = log_picked(log_after(rows, since), family, action, actor, severity, search)
+
+        # Page from the last row handed over rather than from a count, so a line written
+        # while someone is reading cannot push a row onto two pages.
+        offset = 0
+        cursor = self.query("before", 64)
+        if cursor:
+            named = LOG_CURSOR.match(cursor)
+            if named is None:
+                raise Rejected(400, "That is not a valid page.")
+            standing = next(
+                (seat for seat, row in enumerate(picked) if row["id"] == cursor), None
+            )
+            if standing is not None:
+                offset = standing + 1
+            else:
+                # That line has been swept out from under us; carry on past its stamp.
+                # Skipping its whole second is the safe way to be wrong here: a page
+                # that repeats a line it already showed is worse than one that ends.
+                offset = len([row for row in picked if (row["at"] or "") >= named.group(1)])
+
+        page = picked[offset : offset + limit]
+        seen = offset + len(page)
+        self.reply(
+            200,
+            {
+                "entries": page,
+                "total": len(picked),
+                "next": page[-1]["id"] if page and seen < len(picked) else None,
+            },
+        )
+
+    def handle_logs_summary(self):
+        rows = log_rows()
+        since = log_since(self.query("since", 20))
+        self.reply(200, log_overview(rows, log_after(rows, since)))
+
     def handle_c2c_summary(self):
         since = self.query("since", 20)
         path = "/logs/summary"
@@ -4663,6 +5235,16 @@ class Handler(BaseHTTPRequestHandler):
 
         if route == "/transcripts/summary":
             self.handle_transcript_summary()
+            return
+
+        if route == "/logs":
+            self.require("logs.read")
+            self.handle_logs()
+            return
+
+        if route == "/logs/summary":
+            self.require("logs.read")
+            self.handle_logs_summary()
             return
 
         if route == "/c2c/logs":
