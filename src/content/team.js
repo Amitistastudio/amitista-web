@@ -20,7 +20,7 @@ export const STACK = [
 export const TEAM = [
   {
     name: 'Blxr',
-    role: 'Developer',
+    role: 'Founder-Developer',
     focus: 'Web applications and the systems behind them',
     avatar: '/team/blxr.webp',
     github: 'kostis4563',
@@ -29,7 +29,7 @@ export const TEAM = [
   },
   {
     name: 'Jean',
-    role: 'Developer',
+    role: 'Founder-Developer',
     focus: 'Interfaces, front-end work and game servers',
     avatar: '/team/jean.webp',
     github: 'j3qn',
