@@ -21,7 +21,7 @@ export const TEAM = [
   {
     name: 'Blxr',
     role: 'Founder-Developer',
-    focus: 'Web applications and the systems behind them',
+    focus: 'Web applications and the  systems behind them',
     avatar: '/team/blxr.webp',
     github: 'kostis4563',
     site: 'https://blxr.net',
